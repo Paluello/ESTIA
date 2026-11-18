@@ -1,6 +1,7 @@
 import type { BackupConfig } from "@estia/config";
 import type { BackupArchiveView, BackupReport } from "@estia/contracts";
 
+import { detto, frase, inInglese } from "../frasi.js";
 import { backupMemoryWarning } from "./memory.js";
 import { lastArchive } from "./schedule.js";
 
@@ -37,18 +38,15 @@ function view(
       };
 }
 
-function ago(from: Date, to: Date): string {
+/** How long ago, in whole hours or days: the bucket picks the sentence. */
+function eta(from: Date, to: Date): { ore: number } | { giorni: number } | undefined {
   const hours = Math.floor((to.getTime() - from.getTime()) / (60 * 60 * 1000));
 
   if (hours < 1) {
-    return "meno di un'ora fa";
+    return undefined;
   }
 
-  if (hours < 48) {
-    return `${String(hours)} ore fa`;
-  }
-
-  return `${String(Math.floor(hours / 24))} giorni fa`;
+  return hours < 48 ? { ore: hours } : { giorni: Math.floor(hours / 24) };
 }
 
 export interface BackupReportOptions {
@@ -71,12 +69,15 @@ export async function buildBackupReport(options: BackupReportOptions): Promise<B
     options.storedBytes === undefined ? 0 : options.storedBytes(),
     options.memoryLimitBytes,
   );
-  const memory = memoryWarning === undefined ? {} : { memoryWarning };
+  const memory =
+    memoryWarning === undefined
+      ? {}
+      : { memoryWarning: inInglese([memoryWarning]), memoryWarningFrasi: [memoryWarning] };
 
   if (!options.config.scheduled) {
     return {
       ...memory,
-      detail: "Non ancora attivi. Qui sotto puoi generarli in un minuto.",
+      ...detto(frase("diagnostica.backup.not_configured")),
       health: "not_configured",
     };
   }
@@ -97,32 +98,50 @@ export async function buildBackupReport(options: BackupReportOptions): Promise<B
     if (now.getTime() - options.startedAt.getTime() < GRACE_MS) {
       return {
         ...common,
-        detail: "Attivi. Il primo archivio arriva entro un minuto dall'avvio.",
+        ...detto(frase("diagnostica.backup.waiting")),
         health: "waiting",
       };
     }
 
     return {
       ...common,
-      detail:
-        "Attivi sulla carta, ma non c'è nessun archivio. Non stanno funzionando: controlla i log per «backup_failed».",
+      ...detto(frase("diagnostica.backup.missing")),
       health: "missing",
     };
   }
 
   const age = now.getTime() - new Date(last.modifiedAt).getTime();
+  const quanto = eta(new Date(last.modifiedAt), now);
 
   if (age > intervalHours * STALE_FACTOR * 60 * 60 * 1000) {
     return {
       ...common,
-      detail: `L'ultimo è di ${ago(new Date(last.modifiedAt), now)}, ma dovrebbero arrivare ogni ${String(intervalHours)} ore. Qualcosa si è fermato: controlla i log per «backup_failed».`,
+      ...detto(
+        quanto !== undefined && "giorni" in quanto
+          ? frase("diagnostica.backup.stale.giorni", { n: quanto.giorni, ogni: intervalHours })
+          : frase("diagnostica.backup.stale.ore", { n: quanto?.ore ?? 0, ogni: intervalHours }),
+      ),
       health: "stale",
     };
   }
 
   return {
     ...common,
-    detail: `Ultimo ${ago(new Date(last.modifiedAt), now)}. Ogni ${String(intervalHours)} ore, tiene gli ultimi ${String(keep)}.`,
+    ...detto(
+      quanto === undefined
+        ? frase("diagnostica.backup.healthy.meno_ora", { ogni: intervalHours, tiene: keep })
+        : "giorni" in quanto
+          ? frase("diagnostica.backup.healthy.giorni", {
+              n: quanto.giorni,
+              ogni: intervalHours,
+              tiene: keep,
+            })
+          : frase("diagnostica.backup.healthy.ore", {
+              n: quanto.ore,
+              ogni: intervalHours,
+              tiene: keep,
+            }),
+    ),
     health: "healthy",
   };
 }

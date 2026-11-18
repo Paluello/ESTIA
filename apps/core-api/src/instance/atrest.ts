@@ -1,7 +1,14 @@
 import { readFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
-import type { AtRestDeclaredLevel, AtRestEncryptionState, AtRestReport } from "@estia/contracts";
+import type {
+  AtRestDeclaredLevel,
+  AtRestEncryptionState,
+  AtRestReport,
+  Frase,
+} from "@estia/contracts";
+
+import { detto, frase } from "../frasi.js";
 
 /**
  * What the instance can actually observe about encryption at rest (ADR 0007).
@@ -142,7 +149,10 @@ function findCryptoLayer(
 
 export interface Detection {
   state: AtRestEncryptionState;
+  /** In English, for the logs. */
   detail: string;
+  /** The same, by key (ADR 0046). */
+  detailFrasi: readonly Frase[];
 }
 
 /**
@@ -161,8 +171,7 @@ export function detectAtRestEncryption(
 
   if (mountInfo === undefined) {
     return {
-      detail:
-        "Questo sistema non espone la tabella dei mount: l'istanza non può stabilire se il volume dei dati è cifrato.",
+      ...detto(frase("diagnostica.a_riposo.senza_mount")),
       state: "unknown",
     };
   }
@@ -179,7 +188,7 @@ export function detectAtRestEncryption(
 
   if (mount === undefined) {
     return {
-      detail: `Non ho trovato quale volume contiene ${target}: lo stato della cifratura non è verificabile.`,
+      ...detto(frase("diagnostica.a_riposo.volume_ignoto", { percorso: target })),
       state: "unknown",
     };
   }
@@ -188,7 +197,7 @@ export function detectAtRestEncryption(
 
   if (crypto !== undefined) {
     return {
-      detail: `Il volume che contiene i dati è cifrato (${crypto}). L'istanza non può però sapere come viene sbloccato all'avvio: quella parte la dichiara chi amministra.`,
+      ...detto(frase("diagnostica.a_riposo.cifrato", { strato: crypto })),
       state: "active",
     };
   }
@@ -196,22 +205,20 @@ export function detectAtRestEncryption(
   // ZFS keeps encryption as a dataset property, invisible from the block layer.
   if (mount.fsType === "zfs") {
     return {
-      detail:
-        "I dati sono su ZFS, dove la cifratura è una proprietà del dataset che non si legge dai dispositivi a blocchi. Verificala con `zfs get encryption`.",
+      ...detto(frase("diagnostica.a_riposo.zfs")),
       state: "unknown",
     };
   }
 
   if (!existsSync(roots.sysBlock)) {
     return {
-      detail:
-        "Questo sistema non espone le informazioni sui dispositivi a blocchi: lo stato della cifratura non è verificabile.",
+      ...detto(frase("diagnostica.a_riposo.senza_blocchi")),
       state: "unknown",
     };
   }
 
   return {
-    detail: `Nessuna cifratura rilevata sul volume dei dati (${mount.fsType}). Se il disco è cifrato dal firmware o dall'hardware, l'istanza non può vederlo: la protezione da verificare resta quella del NAS.`,
+    ...detto(frase("diagnostica.a_riposo.non_cifrato", { filesystem: mount.fsType })),
     state: "inactive",
   };
 }
@@ -233,9 +240,16 @@ export function buildAtRestReport(
   return {
     consistent: !contradicted,
     declared,
-    detail: contradicted
-      ? `${detection.detail} Ma la configurazione dichiara una cifratura ${declared === "passphrase" ? "con passphrase all'avvio" : "con sblocco automatico"}: una delle due cose è sbagliata, e finché non lo chiarisci considera i dati NON protetti.`
-      : detection.detail,
+    ...(contradicted
+      ? detto(
+          ...detection.detailFrasi,
+          frase(
+            declared === "passphrase"
+              ? "diagnostica.a_riposo.contraddetta.passphrase"
+              : "diagnostica.a_riposo.contraddetta.automatica",
+          ),
+        )
+      : { detail: detection.detail, detailFrasi: [...detection.detailFrasi] }),
     detected: detection.state,
   };
 }

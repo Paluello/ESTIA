@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 import { Icon } from "./icons/Icon.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * Un campo con la sua etichetta, il suo aiuto e il suo errore, legati fra loro.
@@ -21,6 +22,7 @@ export type TextFieldProps = Shared &
   Omit<InputHTMLAttributes<HTMLInputElement>, "id" | "className">;
 
 export function TextField({ label, hint, error, ...rest }: TextFieldProps): React.ReactElement {
+  useT();
   const id = useId();
   const described = [hint === undefined ? "" : `${id}-hint`, error === undefined ? "" : `${id}-err`]
     .filter((part) => part !== "")
@@ -36,11 +38,11 @@ export function TextField({ label, hint, error, ...rest }: TextFieldProps): Reac
       <div className={isPassword ? "field__input-wrap" : undefined}>
         {isPassword && (
           <button
-            aria-label={rivelata ? "Nascondi password" : "Mostra password"}
+            aria-label={rivelata ? t("campo.nascondi_password") : t("campo.mostra_password")}
             className="field__toggle"
             onClick={() => setRivelata((v) => !v)}
             tabIndex={-1}
-            title={rivelata ? "Nascondi password" : "Mostra password"}
+            title={rivelata ? t("campo.nascondi_password") : t("campo.mostra_password")}
             type="button"
           >
             <Icon name={rivelata ? "eye-off" : "eye"} size={18} />

@@ -2,6 +2,7 @@ import type { UpdateCheckResult } from "@estia/contracts";
 
 import { describeInstallation, updateCommands } from "./comandi.js";
 import type { Installation } from "./installazione.js";
+import { detto, frase } from "../frasi.js";
 
 /**
  * Confronta la revisione cotta nell'immagine con quella di `latest` su GHCR.
@@ -263,8 +264,7 @@ export async function checkForUpdate(options: CheckForUpdateOptions): Promise<Up
     return {
       ...comuni,
       status: "unknown",
-      detail:
-        "Questa installazione non dichiara da quale commit è nata — tipico di una prova da sorgente o di un'immagine di prima che questo confronto esistesse. Non posso dire se sei indietro: aggiornare comunque è la via più corta, e dopo l'immagine lo dichiarerà, quindi la prossima volta si saprà.",
+      ...detto(frase("diagnostica.aggiornamento.senza_revisione")),
     };
   }
 
@@ -278,7 +278,12 @@ export async function checkForUpdate(options: CheckForUpdateOptions): Promise<Up
         status: "up_to_date",
         currentRevision: current,
         latestRevision: latest,
-        detail: `Sei già su ${shortRevision(current)}, l'ultima pubblicata su ${channel}.`,
+        ...detto(
+          frase("diagnostica.aggiornamento.aggiornato", {
+            canale: channel,
+            revisione: shortRevision(current),
+          }),
+        ),
       };
     }
 
@@ -287,16 +292,21 @@ export async function checkForUpdate(options: CheckForUpdateOptions): Promise<Up
       status: "available",
       currentRevision: current,
       latestRevision: latest,
-      detail: `C'è una versione nuova: sei su ${shortRevision(current)}, sul registry c'è ${shortRevision(latest)}. Si aggiorna dal terminale della macchina, con i comandi qui sotto.`,
+      ...detto(
+        frase("diagnostica.aggiornamento.disponibile", {
+          attuale: shortRevision(current),
+          ultima: shortRevision(latest),
+        }),
+      ),
     };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "errore sconosciuto";
+    const reason = error instanceof Error ? error.message : String(error);
 
     return {
       ...comuni,
       status: "unknown",
       currentRevision: current,
-      detail: `Non riesco a raggiungere il registry (${reason}). Riprova quando la macchina ha rete verso Internet.`,
+      ...detto(frase("diagnostica.aggiornamento.registry", { motivo: reason })),
     };
   }
 }

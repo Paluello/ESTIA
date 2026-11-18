@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { api } from "../../api.js";
 import { useAvvisi } from "../../avvisi.js";
+import { t, useT } from "../../lingua.js";
 import { useSignedIn } from "../../state.js";
 import { Badge, Button, Sheet } from "../../ui/index.js";
 import { Sezione } from "./Sezione.js";
@@ -19,6 +20,7 @@ import { quandoMedio as quando } from "../../tempo.js";
  * cancella deve poterlo dire — ma la copia si fa di là, e il link ci porta.
  */
 export function Dispositivi(): React.ReactElement {
+  useT();
   const { signOut, token } = useSignedIn();
   const { errore: mostraErrore } = useAvvisi();
   const [sessioni, setSessioni] = useState<SessionView[]>([]);
@@ -31,7 +33,7 @@ export function Dispositivi(): React.ReactElement {
     try {
       setSessioni((await api.sessions(token)).sessions);
     } catch (err: unknown) {
-      mostraErrore(err, "Non riesco a leggere l'elenco dei dispositivi.");
+      mostraErrore(err, t("dispositivi.errore_elenco"));
     }
   }, [mostraErrore, token]);
 
@@ -70,61 +72,57 @@ export function Dispositivi(): React.ReactElement {
   };
 
   return (
-    <Sezione
-      chiave="dispositivi"
-      scopo="Da dove sei entrato in ESTIA, come si disconnette un dispositivo che non usi più, e come si esce da questo."
-    >
+    <Sezione chiave="dispositivi" scopo={t("dispositivi.scopo")}>
       <div className="card card--flush">
-        <h2 className="gruppo">Da dove sei entrato</h2>
-        {sessioni.length === 0 && <p className="empty-inline">Nessun dispositivo collegato.</p>}
+        <h2 className="gruppo">{t("dispositivi.da_dove")}</h2>
+        {sessioni.length === 0 && <p className="empty-inline">{t("dispositivi.nessuno")}</p>}
         {sessioni.map((sessione) => (
           <div className="row" key={sessione.id}>
             <span className="row__body">
               <span className="row__title">
-                {sessione.deviceLabel === "" ? "Dispositivo" : sessione.deviceLabel}{" "}
-                {sessione.current && <Badge tone="on">questo</Badge>}
+                {sessione.deviceLabel === "" ? t("dispositivi.dispositivo") : sessione.deviceLabel}{" "}
+                {sessione.current && <Badge tone="on">{t("dispositivi.questo")}</Badge>}
               </span>
               <span className="row__note">
-                Collegato il {quando(sessione.createdAt)} · visto {quando(sessione.lastSeenAt)}
+                {t("dispositivi.collegato", {
+                  collegato: quando(sessione.createdAt),
+                  visto: quando(sessione.lastSeenAt),
+                })}
               </span>
             </span>
             <span className="row__end">
               <Button onClick={() => void revoca(sessione)} variant="danger">
-                {sessione.current ? "Esci da qui" : "Disconnetti"}
+                {sessione.current ? t("dispositivi.esci_da_qui") : t("dispositivi.disconnetti")}
               </Button>
             </span>
           </div>
         ))}
         <p className="muted chiavi__testo" style={{ padding: "var(--s-3) var(--s-4)" }}>
-          Disconnettere un dispositivo lo butta fuori subito, ovunque si trovi: nessuna attesa e
-          nessuna scadenza da aspettare.
+          {t("dispositivi.disconnettere")}
         </p>
       </div>
 
       <div className="card">
-        <h2 className="gruppo">Uscire</h2>
-        <p className="muted chiavi__testo">
-          {avviso ??
-            "Uscendo, le chiavi delle chat spariscono da questo browser. Ne esiste una copia, quindi potrai rimetterle rientrando con la tua frase segreta."}
-        </p>
+        <h2 className="gruppo">{t("dispositivi.uscire")}</h2>
+        <p className="muted chiavi__testo">{avviso ?? t("dispositivi.uscire.con_copia")}</p>
         <Button block onClick={chiediDiUscire} variant="secondary">
-          Esci da questo dispositivo
+          {t("dispositivi.esci_da_questo")}
         </Button>
       </div>
 
       <Sheet
         onClose={() => setConfermaUscita(false)}
         open={confermaUscita}
-        title="Uscire senza una copia?"
+        title={t("dispositivi.senza_copia.titolo")}
         variant="centrato"
       >
         <div className="feed-pad stack" style={{ paddingBlock: "var(--s-4)" }}>
           <p className="chiavi__testo">{avviso}</p>
           <Link className="btn btn--block" to="/impostazioni/chat">
-            Portami a creare la copia
+            {t("dispositivi.senza_copia.crea")}
           </Link>
           <Button block onClick={() => void esci()} variant="danger">
-            Esci lo stesso, e perdi i messaggi
+            {t("dispositivi.senza_copia.esci")}
           </Button>
         </div>
       </Sheet>

@@ -3,9 +3,10 @@ import { NavLink } from "react-router-dom";
 
 import { useNotifiche } from "../notifiche.js";
 import { useApp } from "../state.js";
-import { Icon } from "../ui/index.js";
+import { Icon, type IconName } from "../ui/index.js";
 import { destinazioni } from "./destinazioni.js";
 import { MenuAltro } from "./MenuAltro.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * La navigazione desktop, stile Threads: icone ed etichette in colonna.
@@ -19,13 +20,15 @@ import { MenuAltro } from "./MenuAltro.js";
  * profilo), un respiro, in fondo il sistema. Le voci restano dichiarate una
  * volta sola in `destinazioni`: qui c'è solo l'ordine e il raggruppamento.
  */
-const GRUPPI: readonly { id: string; voci: readonly string[] }[] = [
-  { id: "fare", voci: ["Home", "Crea", "Cerca"] },
-  { id: "persone", voci: ["Messaggi", "Notifiche", "Profilo"] },
-  { id: "sistema", voci: ["Impostazioni"] },
+// Le voci si riconoscono dall'icona, che non cambia con la lingua.
+const GRUPPI: readonly { id: string; voci: readonly IconName[] }[] = [
+  { id: "fare", voci: ["home", "plus", "search"] },
+  { id: "persone", voci: ["send", "bell", "user"] },
+  { id: "sistema", voci: ["settings"] },
 ];
 
 export function Sidebar(): React.ReactElement {
+  useT();
   const { instance, user } = useApp();
   const { nuove } = useNotifiche();
   const [menu, setMenu] = useState(false);
@@ -34,7 +37,7 @@ export function Sidebar(): React.ReactElement {
   const gruppi = GRUPPI.map((gruppo) => ({
     id: gruppo.id,
     voci: gruppo.voci.map((nome) => {
-      const voce = elenco.find((d) => d.etichetta === nome);
+      const voce = elenco.find((d) => d.icona === nome);
       if (voce === undefined) {
         throw new Error(`La sidebar chiama una voce che non esiste più: «${nome}»`);
       }
@@ -51,7 +54,7 @@ export function Sidebar(): React.ReactElement {
         </NavLink>
         <div className="sidebar__instance">{instance.name}</div>
 
-        <nav aria-label="Sezioni" className="sidebar__nav">
+        <nav aria-label={t("nav.etichetta")} className="sidebar__nav">
           {gruppi.map((gruppo, indice) => (
             <Fragment key={gruppo.id}>
               {indice > 0 && <div aria-hidden="true" className="sidebar__stacco" />}
@@ -59,7 +62,7 @@ export function Sidebar(): React.ReactElement {
                 <NavLink
                   aria-label={
                     destinazione.icona === "bell" && nuove > 0
-                      ? `${destinazione.etichetta}, ${String(nuove)} da vedere`
+                      ? t("nav.notifiche_nuove", { voce: destinazione.etichetta, n: nuove })
                       : destinazione.etichetta
                   }
                   className="sidebar__item"
@@ -88,15 +91,15 @@ export function Sidebar(): React.ReactElement {
         <button
           aria-expanded={menu}
           aria-haspopup="dialog"
-          aria-label="Altro"
+          aria-label={t("nav.altro")}
           className="sidebar__item sidebar__altro"
           onClick={() => setMenu(true)}
           ref={menuAnchor}
-          title="Altro"
+          title={t("nav.altro")}
           type="button"
         >
           <Icon name="menu" size={20} />
-          <span className="sidebar__label">Altro</span>
+          <span className="sidebar__label">{t("nav.altro")}</span>
         </button>
       </div>
 

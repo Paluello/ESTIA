@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -5,6 +6,10 @@ import { withTempDataDir } from "@estia/testing";
 import { describe, expect, it } from "vitest";
 
 import { backupMemoryWarning, readMemoryLimit, type CgroupFiles } from "./memory.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * Measured, not assumed: an archive is encrypted whole in memory (ADR 0013), and
@@ -79,10 +84,12 @@ describe("predicting a backup that the memory limit would kill", () => {
   it("warns when the limit is below what the measurements require", () => {
     const warning = backupMemoryWarning(400 * MB, 1 * GB);
 
-    expect(warning).toMatch(/limite di memoria/);
+    expect(inItaliano(warning === undefined ? [] : [warning])).toMatch(/limite di memoria/);
     // The number it names is the one that was measured, not a round guess.
-    expect(warning).toMatch(/2\.3 GB|2,3 GB/);
-    expect(warning).toMatch(/senza scrivere niente nei log/);
+    expect(inItaliano(warning === undefined ? [] : [warning])).toMatch(/2\.3 GB|2,3 GB/);
+    expect(inItaliano(warning === undefined ? [] : [warning])).toMatch(
+      /senza scrivere niente nei log/,
+    );
   });
 
   it("sits exactly on the boundary without crying wolf", () => {

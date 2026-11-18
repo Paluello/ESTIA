@@ -1,3 +1,5 @@
+import { esisteLingua, lingue } from "@estia/lingue";
+
 export type AppLogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
 
 export interface AppConfig {
@@ -15,6 +17,12 @@ export interface AppConfig {
    */
   atRestEncryption: "passphrase" | "automatic" | "none" | "unspecified";
   network: NetworkConfig;
+  /**
+   * The language of the home (ADR 0046 §5): the pages before sign-in, and the
+   * one a new member starts with. Each member can choose their own; this is
+   * what someone who has not chosen reads. A code of the phrase table.
+   */
+  lingua: string;
   /**
    * Lets the instance be configured even where its data will not survive an
    * update (ADR 0019). Off by default, and it is meant for one thing: looking
@@ -102,6 +110,7 @@ export interface ConfigEnvironment {
   ESTIA_NETWORK_PROBE?: string;
   ESTIA_ALLOW_EPHEMERAL_DATA?: string;
   ESTIA_GIT_SHA?: string;
+  ESTIA_LINGUA?: string;
 }
 
 const allowedLogLevels: ReadonlySet<AppLogLevel> = new Set([
@@ -336,6 +345,28 @@ function parseAllowEphemeralData(value: string | undefined): boolean {
   return allow === "true" || allow === "1" || allow === "yes";
 }
 
+/**
+ * `en` when nobody set it (ADR 0046 §6: without a terminal there is no
+ * question), and a code the table does not have stops the start-up: an
+ * instance that silently fell back to English would look like a bug.
+ */
+function parseLingua(value: string | undefined): string {
+  const codice = value?.trim() ?? "";
+
+  if (codice === "") {
+    return "en";
+  }
+
+  if (!esisteLingua(codice)) {
+    const elenco = lingue()
+      .map((lingua) => `${lingua.codice} (${lingua.nome})`)
+      .join(", ");
+    throw new ConfigurationError(`ESTIA_LINGUA must be one of: ${elenco}. It is «${codice}».`);
+  }
+
+  return codice;
+}
+
 function parseGitSha(value: string | undefined): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -368,5 +399,6 @@ export function loadConfig(environment: ConfigEnvironment): AppConfig {
     media: Object.freeze(parseMedia(environment)),
     backup: Object.freeze(parseBackup(environment)),
     gitSha: parseGitSha(environment.ESTIA_GIT_SHA),
+    lingua: parseLingua(environment.ESTIA_LINGUA),
   });
 }

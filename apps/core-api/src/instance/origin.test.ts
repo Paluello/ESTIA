@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { loadConfig, type AppConfig } from "@estia/config";
 import type { AdminDiagnostics, ConnectionView } from "@estia/contracts";
 import { withClosable, withTempDataDir } from "@estia/testing";
@@ -5,6 +6,10 @@ import { describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
 import { classifyAddress, ConnectionOriginLog } from "./origin.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * The whole threat model rests on SECURITY_BASELINE §5: this instance is not
@@ -107,7 +112,7 @@ describe("what it tells the person connecting", () => {
         ).json() as ConnectionView;
 
         expect(view.origin).toBe("local");
-        expect(view.detail).toMatch(/nessun altro sta in mezzo/);
+        expect(inItaliano(view.detailFrasi)).toMatch(/nessun altro sta in mezzo/);
       });
     });
   });
@@ -130,9 +135,9 @@ describe("what it tells the person connecting", () => {
         ).json() as ConnectionView;
 
         expect(view.origin).toBe("overlay");
-        expect(view.detail).toMatch(/fuori casa/);
+        expect(inItaliano(view.detailFrasi)).toMatch(/fuori casa/);
         // What it must not do is promise more than it has.
-        expect(view.detail).toMatch(/vede che ti sei collegato/);
+        expect(inItaliano(view.detailFrasi)).toMatch(/vede che ti sei collegato/);
       });
     });
   });
@@ -251,8 +256,10 @@ describe("what it refuses to conclude", () => {
         ).json() as ConnectionView;
 
         expect(view.origin).toBe("public");
-        expect(view.detail).toMatch(/oppure che fra te e lei c'è un proxy/);
-        expect(view.detail).not.toMatch(/è raggiungibile da Internet\b(?!.*oppure)/);
+        expect(inItaliano(view.detailFrasi)).toMatch(/oppure che fra te e lei c'è un proxy/);
+        expect(inItaliano(view.detailFrasi)).not.toMatch(
+          /è raggiungibile da Internet\b(?!.*oppure)/,
+        );
       });
     });
   });

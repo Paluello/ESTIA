@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +9,10 @@ import {
   shortRevision,
   type FetchLike,
 } from "./check.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 const CURRENT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const LATEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -134,7 +139,7 @@ describe("checkForUpdate", () => {
 
     expect(result.status).toBe("unknown");
     expect(result.currentRevision).toBeUndefined();
-    expect(result.detail).toMatch(/non dichiara/i);
+    expect(inItaliano(result.detailFrasi)).toMatch(/non dichiara/i);
   });
 
   it("says up_to_date when the registry matches", async () => {
@@ -152,7 +157,7 @@ describe("checkForUpdate", () => {
       latestRevision: CURRENT,
       checkedAt: "2026-08-21T12:00:00.000Z",
     });
-    expect(result.detail).toContain(shortRevision(CURRENT));
+    expect(inItaliano(result.detailFrasi)).toContain(shortRevision(CURRENT));
   });
 
   it("says available when the registry is ahead", async () => {
@@ -165,7 +170,7 @@ describe("checkForUpdate", () => {
 
     expect(result.status).toBe("available");
     expect(result.latestRevision).toBe(LATEST);
-    expect(result.detail).toContain(shortRevision(LATEST));
+    expect(inItaliano(result.detailFrasi)).toContain(shortRevision(LATEST));
   });
 
   it("says unknown when the registry is unreachable", async () => {
@@ -178,7 +183,7 @@ describe("checkForUpdate", () => {
     });
 
     expect(result.status).toBe("unknown");
-    expect(result.detail).toMatch(/registry/i);
+    expect(inItaliano(result.detailFrasi)).toMatch(/registry/i);
     expect(result.currentRevision).toBe(CURRENT);
   });
 });

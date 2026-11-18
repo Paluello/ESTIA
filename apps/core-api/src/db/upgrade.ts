@@ -3,9 +3,10 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import type { BackupConfig } from "@estia/config";
-import type { SchemaBackupStatus, SchemaUpgradeView } from "@estia/contracts";
+import type { Frase, SchemaBackupStatus, SchemaUpgradeView } from "@estia/contracts";
 
 import { pruneArchives } from "../backup/schedule.js";
+import { detto, frase } from "../frasi.js";
 import { createBackup } from "../backup/service.js";
 import {
   effectiveBackupConfig,
@@ -55,10 +56,6 @@ export interface PrepareDatabaseOptions {
   /** Injectable so tests can build a database of an older version for real. */
   migrations?: readonly Migration[];
   now?: () => Date;
-}
-
-function countOf(n: number): string {
-  return n === 1 ? "una migrazione" : `${String(n)} migrazioni`;
 }
 
 /**
@@ -131,7 +128,7 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
     appliedAt: startedAt.toISOString(),
     backupStatus: backup.status,
     ...(backup.name === undefined ? {} : { backupName: backup.name }),
-    detail: detailFor(backup, applied.length),
+    ...detto(...frasiPer(backup.status, applied.length, backup.name, backup.reason)),
     fromVersion: state.currentVersion,
     migrationCount: applied.length,
     toVersion,
@@ -206,22 +203,36 @@ async function takeBackup(
     return { name, status: "created" };
   } catch (error) {
     return {
-      reason: error instanceof Error ? error.message : "motivo sconosciuto",
+      reason: error instanceof Error ? error.message : String(error),
       status: "failed",
     };
   }
 }
 
-function detailFor(backup: BackupOutcome, count: number): string {
-  if (backup.status === "created") {
-    return `Prima di applicare ${countOf(count)} l'istanza ha scritto un backup cifrato: ${backup.name ?? ""}. È il punto di ritorno di questo aggiornamento.`;
+/**
+ * What the upgrade did, by key (ADR 0046). The reason of a failed backup is
+ * known only while it happens: a row read back later says it failed, without
+ * the reason, which stays in the English `detail` stored next to it.
+ */
+function frasiPer(
+  status: SchemaBackupStatus,
+  count: number,
+  name?: string,
+  reason?: string,
+): Frase[] {
+  if (status === "created") {
+    return [frase("diagnostica.schema.created", { n: count, archivio: name ?? "" })];
   }
 
-  if (backup.status === "not_configured") {
-    return `L'istanza ha applicato ${countOf(count)} senza scrivere un backup, perché non ne è configurato nessuno. Le migrazioni vanno solo in avanti: questo aggiornamento non ha un punto di ritorno, e non potrà averlo dopo. Imposta una chiave pubblica in Impostazioni → Backup perché il prossimo ce l'abbia.`;
+  if (status === "not_configured") {
+    return [frase("diagnostica.schema.not_configured", { n: count })];
   }
 
-  return `Il backup che doveva precedere ${countOf(count)} non è riuscito (${backup.reason ?? "motivo sconosciuto"}), e le migrazioni sono state applicate lo stesso per non lasciare l'istanza ferma. Questo aggiornamento non ha un punto di ritorno: i backup che credi di avere non stanno funzionando, e vanno controllati adesso.`;
+  return [
+    reason === undefined
+      ? frase("diagnostica.schema.failed", { n: count })
+      : frase("diagnostica.schema.failed_motivo", { n: count, motivo: reason }),
+  ];
 }
 
 /**
@@ -324,6 +335,7 @@ export function readLastUpgrade(database: DatabaseSync): SchemaUpgradeView | und
     backupStatus: row.backup_status,
     ...(row.backup_name === null ? {} : { backupName: row.backup_name }),
     detail: row.detail,
+    detailFrasi: frasiPer(row.backup_status, row.migration_count, row.backup_name ?? undefined),
     fromVersion: row.from_version,
     migrationCount: row.migration_count,
     toVersion: row.to_version,

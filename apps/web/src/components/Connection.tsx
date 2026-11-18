@@ -2,6 +2,7 @@ import type { ConnectionView } from "@estia/contracts";
 import { useEffect, useState } from "react";
 
 import { api } from "../api.js";
+import { tf, useT } from "../lingua.js";
 import { Alert } from "../ui/index.js";
 
 /**
@@ -15,6 +16,7 @@ import { Alert } from "../ui/index.js";
  * Silent on the local network. A notice that appears every day is scenery.
  */
 export function Connection(): React.ReactElement | null {
+  useT();
   const [connection, setConnection] = useState<ConnectionView | undefined>();
 
   useEffect(() => {
@@ -34,7 +36,9 @@ export function Connection(): React.ReactElement | null {
 
   return (
     <div className="column">
-      <Alert tone={connection.origin === "public" ? "error" : "neutral"}>{connection.detail}</Alert>
+      <Alert tone={connection.origin === "public" ? "error" : "neutral"}>
+        {tf(connection.detailFrasi, connection.detail)}
+      </Alert>
     </div>
   );
 }

@@ -307,6 +307,7 @@ export async function buildApp(
     // those photographs would not survive the next update.
     durability: durability.durability,
     allowEphemeralData: config.allowEphemeralData,
+    lingua: config.lingua,
   });
 
   const admissionService = new AdmissionService({

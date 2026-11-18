@@ -4,6 +4,7 @@ import { useNotifiche } from "../notifiche.js";
 import { useApp } from "../state.js";
 import { Icon } from "../ui/index.js";
 import { destinazioniPrimarie } from "./destinazioni.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * Le cinque destinazioni primarie, dove arriva il pollice.
@@ -18,17 +19,18 @@ import { destinazioniPrimarie } from "./destinazioni.js";
  * piccole stanno in 375px, e `aria-label` resta comunque per chi ascolta.
  */
 export function TabBar(): React.ReactElement {
+  useT();
   const { user } = useApp();
   const { nuove } = useNotifiche();
   const elenco = destinazioniPrimarie(user?.username ?? "");
 
   return (
-    <nav aria-label="Sezioni" className="tabbar">
+    <nav aria-label={t("nav.etichetta")} className="tabbar">
       {elenco.map((destinazione) => (
         <NavLink
           aria-label={
             destinazione.icona === "bell" && nuove > 0
-              ? `${destinazione.etichetta}, ${String(nuove)} da vedere`
+              ? t("nav.notifiche_nuove", { voce: destinazione.etichetta, n: nuove })
               : destinazione.etichetta
           }
           className="tabbar__item"

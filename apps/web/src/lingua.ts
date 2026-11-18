@@ -2,9 +2,11 @@ import {
   esisteLingua,
   formaPlurale,
   traduci,
+  traduciFrasi,
   traduciPlurale,
   type BasePlurale,
   type Chiave,
+  type FraseInviata,
   type Valori,
 } from "@estia/lingue";
 import { Fragment, createElement, useSyncExternalStore, type ReactNode } from "react";
@@ -15,7 +17,8 @@ import { Fragment, createElement, useSyncExternalStore, type ReactNode } from "r
  * Una sola, per tutta la pagina, e sta in un posto solo: l'attributo `lang`
  * della radice, che dice anche al lettore di schermo come pronunciare il testo.
  * La sceglie la persona fra le preferenze (ADR 0024); chi non ha scelto legge
- * quella della Casa, che per ora è quella dichiarata da `index.html`.
+ * quella della Casa, che l'istanza dichiara (`ESTIA_LINGUA`) e manda con la
+ * vista pubblica.
  *
  * I componenti leggono le frasi con `useT()`, che li fa ridisegnare quando la
  * lingua cambia; il codice fuori da React con `t()`, che legge quella di ora.
@@ -23,24 +26,31 @@ import { Fragment, createElement, useSyncExternalStore, type ReactNode } from "r
 
 const ascoltatori = new Set<() => void>();
 
-function linguaDellaCasa(): string {
+function linguaDellaPagina(): string {
   const lang = typeof document === "undefined" ? "" : document.documentElement.lang;
-  return lang !== "" && esisteLingua(lang) ? lang : "it";
+  return lang !== "" && esisteLingua(lang) ? lang : "en";
 }
 
-/** Quella di chi non ha scelto, letta una volta prima che una scelta la cambi. */
-export const LINGUA_DELLA_CASA = linguaDellaCasa();
-let corrente = LINGUA_DELLA_CASA;
+/** Quella di chi non ha scelto: la dichiara l'istanza (`ESTIA_LINGUA`). */
+let casa = linguaDellaPagina();
+/** Quella che la persona ha scelto fra le preferenze, se l'ha scelta. */
+let scelta: string | undefined;
+let corrente = casa;
 
 export function linguaCorrente(): string {
   return corrente;
 }
 
-/** La lingua scelta dalla persona; `undefined` torna a quella della Casa. */
-export function impostaLingua(codice: string | undefined): void {
-  const nuova = codice !== undefined && esisteLingua(codice) ? codice : LINGUA_DELLA_CASA;
+export function linguaDellaCasa(): string {
+  return casa;
+}
 
-  if (nuova === corrente) {
+function aggiorna(cambiataLaCasa = false): void {
+  const nuova = scelta ?? casa;
+
+  // Chi mostra quale sia la lingua della Casa va ridisegnato anche quando la
+  // pagina resta in quella scelta dalla persona.
+  if (nuova === corrente && !cambiataLaCasa) {
     return;
   }
 
@@ -53,8 +63,34 @@ export function impostaLingua(codice: string | undefined): void {
   }
 }
 
+/** La lingua scelta dalla persona; `undefined` torna a quella della Casa. */
+export function impostaLingua(codice: string | undefined): void {
+  scelta = codice !== undefined && esisteLingua(codice) ? codice : undefined;
+  aggiorna();
+}
+
+/**
+ * La lingua della Casa, come la dichiara l'istanza. Vale per chi non ha
+ * scelto; la scelta di una persona resta la sua. Un codice che il client non
+ * conosce — un'istanza più nuova — lascia l'inglese.
+ */
+export function impostaLinguaDellaCasa(codice: string): void {
+  const prima = casa;
+  casa = esisteLingua(codice) ? codice : "en";
+  aggiorna(casa !== prima);
+}
+
 export function t(chiave: Chiave, valori?: Valori): string {
   return traduci(corrente, chiave, valori);
+}
+
+/**
+ * Frasi che l'istanza manda per chiave (ADR 0046), nella lingua di adesso. Se
+ * una chiave non è nella tabella — un'istanza più nuova del client — si legge
+ * la frase inglese che l'istanza manda accanto, mai una chiave.
+ */
+export function tf(frasi: readonly FraseInviata[] | undefined, riserva: string): string {
+  return traduciFrasi(corrente, frasi) ?? riserva;
 }
 
 export function tn(base: BasePlurale, n: number, valori?: Valori): string {

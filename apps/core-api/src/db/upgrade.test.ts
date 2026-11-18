@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +15,10 @@ import { restoreBackup } from "../backup/service.js";
 import { openDatabase, readSchemaState } from "./database.js";
 import { migrations } from "./migrations.js";
 import { prepareDatabase, readLastUpgrade, type UpgradeLogger } from "./upgrade.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * The instance backs itself up before moving its schema forward (ADR 0014).
@@ -307,7 +312,7 @@ describe("when the backup cannot be written", () => {
 
       try {
         expect(prepared.upgrade).toMatchObject({ backupStatus: "not_configured" });
-        expect(prepared.upgrade?.detail).toMatch(/non ha un punto di ritorno/);
+        expect(inItaliano(prepared.upgrade?.detailFrasi)).toMatch(/non ha un punto di ritorno/);
 
         // Warned before the change and recorded after it, in that order: the
         // second line only exists if the boot gets far enough to write it.
@@ -350,7 +355,7 @@ describe("when the backup cannot be written", () => {
 
         try {
           expect(prepared.upgrade).toMatchObject({ backupStatus: "failed" });
-          expect(prepared.upgrade?.detail).toMatch(/non stanno funzionando/);
+          expect(inItaliano(prepared.upgrade?.detailFrasi)).toMatch(/non stanno funzionando/);
           expect(events).toContain("schema_backup_failed");
           expect(readdirSync(backupDir)).toEqual([]);
           expect(readSchemaState(prepared.database).pending).toHaveLength(0);

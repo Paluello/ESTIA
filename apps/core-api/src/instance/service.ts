@@ -33,6 +33,8 @@ export interface InstanceServiceOptions {
    * someone trying ESTIA out for ten minutes, and for nobody else (ADR 0019).
    */
   allowEphemeralData?: boolean;
+  /** The language of the home, from `ESTIA_LINGUA` (ADR 0046 §5). */
+  lingua?: string;
 }
 
 export class InstanceService {
@@ -44,8 +46,10 @@ export class InstanceService {
   private readonly now: () => Date;
   private readonly durability: DataDurability | undefined;
   private readonly allowEphemeralData: boolean;
+  private readonly lingua: string;
 
   public constructor(options: InstanceServiceOptions) {
+    this.lingua = options.lingua ?? "en";
     this.durability = options.durability;
     this.allowEphemeralData = options.allowEphemeralData ?? false;
     this.repository = options.repository;
@@ -65,6 +69,7 @@ export class InstanceService {
 
     if (instance === undefined) {
       return {
+        lingua: this.lingua,
         memberCount: 0,
         publicKey: this.publicKey,
         state: "unconfigured",
@@ -74,6 +79,7 @@ export class InstanceService {
 
     return {
       description: instance.description,
+      lingua: this.lingua,
       memberCount: this.identity.countUsers(),
       name: instance.name,
       publicKey: instance.publicKey,
