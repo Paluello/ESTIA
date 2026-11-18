@@ -176,6 +176,8 @@ describe("updateCommands", () => {
 
     expect(riga).toContain(".HostConfig.PortBindings");
     expect(riga).toContain("{{range .Mounts}}");
+    // Ricreato senza, il container tornerebbe a parlare inglese (ADR 0046).
+    expect(riga).toContain('"ESTIA_LINGUA"}} -e {{.}}');
     expect(riga).toContain(DEFAULT_UPDATE_CHANNEL);
   });
 

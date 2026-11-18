@@ -95,6 +95,11 @@ export interface InstancePublicView {
   publicKey: string;
   memberCount: number;
   /**
+   * The language of the home (ADR 0046 §5), chosen at installation: what the
+   * pages before sign-in speak, and what a member who has not chosen reads.
+   */
+  lingua: string;
+  /**
    * Present only while the instance is still `unconfigured`, when the only
    * person looking is whoever is setting it up — and warning them before they
    * put a community's data in is worth far more than after.
@@ -105,13 +110,14 @@ export interface InstancePublicView {
 export const instancePublicViewSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["state", "publicKey", "memberCount"],
+  required: ["state", "publicKey", "memberCount", "lingua"],
   properties: {
     state: { type: "string", enum: ["unconfigured", "configured"] },
     name: { type: "string" },
     description: { type: "string" },
     publicKey: { type: "string" },
     memberCount: { type: "integer", minimum: 0 },
+    lingua: { type: "string", minLength: 2, maxLength: 35 },
     dataDurability: { type: "string", enum: DATA_DURABILITIES },
   },
 } as const;

@@ -31,7 +31,7 @@ import { esci, ricominciaDaCapo, ripristina, statoAllAccesso } from "./mls/motor
 import { clearSession, loadSession, storeSession } from "./session.js";
 import { AppProvider } from "./state.js";
 import { AvvisiProvider } from "./avvisi.js";
-import { t, useT } from "./lingua.js";
+import { impostaLinguaDellaCasa, t, useT } from "./lingua.js";
 
 type DeviceIdentityState = "loading" | "needs_restore" | "ready";
 
@@ -63,7 +63,11 @@ export function App(): React.ReactElement {
   };
 
   const refreshInstance = useCallback(async () => {
-    setInstance(await api.instance());
+    const letta = await api.instance();
+
+    // Chi non ha scelto una lingua legge quella della Casa (ADR 0046).
+    impostaLinguaDellaCasa(letta.lingua);
+    setInstance(letta);
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -86,7 +90,7 @@ export function App(): React.ReactElement {
 
     void (async () => {
       try {
-        setInstance(await api.instance());
+        await refreshInstance();
 
         const stored = loadSession();
 
@@ -122,7 +126,7 @@ export function App(): React.ReactElement {
         setReady(true);
       }
     })();
-  }, []);
+  }, [refreshInstance]);
 
   const signIn = useCallback((newToken: string, newUser: AuthenticatedUser) => {
     const { daApplicare, daMigrare } = preferenzeDaServer(newUser.appearance);

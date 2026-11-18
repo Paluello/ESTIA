@@ -122,10 +122,14 @@ function conRicreazione(installation: Installation, channel: string): UpdateComm
     "{{range $p, $b := .HostConfig.PortBindings}}{{range $b}} -p {{.HostPort}}:{{$p}}{{end}}{{end}}";
   const volumi =
     "{{range .Mounts}} -v {{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}:{{.Destination}}{{end}}";
+  // La lingua della Casa (ADR 0046) è l'unica variabile che si porta dietro:
+  // le altre, se un pannello le ha messe, restano scritte nel pannello.
+  const lingua =
+    '{{range .Config.Env}}{{if eq (index (split . "=") 0) "ESTIA_LINGUA"}} -e {{.}}{{end}}{{end}}';
 
   return passo(
     "aggiornamento.passo.ricrea",
-    `docker inspect -f 'docker run -d --name {{slice .Name 1}} --restart unless-stopped${porte}${volumi} ${channel}' ${id}`,
+    `docker inspect -f 'docker run -d --name {{slice .Name 1}} --restart unless-stopped${porte}${volumi}${lingua} ${channel}' ${id}`,
     "aggiornamento.passo.ricrea.nota",
     { id },
   );

@@ -50,6 +50,10 @@ Non serve saper programmare. Le frasi dell'interfaccia stanno in [`packages/ling
 
 Una traduzione può essere parziale: le frasi che mancano si leggono in inglese. Proponi il file con una pull request, anche incompleto.
 
+L'installatore, `install.sh`, ha le sue frasi dentro lo script, perché si scarica da solo e non legge la tabella. Una lingua nuova va aggiunta anche lì, in `LINGUE` e nella funzione `frase`; un test dice quali frasi mancano.
+
+Per chi scrive codice: nel client web il testo che si vede **non si scrive nel componente**. Si aggiunge la chiave in `en.json` e in `it.json` e la si legge con `t()`; la regola di lint `estia/no-ui-literal` ferma `pnpm verify` se una frase resta scritta a mano. Le frasi che l'istanza scrive per un pannello si mandano per chiave anche loro, con `frase()` di `apps/core-api/src/frasi.ts`.
+
 ## Prima di aprire una pull request grande
 
 Aprine prima una issue e parliamone. Non per controllo: perché il perimetro di questo progetto è volutamente stretto — [`PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) §9 dice che il rischio principale, per sua stessa analisi, è lo scope creep — e sarebbe brutto vederti scrivere per giorni qualcosa che va rifiutato per una ragione che potevamo dirci prima.

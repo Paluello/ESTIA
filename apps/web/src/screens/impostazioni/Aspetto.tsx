@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../api.js";
 import { CATALOGO_PALETTE, applicaPreferenze, scriviPreferenzeLocali } from "../../aspetto.js";
 import { spiega } from "../../errori.js";
-import { LINGUA_DELLA_CASA, useT } from "../../lingua.js";
+import { linguaDellaCasa, useT } from "../../lingua.js";
 import { useSignedIn } from "../../state.js";
 import { Alert, Choice, Live } from "../../ui/index.js";
 import { Sezione } from "./Sezione.js";
@@ -141,8 +141,8 @@ export function Aspetto(): React.ReactElement {
           ? t("aspetto.salvo_lingua")
           : t("aspetto.salvo_aspetto");
   const salvo = t("comune.salvo");
-  const nomeDellaCasa =
-    lingue().find((voce) => voce.codice === LINGUA_DELLA_CASA)?.nome ?? LINGUA_DELLA_CASA;
+  const casa = linguaDellaCasa();
+  const nomeDellaCasa = lingue().find((voce) => voce.codice === casa)?.nome ?? casa;
 
   return (
     <Sezione titolo={t("aspetto.titolo")}>
