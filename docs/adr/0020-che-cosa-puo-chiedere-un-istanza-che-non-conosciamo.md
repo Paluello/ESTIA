@@ -87,6 +87,8 @@ E la regola che ADR 0018 ha già scritto per i conteggi di lettura vale anche qu
 
 **Blocco per lista**, che è la forma federata della stessa cosa. Vale il principio di ADR 0018 e va ripetuto qui perché è ciò che tiene la moderazione lontana dal diventare un'autorità: **le segnalazioni circolano, i verdetti no.** Ci si iscrive alla lista di qualcuno di cui ci si fida, e resta una decisione di questa istanza — revocabile, e senza che nessuno emetta sentenze valide per tutti.
 
+**Corretto il 2026-11-14** ([ADR 0047](0047-le-segnalazioni-si-visitano.md)): le segnalazioni non circolano, **si visitano**. Restano a casa di chi le scrive, chi vuole saperle le chiede alle istanze collegate a un salto, e nessuna istanza ne accumula di altrui. «I verdetti no» resta com'è: il verdetto è locale.
+
 **Il blocco tocca solo la rete, mai la bacheca di casa.** Bloccare un'istanza non toglie niente ai membri di questa, e non cancella niente di ciò che è già stato letto o scritto qui.
 
 **La revoca è immediata**, con la stessa regola della decisione 4 del §3 della baseline: una connessione già aperta si **chiude attivamente**, non si lascia scadere. Un blocco che avesse effetto al prossimo riavvio sarebbe un blocco che non funziona nel momento in cui serve.
