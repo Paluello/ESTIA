@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client"],
+    "paths": {
+      "ts-mls": ["../../../apps/web/node_modules/ts-mls/dist/src/index.d.ts"],
+      "ts-mls/*": ["../../../apps/web/node_modules/ts-mls/dist/src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

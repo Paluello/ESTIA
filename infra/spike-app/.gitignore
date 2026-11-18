@@ -1,0 +1,6 @@
+# Materiale generato dallo spike S6: si rigenera con i comandi del README.
+target/
+node_modules/
+dist/
+app/src-tauri/gen/
+*.key
