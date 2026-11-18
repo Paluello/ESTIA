@@ -5,6 +5,7 @@ import { Icon, IconButton } from "../ui/index.js";
 import { MenuAltro } from "./MenuAltro.js";
 import { ModeSwitch } from "./ModeSwitch.js";
 import { useThreadBack } from "./thread-nav.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * La barra in alto.
@@ -17,6 +18,7 @@ import { useThreadBack } from "./thread-nav.js";
  * Indietro sale nel thread (commento → padre → post → feed), non nella storia.
  */
 export function TopBar(): React.ReactElement {
+  useT();
   const [menu, setMenu] = useState(false);
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const matchPost = useMatch("/p/:id");
@@ -50,7 +52,7 @@ export function TopBar(): React.ReactElement {
           {suPost ? (
             <IconButton
               icon="arrow-left"
-              label={matchCommento !== null ? "Commento precedente" : "Torna al feed"}
+              label={matchCommento !== null ? t("nav.commento_precedente") : t("nav.torna_al_feed")}
               onClick={indietro}
             />
           ) : (
@@ -58,7 +60,7 @@ export function TopBar(): React.ReactElement {
               aria-expanded={menu}
               aria-haspopup="dialog"
               icon="menu"
-              label="Altro"
+              label={t("nav.altro")}
               onClick={() => setMenu(true)}
               ref={menuAnchor}
             />
@@ -75,12 +77,12 @@ export function TopBar(): React.ReactElement {
               aria-expanded={menu}
               aria-haspopup="dialog"
               icon="menu"
-              label="Altro"
+              label={t("nav.altro")}
               onClick={() => setMenu(true)}
               ref={menuAnchor}
             />
           ) : (
-            <Link aria-label="Cerca" className="btn btn--icon" to="/cerca">
+            <Link aria-label={t("nav.cerca")} className="btn btn--icon" to="/cerca">
               <Icon name="search" size={22} />
             </Link>
           )}

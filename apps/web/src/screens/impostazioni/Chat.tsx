@@ -2,12 +2,13 @@ import { useState } from "react";
 
 import { api } from "../../api.js";
 import { useAvvisi } from "../../avvisi.js";
+import { t, tc, tn, useT } from "../../lingua.js";
 import { ripristina, salvaCopia as salvaCopiaMls } from "../../mls/motore.js";
 import { useSignedIn } from "../../state.js";
 import { Alert, Button, TextField } from "../../ui/index.js";
 import { Sezione } from "./Sezione.js";
 import { codiceDi } from "./codice-dispositivo.js";
-import { COME_FUNZIONANO, PIU_DISPOSITIVI, raccontoDi } from "./chiavi-stato.js";
+import { comeFunzionano, piuDispositivi, raccontoDi } from "./chiavi-stato.js";
 import { useChiavi } from "./useChiavi.js";
 import { quandoMedio as quando } from "../../tempo.js";
 
@@ -31,6 +32,7 @@ import { quandoMedio as quando } from "../../tempo.js";
  * dispositivi restano accesi, ed è quello che dice l'avviso in cima.
  */
 export function Chat(): React.ReactElement {
+  useT();
   const { token, user } = useSignedIn();
   const { errore: mostraErrore, successo: mostraSuccesso } = useAvvisi();
   const { copiaEsiste, daAutorizzare, ilMioCodice, inLettura, ricarica, stato } = useChiavi(token);
@@ -42,17 +44,17 @@ export function Chat(): React.ReactElement {
   const salvaCopia = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (fraseSegreta.trim().length < 8) {
-      mostraErrore(null, "La frase segreta deve essere di almeno 8 caratteri.");
+      mostraErrore(null, t("chat_chiavi.frase_corta", { n: 8 }));
       return;
     }
     setInLavorazione(true);
     try {
       await salvaCopiaMls(token, fraseSegreta);
       setFraseSegreta("");
-      mostraSuccesso("Copia creata. Adesso puoi rientrare da un altro browser.");
+      mostraSuccesso(t("chat_chiavi.copia_creata"));
       await ricarica();
     } catch (err: unknown) {
-      mostraErrore(err, "Non sono riuscito a creare la copia delle chiavi.");
+      mostraErrore(err, t("chat_chiavi.copia_non_creata"));
     } finally {
       setInLavorazione(false);
     }
@@ -63,16 +65,14 @@ export function Chat(): React.ReactElement {
     try {
       if (si) {
         await api.approvaDispositivo(token, deviceId);
-        mostraSuccesso(
-          "Autorizzato. Da adesso entra nelle tue conversazioni la prima volta che le apre.",
-        );
+        mostraSuccesso(t("chat_chiavi.autorizzato"));
       } else {
         await api.rifiutaDispositivo(token, deviceId);
-        mostraSuccesso("Rifiutato: quel dispositivo è stato disconnesso.");
+        mostraSuccesso(t("chat_chiavi.rifiutato"));
       }
       await ricarica();
     } catch (err: unknown) {
-      mostraErrore(err, "Non sono riuscito a rispondere a questa richiesta.");
+      mostraErrore(err, t("chat_chiavi.risposta_fallita"));
     } finally {
       setInLavorazione(false);
     }
@@ -80,50 +80,41 @@ export function Chat(): React.ReactElement {
 
   const rimettiLeChiavi = async (): Promise<void> => {
     if (fraseSegreta.trim().length === 0) {
-      mostraErrore(null, "Scrivi la frase segreta per aprire la copia.");
+      mostraErrore(null, t("chat_chiavi.scrivi_frase"));
       return;
     }
     setInLavorazione(true);
     try {
       await ripristina(token, user.username, fraseSegreta);
       setFraseSegreta("");
-      mostraSuccesso(
-        "Chiave rimessa su questo browser: rientri nelle conversazioni, e la cronologia torna quando le altre persone le riaprono.",
-      );
+      mostraSuccesso(t("chat_chiavi.rimessa"));
       await ricarica();
     } catch (err: unknown) {
-      mostraErrore(err, "La frase segreta non apre questa copia.");
+      mostraErrore(err, t("chat_chiavi.frase_sbagliata"));
     } finally {
       setInLavorazione(false);
     }
   };
 
   return (
-    <Sezione
-      chiave="chat"
-      scopo="Qui governi chi può leggere i tuoi messaggi privati: le chiavi di questo dispositivo, la copia che le riporta altrove, e i dispositivi che chiedono di entrare."
-    >
+    <Sezione chiave="chat" scopo={t("chat_chiavi.scopo")}>
       <Alert tone="neutral">
-        <p className="chiavi__testo">{PIU_DISPOSITIVI}</p>
+        <p className="chiavi__testo">{piuDispositivi()}</p>
       </Alert>
 
       {daAutorizzare.length > 0 && (
         <div className="card stack">
-          <h2 className="gruppo">
-            {daAutorizzare.length === 1
-              ? "Un dispositivo chiede di entrare"
-              : `${String(daAutorizzare.length)} dispositivi chiedono di entrare`}
-          </h2>
+          <h2 className="gruppo">{tn("chat_chiavi.richieste", daAutorizzare.length)}</h2>
           <p className="muted chiavi__testo">
-            Prima di dire di sì, <strong>guarda il codice su quel dispositivo</strong> e controlla
-            che sia lo stesso che vedi qui. Se non coincide, non è il tuo: rifiuta.
+            {tc("chat_chiavi.prima_del_si", {
+              guarda: <strong>{t("chat_chiavi.prima_del_si.guarda")}</strong>,
+            })}
           </p>
           {daAutorizzare.map((dispositivo) => (
             <div className="richiesta" key={dispositivo.id}>
               <p className="richiesta__codice">{codiceDi(dispositivo.publicKey)}</p>
               <p className="muted chiavi__testo">
-                Chiede di entrare dal {quando(dispositivo.createdAt)}. Autorizzandolo, potrà leggere
-                i messaggi che riceverai da qui in avanti.
+                {t("chat_chiavi.chiede_dal", { quando: quando(dispositivo.createdAt) })}
               </p>
               <div className="cluster">
                 <Button
@@ -131,14 +122,14 @@ export function Chat(): React.ReactElement {
                   onClick={() => void decidi(dispositivo.id, true)}
                   variant="primary"
                 >
-                  Sì, sono io
+                  {t("chat_chiavi.si_sono_io")}
                 </Button>
                 <Button
                   disabled={inLavorazione}
                   onClick={() => void decidi(dispositivo.id, false)}
                   variant="danger"
                 >
-                  No, rifiuta
+                  {t("chat_chiavi.no_rifiuta")}
                 </Button>
               </div>
             </div>
@@ -148,19 +139,16 @@ export function Chat(): React.ReactElement {
 
       {ilMioCodice !== undefined && (
         <div className="card stack">
-          <h2 className="gruppo">Il codice di questo dispositivo</h2>
+          <h2 className="gruppo">{t("chat_chiavi.il_mio_codice")}</h2>
           <p className="richiesta__codice">{ilMioCodice}</p>
-          <p className="muted chiavi__testo">
-            Confrontalo con quello che vedi sul dispositivo dove sei già dentro. Coincidono? Allora
-            di&apos; di sì da lì.
-          </p>
+          <p className="muted chiavi__testo">{t("chat_chiavi.confronta")}</p>
         </div>
       )}
 
       <div className="card stack">
-        <h2 className="gruppo">Le chiavi dei tuoi messaggi privati</h2>
+        <h2 className="gruppo">{t("chat_chiavi.le_chiavi")}</h2>
         {inLettura ? (
-          <p className="empty-inline">Un momento…</p>
+          <p className="empty-inline">{t("comune.un_momento")}</p>
         ) : (
           <Alert tone={racconto.tono}>
             <div className="stack stack--tight">
@@ -172,24 +160,23 @@ export function Chat(): React.ReactElement {
             </div>
           </Alert>
         )}
-        <p className="muted chiavi__testo">{COME_FUNZIONANO}</p>
+        <p className="muted chiavi__testo">{comeFunzionano()}</p>
       </div>
 
       <div className="card">
-        <h2 className="gruppo">La copia di sicurezza</h2>
+        <h2 className="gruppo">{t("chat_chiavi.copia.titolo")}</h2>
         <p className="muted chiavi__testo">
-          Una frase segreta che scegli tu chiude le tue chiavi in una copia che l&apos;istanza
-          conserva <strong>senza poterla aprire</strong>. Serve a una cosa sola: rimettere le stesse
-          chiavi su un browser nuovo, così ritrovi i messaggi di prima.{" "}
-          <strong>Non è una copia delle conversazioni</strong> — quelle stanno già sull&apos;istanza
-          e ci restano.
+          {tc("chat_chiavi.copia.testo", {
+            senza_aprire: <strong>{t("chat_chiavi.copia.senza_aprire")}</strong>,
+            non_conversazioni: <strong>{t("chat_chiavi.copia.non_conversazioni")}</strong>,
+          })}
         </p>
         <form onSubmit={(e) => void salvaCopia(e)}>
           <TextField
-            hint="Se la dimentichi non si recupera, e la copia diventa inservibile. L'istanza non la conosce mai."
-            label="Frase segreta"
+            hint={t("chat_chiavi.frase.aiuto")}
+            label={t("chat_chiavi.frase.etichetta")}
             onChange={(e) => setFraseSegreta(e.target.value)}
-            placeholder="Almeno 8 caratteri"
+            placeholder={t("comune.password_minimo", { n: 8 })}
             type="password"
             value={fraseSegreta}
           />
@@ -199,7 +186,11 @@ export function Chat(): React.ReactElement {
               type="submit"
               variant="primary"
             >
-              {inLavorazione ? "Un momento…" : copiaEsiste ? "Aggiorna la copia" : "Crea la copia"}
+              {inLavorazione
+                ? t("comune.un_momento")
+                : copiaEsiste
+                  ? t("chat_chiavi.copia.aggiorna")
+                  : t("chat_chiavi.copia.crea")}
             </Button>
             {copiaEsiste && (
               <Button
@@ -208,7 +199,7 @@ export function Chat(): React.ReactElement {
                 type="button"
                 variant="secondary"
               >
-                Rimetti le chiavi qui
+                {t("chat_chiavi.rimetti")}
               </Button>
             )}
           </div>

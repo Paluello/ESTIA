@@ -4,46 +4,54 @@ import type {
   UpdateCheckResult,
   UpdateCommand,
 } from "@estia/contracts";
+import type { Chiave } from "@estia/lingue";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../api.js";
+import { t, tc, useT } from "../../../lingua.js";
 import { useSignedIn } from "../../../state.js";
 import { Alert, Badge, Button } from "../../../ui/index.js";
 import { Sezione } from "../Sezione.js";
 import { quandoMedio as quando } from "../../../tempo.js";
 
-const A_RIPOSO: Record<AdminDiagnostics["atRest"]["detected"], string> = {
-  active: "rilevata",
-  inactive: "non rilevata",
-  unknown: "non verificabile",
+const A_RIPOSO: Readonly<Record<AdminDiagnostics["atRest"]["detected"], Chiave>> = {
+  active: "stato.a_riposo.active",
+  inactive: "stato.a_riposo.inactive",
+  unknown: "stato.a_riposo.unknown",
 };
 
-const DICHIARATA: Record<AdminDiagnostics["atRest"]["declared"], string> = {
-  automatic: "sblocco automatico",
-  none: "nessuna, per scelta",
-  passphrase: "passphrase all'avvio",
-  unspecified: "non dichiarata",
+const DICHIARATA: Readonly<Record<AdminDiagnostics["atRest"]["declared"], Chiave>> = {
+  automatic: "stato.dichiarata.automatic",
+  none: "stato.dichiarata.none",
+  passphrase: "stato.dichiarata.passphrase",
+  unspecified: "stato.dichiarata.unspecified",
 };
 
-const AGGIORNAMENTO: Record<string, string> = {
-  created: "con punto di ritorno",
-  failed: "backup fallito",
-  not_configured: "senza punto di ritorno",
+const AGGIORNAMENTO: Readonly<Record<string, Chiave>> = {
+  created: "stato.aggiornamento.created",
+  failed: "stato.aggiornamento.failed",
+  not_configured: "stato.aggiornamento.not_configured",
 };
 
-const ORIGINI: Record<string, string> = {
-  local: "dalla rete di casa",
-  loopback: "dal NAS stesso",
-  overlay: "da fuori, attraverso la rete privata",
-  public: "da fuori dalla rete di casa",
+const ORIGINI: Readonly<Record<string, Chiave>> = {
+  local: "stato.origine.local",
+  loopback: "stato.origine.loopback",
+  overlay: "stato.origine.overlay",
+  public: "stato.origine.public",
 };
 
-const DUREVOLEZZA: Record<AdminDiagnostics["dataDurability"], string> = {
-  anonymous: "su un volume anonimo",
-  ephemeral: "dentro il container",
-  persistent: "su un volume",
-  unknown: "non verificabile",
+const DUREVOLEZZA: Readonly<Record<AdminDiagnostics["dataDurability"], Chiave>> = {
+  anonymous: "stato.durevolezza.anonymous",
+  ephemeral: "stato.durevolezza.ephemeral",
+  persistent: "stato.durevolezza.persistent",
+  unknown: "stato.durevolezza.unknown",
 };
+
+/** Una voce di una tabella fatta di chiavi, o il valore così com'è se manca. */
+function voce(tabella: Readonly<Record<string, Chiave>>, valore: string): string {
+  const chiave = tabella[valore];
+  return chiave === undefined ? valore : t(chiave);
+}
 
 function corta(sha: string): string {
   return sha.slice(0, 7);
@@ -51,6 +59,7 @@ function corta(sha: string): string {
 
 /** Un comando da terminale con un bottone che lo copia negli appunti. */
 function ComandoCopiabile({ comando }: { comando: string }): React.ReactElement {
+  useT();
   const [copiato, setCopiato] = useState(false);
 
   const copia = async (): Promise<void> => {
@@ -71,7 +80,9 @@ function ComandoCopiabile({ comando }: { comando: string }): React.ReactElement 
   return (
     <div className="cluster">
       <input className="input grow secret" id={`comando-${comando}`} readOnly value={comando} />
-      <Button onClick={() => void copia()}>{copiato ? "Copiato" : "Copia"}</Button>
+      <Button onClick={() => void copia()}>
+        {copiato ? t("comune.copiato_breve") : t("comune.copia")}
+      </Button>
     </div>
   );
 }
@@ -107,7 +118,7 @@ function dettaglioAggiornamento(
   backupsOraConfigurati: boolean,
 ): string {
   if (upgrade.backupStatus === "not_configured" && backupsOraConfigurati) {
-    return "Questo aggiornamento è stato applicato senza un backup prima. Le migrazioni vanno solo in avanti: non ha un punto di ritorno, e non potrà averlo dopo. I backup ora sono configurati — il prossimo aggiornamento ce l'avrà.";
+    return t("stato.senza_backup_ora_si");
   }
 
   return upgrade.detail;
@@ -121,6 +132,7 @@ function dettaglioAggiornamento(
  * backup configurati che non producono archivi è un allarme.
  */
 export function Stato(): React.ReactElement {
+  useT();
   const { token } = useSignedIn();
   const [d, setD] = useState<AdminDiagnostics | undefined>();
   const [verifica, setVerifica] = useState<UpdateCheckResult | undefined>();
@@ -139,7 +151,7 @@ export function Stato(): React.ReactElement {
       setVerifica(await api.checkUpdates(token));
     } catch (error) {
       setVerifica(undefined);
-      setErroreVerifica(error instanceof Error ? error.message : "Verifica non riuscita.");
+      setErroreVerifica(error instanceof Error ? error.message : t("stato.verifica_fallita"));
     } finally {
       setVerificando(false);
     }
@@ -147,34 +159,32 @@ export function Stato(): React.ReactElement {
 
   if (d === undefined) {
     return (
-      <Sezione titolo="Stato dell'istanza">
-        <p className="muted">Carico…</p>
+      <Sezione titolo={t("sezioni.stato")}>
+        <p className="muted">{t("comune.carico")}</p>
       </Sezione>
     );
   }
 
   return (
-    <Sezione titolo="Stato dell'istanza">
+    <Sezione titolo={t("sezioni.stato")}>
       {/* Prima di ogni altra cosa: un'istanza che perde tutto al prossimo
           aggiornamento non ha altri problemi che contino. */}
       {d.dataDurability === "anonymous" && (
         <Alert tone="error">
-          <strong>Questi dati si perdono se aggiorni dal pannello.</strong> Stanno su un volume che
-          Docker ha creato da sé, senza che nessuno glielo chiedesse: se lo porta dietro solo quando
-          è <code>docker compose</code> a ricreare il container. Il pulsante «aggiorna» del NAS,
-          Portainer e Watchtower ne attaccano invece uno nuovo e vuoto, e l&apos;istanza riparte da
-          zero — account, contenuti, fotografie e la chiave privata, che{" "}
-          <strong>non è sostituibile</strong>. I dati vecchi non vengono cancellati: restano in un
-          volume orfano, e si recuperano.
+          {tc("stato.anonimo", {
+            titolo: <strong>{t("stato.anonimo.titolo")}</strong>,
+            compose: <code>docker compose</code>,
+            insostituibile: <strong>{t("stato.insostituibile")}</strong>,
+          })}
         </Alert>
       )}
 
       {d.dataDurability === "ephemeral" && (
         <Alert tone="error">
-          <strong>I tuoi dati spariranno al prossimo aggiornamento.</strong> Non sono su un volume:
-          stanno dentro il container, che viene buttato e rifatto ogni volta che aggiorni
-          l&apos;immagine. Se ne vanno account, contenuti, fotografie e la chiave privata
-          dell&apos;istanza, che <strong>non è sostituibile</strong>.
+          {tc("stato.effimero", {
+            titolo: <strong>{t("stato.effimero.titolo")}</strong>,
+            insostituibile: <strong>{t("stato.insostituibile")}</strong>,
+          })}
         </Alert>
       )}
 
@@ -183,11 +193,9 @@ export function Stato(): React.ReactElement {
           smette di esserlo in silenzio (SECURITY_BASELINE §5). */}
       {d.connections.some((visto) => visto.origin === "public") && (
         <Alert tone="error">
-          <strong>Qualcuno è arrivato da un indirizzo fuori dalla rete di casa</strong> e fuori
-          dalla rete privata. Le spiegazioni sono due: o sul router è aperta una porta verso il NAS
-          — e allora l&apos;istanza è su Internet, che non dovrebbe essere — oppure fra te e lei
-          c&apos;è un proxy che nasconde l&apos;indirizzo di chi chiama. Vale la pena stabilire
-          quale delle due.
+          {tc("stato.pubblico", {
+            titolo: <strong>{t("stato.pubblico.titolo")}</strong>,
+          })}
         </Alert>
       )}
 
@@ -195,27 +203,28 @@ export function Stato(): React.ReactElement {
           pericolosa da mostrare in silenzio (ADR 0007). */}
       {!d.atRest.consistent && (
         <Alert tone="error">
-          La configurazione dichiara una cifratura che l&apos;istanza non rileva. Finché non è
-          chiarito, considera i dati <strong>non protetti</strong> da un furto del NAS.
+          {tc("stato.incoerente", {
+            non_protetti: <strong>{t("stato.non_protetti")}</strong>,
+          })}
         </Alert>
       )}
 
       <div className="card card--flush">
         <div className="row">
           <span className="row__body">
-            <span className="row__title">Dove stanno i dati</span>
+            <span className="row__title">{t("stato.dove_dati")}</span>
             <span className="row__note">{d.dataDurabilityDetail}</span>
           </span>
           <span className="row__end">
             <Badge tone={d.dataDurability === "persistent" ? "on" : "neutral"}>
-              {DUREVOLEZZA[d.dataDurability]}
+              {t(DUREVOLEZZA[d.dataDurability])}
             </Badge>
           </span>
         </div>
 
         <div className="row">
           <span className="row__body">
-            <span className="row__title">Persone</span>
+            <span className="row__title">{t("stato.persone")}</span>
           </span>
           <span className="row__end">
             <strong>{d.memberCount}</strong>
@@ -224,35 +233,32 @@ export function Stato(): React.ReactElement {
 
         <div className="row">
           <span className="row__body">
-            <span className="row__title">Cifratura dei dati a riposo</span>
+            <span className="row__title">{t("stato.cifratura")}</span>
             <span className="row__note">{d.atRest.detail}</span>
             {d.atRest.declared !== "unspecified" && (
               <span className="row__note">
-                Dichiarata in configurazione: {DICHIARATA[d.atRest.declared]}.
+                {t("stato.dichiarata", { come: t(DICHIARATA[d.atRest.declared]) })}
               </span>
             )}
           </span>
           <span className="row__end">
             <Badge tone={d.atRest.consistent && d.atRest.detected === "active" ? "on" : "neutral"}>
-              {A_RIPOSO[d.atRest.detected]}
+              {t(A_RIPOSO[d.atRest.detected])}
             </Badge>
           </span>
         </div>
 
         <div className="row">
           <span className="row__body">
-            <span className="row__title">Da dove arrivano le connessioni</span>
+            <span className="row__title">{t("stato.connessioni")}</span>
             <span className="row__note">
               {d.connections.length === 0
-                ? "Ancora niente da dire."
+                ? t("stato.niente_da_dire")
                 : d.connections
-                    .map((visto) => `${ORIGINI[visto.origin] ?? visto.origin}: ${visto.count}`)
+                    .map((visto) => `${voce(ORIGINI, visto.origin)}: ${String(visto.count)}`)
                     .join(" · ")}
             </span>
-            <span className="row__note">
-              L&apos;istanza conta i tipi di rete, non gli indirizzi: da fuori o da dentro è affare
-              di chi amministra, da quale indirizzo non è affare di nessuno.
-            </span>
+            <span className="row__note">{t("stato.conta_tipi")}</span>
           </span>
         </div>
 
@@ -261,15 +267,11 @@ export function Stato(): React.ReactElement {
         {!d.dataDirectorySecure && (
           <div className="row">
             <span className="row__body">
-              <span className="row__title">Permessi della cartella dei dati</span>
-              <span className="row__note">
-                Il filesystem ha rifiutato di stringerla a 0700: altri utenti di questa macchina
-                possono elencarne il contenuto. Succede sulle condivisioni di rete e su alcuni bind
-                mount.
-              </span>
+              <span className="row__title">{t("stato.permessi")}</span>
+              <span className="row__note">{t("stato.permessi.testo")}</span>
             </span>
             <span className="row__end">
-              <Badge>troppo aperti</Badge>
+              <Badge>{t("stato.troppo_aperti")}</Badge>
             </span>
           </div>
         )}
@@ -281,11 +283,13 @@ export function Stato(): React.ReactElement {
         {d.lastUpgrade !== undefined && (
           <div className="row">
             <span className="row__body">
-              <span className="row__title">Ultimo aggiornamento dello schema</span>
+              <span className="row__title">{t("stato.ultimo_schema")}</span>
               <span className="row__note">
-                Versione {d.lastUpgrade.fromVersion} → {d.lastUpgrade.toVersion}, il{" "}
-                {quando(d.lastUpgrade.appliedAt)}. Riguarda solo quell&apos;aggiornamento, non lo
-                stato dei backup di oggi.
+                {t("stato.versione", {
+                  da: d.lastUpgrade.fromVersion,
+                  a: d.lastUpgrade.toVersion,
+                  quando: quando(d.lastUpgrade.appliedAt),
+                })}
               </span>
               <span className="row__note">
                 {dettaglioAggiornamento(d.lastUpgrade, d.backups.health !== "not_configured")}
@@ -301,7 +305,7 @@ export function Stato(): React.ReactElement {
                       : "neutral"
                 }
               >
-                {AGGIORNAMENTO[d.lastUpgrade.backupStatus] ?? d.lastUpgrade.backupStatus}
+                {voce(AGGIORNAMENTO, d.lastUpgrade.backupStatus)}
               </Badge>
             </span>
           </div>
@@ -312,17 +316,15 @@ export function Stato(): React.ReactElement {
           Aggiornare resta un gesto sul Docker della macchina: l'istanza non ha
           il socket di Docker, e non deve averlo. */}
       <div className="card">
-        <h2>Aggiornamenti</h2>
+        <h2>{t("stato.aggiornamenti")}</h2>
         <p className="muted">
-          Controlla se è disponibile una versione più recente di ESTIA. Per aggiornare
-          l&apos;istanza basta eseguire il comando <code>estia aggiorna</code> sul terminale della
-          macchina o del NAS. Prima di aggiornare, assicurati che i backup siano attivi.
+          {tc("stato.aggiornamenti.intro", { comando: <code>estia aggiorna</code> })}
         </p>
 
         <div className="row">
           <span className="row__body">
             <Button disabled={verificando} onClick={() => void verificaAggiornamenti()}>
-              {verificando ? "Verifico…" : "Verifica aggiornamenti"}
+              {verificando ? t("stato.verifico") : t("stato.verifica")}
             </Button>
           </span>
           {verifica !== undefined && (
@@ -337,10 +339,10 @@ export function Stato(): React.ReactElement {
                 }
               >
                 {verifica.status === "available"
-                  ? "disponibile"
+                  ? t("stato.disponibile")
                   : verifica.status === "up_to_date"
-                    ? "sei aggiornato"
-                    : "non verificabile"}
+                    ? t("stato.aggiornato")
+                    : t("stato.non_verificabile")}
               </Badge>
             </span>
           )}
@@ -353,11 +355,15 @@ export function Stato(): React.ReactElement {
             <p className="muted">{verifica.detail}</p>
             {verifica.currentRevision !== undefined && (
               <p className="muted">
-                Questa istanza: <code>{corta(verifica.currentRevision)}</code>
+                {tc("stato.revisione", {
+                  revisione: <code>{corta(verifica.currentRevision)}</code>,
+                })}
                 {verifica.latestRevision !== undefined && (
                   <>
                     {" "}
-                    · sul registry: <code>{corta(verifica.latestRevision)}</code>
+                    {tc("stato.registry", {
+                      revisione: <code>{corta(verifica.latestRevision)}</code>,
+                    })}
                   </>
                 )}
               </p>
@@ -375,13 +381,9 @@ export function Stato(): React.ReactElement {
                   <div className="card card--flush">
                     <div className="row">
                       <span className="row__body">
-                        <span className="row__title">Comando per aggiornare</span>
+                        <span className="row__title">{t("stato.comando")}</span>
                         <ComandoCopiabile comando="estia aggiorna" />
-                        <span className="row__note">
-                          Copia ed esegui questo comando nel terminale del NAS o server: scarica
-                          l&apos;immagine nuova, riconosce la configurazione e riavvia
-                          l&apos;istanza preservando i tuoi dati.
-                        </span>
+                        <span className="row__note">{t("stato.comando.nota")}</span>
                       </span>
                     </div>
                   </div>
@@ -396,7 +398,7 @@ export function Stato(): React.ReactElement {
                           padding: "var(--s-1) 0",
                         }}
                       >
-                        Non hai il comando «estia»? Mostra i passi Docker manuali
+                        {t("stato.passi_manuali")}
                       </summary>
                       <div className="card card--flush" style={{ marginTop: "var(--s-2)" }}>
                         {verifica.commands.slice(1).map((passo) => (

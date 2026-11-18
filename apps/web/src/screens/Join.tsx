@@ -86,7 +86,7 @@ export function Join(): React.ReactElement {
             autoFocus={form.inviteCode.length === 0}
             label={t("entrare.codice")}
             onChange={(event) => setForm({ ...form, inviteCode: event.target.value })}
-            placeholder="XXXX-XXXX-XXXX-XXXX"
+            placeholder={t("entrare.codice.esempio")}
             required
             value={form.inviteCode}
           />

@@ -6,6 +6,7 @@ import { api } from "../../api.js";
 import { useSignedIn } from "../../state.js";
 import { Icon, ListRow } from "../../ui/index.js";
 import { filtra, GRUPPI, type Chiave } from "./registro.js";
+import { t, useT } from "../../lingua.js";
 
 /**
  * La lista delle sezioni.
@@ -55,6 +56,7 @@ function allarmi(
 }
 
 export function SettingsNav(): React.ReactElement {
+  useT();
   const { token, user } = useSignedIn();
   const { pathname } = useLocation();
   const [termine, setTermine] = useState("");
@@ -83,13 +85,13 @@ export function SettingsNav(): React.ReactElement {
   return (
     <>
       <header className="screen-head">
-        <h1 className="screen-head__title">Impostazioni</h1>
+        <h1 className="screen-head__title">{t("nav.impostazioni")}</h1>
       </header>
 
       <div className="stack">
         <search className="split-layout__search">
           <label className="only-screen-reader" htmlFor="cerca-impostazioni">
-            Cerca nelle impostazioni
+            {t("impostazioni.cerca")}
           </label>
           <div className="cluster">
             <Icon name="search" size={18} />
@@ -98,7 +100,7 @@ export function SettingsNav(): React.ReactElement {
               className="input grow"
               id="cerca-impostazioni"
               onChange={(event) => setTermine(event.target.value)}
-              placeholder="Cerca nelle impostazioni"
+              placeholder={t("impostazioni.cerca")}
               type="search"
               value={termine}
             />
@@ -122,7 +124,7 @@ export function SettingsNav(): React.ReactElement {
           </div>
         ))}
 
-        {gruppi.length === 0 && <p className="muted">Nessuna impostazione con questo nome.</p>}
+        {gruppi.length === 0 && <p className="muted">{t("impostazioni.nessun_risultato")}</p>}
       </div>
     </>
   );

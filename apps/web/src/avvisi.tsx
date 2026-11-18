@@ -11,6 +11,7 @@ import {
 
 import { spiega } from "./errori.js";
 import { Icon } from "./ui/icons/Icon.js";
+import { t, useT } from "./lingua.js";
 
 export type AvvisoTone = "neutral" | "error" | "ok";
 
@@ -131,12 +132,13 @@ function AvvisiToastContainer({
   avvisi: AvvisoItem[];
   chiudi: (id: string) => void;
 }): React.ReactElement | null {
+  useT();
   if (avvisi.length === 0) {
     return null;
   }
 
   return (
-    <div aria-label="Notifiche di sistema" className="avvisi-container" role="region">
+    <div aria-label={t("avvisi.etichetta")} className="avvisi-container" role="region">
       {avvisi.map((item) => (
         <div
           className={`avviso-toast avviso-toast--${item.tone}`}
@@ -151,7 +153,7 @@ function AvvisiToastContainer({
           </span>
           <p className="avviso-toast__text">{item.testo}</p>
           <button
-            aria-label="Chiudi notifica"
+            aria-label={t("avvisi.chiudi")}
             className="avviso-toast__close"
             onClick={() => chiudi(item.id)}
             type="button"

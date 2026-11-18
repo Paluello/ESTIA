@@ -74,6 +74,7 @@ import type {
 import { fraseDiErrore } from "@estia/lingue";
 
 import { linguaCorrente } from "./lingua.js";
+import { t } from "./lingua.js";
 
 /**
  * Carries the machine-readable code, so screens can react to the cause.
@@ -138,7 +139,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const payload: unknown = text.length === 0 ? undefined : JSON.parse(text);
 
   if (!response.ok) {
-    throw erroreDaRisposta(payload, "Qualcosa non ha funzionato.", response.status);
+    throw erroreDaRisposta(payload, t("comune.qualcosa_non_ha_funzionato"), response.status);
   }
 
   return payload as T;
@@ -195,7 +196,7 @@ export const api = {
     const payload: unknown = await response.json();
 
     if (!response.ok) {
-      throw erroreDaRisposta(payload, "Non sono riuscito a caricare l'immagine.", response.status);
+      throw erroreDaRisposta(payload, t("api.immagine_non_caricata"), response.status);
     }
 
     return payload as MediaView;

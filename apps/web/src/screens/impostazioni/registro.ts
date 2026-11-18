@@ -1,3 +1,4 @@
+import { t } from "../../lingua.js";
 import type { IconName } from "../../ui/index.js";
 
 import { TITOLI, type Chiave } from "./sezioni.js";
@@ -48,101 +49,147 @@ export interface Gruppo {
 
 export const GRUPPI: readonly Gruppo[] = [
   {
-    titolo: "Tu",
+    get titolo(): string {
+      return t("impostazioni.gruppo.tu");
+    },
     voci: [
       {
         chiave: "aspetto",
         componente: Aspetto,
         icona: "settings",
-        nota: "Chiaro, scuro, contrasto e palette — solo per te",
-        titolo: TITOLI.aspetto,
+        get nota(): string {
+          return t("impostazioni.nota.aspetto");
+        },
+        get titolo(): string {
+          return TITOLI.aspetto;
+        },
         to: "/impostazioni/aspetto",
       },
       {
         chiave: "presenza",
         componente: Presenza,
         icona: "globe",
-        nota: "Fin dove arrivi, e chi può seguirti",
-        titolo: TITOLI.presenza,
+        get nota(): string {
+          return t("impostazioni.nota.presenza");
+        },
+        get titolo(): string {
+          return TITOLI.presenza;
+        },
         to: "/impostazioni/presenza",
       },
       {
         chiave: "chat",
         componente: Chat,
         icona: "key",
-        nota: "Le chiavi dei messaggi privati, e la copia che le riporta altrove",
-        titolo: TITOLI.chat,
+        get nota(): string {
+          return t("impostazioni.nota.chat");
+        },
+        get titolo(): string {
+          return TITOLI.chat;
+        },
         to: "/impostazioni/chat",
       },
       {
         chiave: "dispositivi",
         componente: Dispositivi,
         icona: "shield",
-        nota: "Da dove sei entrato, e come si esce",
-        titolo: TITOLI.dispositivi,
+        get nota(): string {
+          return t("impostazioni.nota.dispositivi");
+        },
+        get titolo(): string {
+          return TITOLI.dispositivi;
+        },
         to: "/impostazioni/dispositivi",
       },
     ],
   },
   {
-    titolo: "Questa istanza",
+    get titolo(): string {
+      return t("impostazioni.gruppo.istanza");
+    },
     voci: [
       {
         chiave: "informazioni",
         componente: Informazioni,
         icona: "link",
-        nota: "Questa casa, licenza, che cos'è ESTIA",
-        titolo: TITOLI.informazioni,
+        get nota(): string {
+          return t("impostazioni.nota.informazioni");
+        },
+        get titolo(): string {
+          return TITOLI.informazioni;
+        },
         to: "/impostazioni/informazioni",
       },
     ],
   },
   {
-    titolo: "Amministrazione",
+    get titolo(): string {
+      return t("impostazioni.gruppo.amministrazione");
+    },
     voci: [
       {
         chiave: "inviti",
         componente: Inviti,
         icona: "key",
-        nota: "Gli inviti da mandare, e chi entra usandoli",
+        get nota(): string {
+          return t("impostazioni.nota.inviti");
+        },
         soloAdmin: true,
-        titolo: TITOLI.inviti,
+        get titolo(): string {
+          return TITOLI.inviti;
+        },
         to: "/impostazioni/amministrazione/inviti",
       },
       {
         chiave: "estianet",
         componente: EstiaNet,
         icona: "globe",
-        nota: "Accendere, condividere la chiave, collegare altre istanze",
+        get nota(): string {
+          return t("impostazioni.nota.estianet");
+        },
         soloAdmin: true,
-        titolo: TITOLI.estianet,
+        get titolo(): string {
+          return TITOLI.estianet;
+        },
         to: "/impostazioni/amministrazione/estianet",
       },
       {
         chiave: "backup",
         componente: Backup,
         icona: "download",
-        nota: "Archivi cifrati, e da dove si torna indietro",
+        get nota(): string {
+          return t("impostazioni.nota.backup");
+        },
         soloAdmin: true,
-        titolo: TITOLI.backup,
+        get titolo(): string {
+          return TITOLI.backup;
+        },
         to: "/impostazioni/amministrazione/backup",
       },
       {
         chiave: "stato",
         componente: Stato,
         icona: "alert",
-        nota: "Dove stanno i dati, cifratura, aggiornamenti",
+        get nota(): string {
+          return t("impostazioni.nota.stato");
+        },
         soloAdmin: true,
-        titolo: TITOLI.stato,
+        get titolo(): string {
+          return TITOLI.stato;
+        },
         to: "/impostazioni/amministrazione/stato",
       },
       {
         chiave: "registro",
         componente: Registro,
         icona: "instance",
-        nota: "Che cosa è stato deciso, e da chi",
+        get nota(): string {
+          return t("impostazioni.nota.registro");
+        },
         soloAdmin: true,
-        titolo: TITOLI.registro,
+        get titolo(): string {
+          return TITOLI.registro;
+        },
         to: "/impostazioni/amministrazione/registro",
       },
     ],

@@ -1,4 +1,5 @@
 import type { IconName } from "../ui/index.js";
+import { t } from "../lingua.js";
 
 export interface Destinazione {
   to: string;
@@ -26,28 +27,34 @@ export interface Destinazione {
  */
 export function destinazioni(username: string): readonly Destinazione[] {
   return [
-    { dove: "primaria", esatta: true, etichetta: "Home", icona: "home", to: "/" },
-    { dove: "desktop", esatta: false, etichetta: "Cerca", icona: "search", to: "/cerca" },
-    { dove: "primaria", esatta: true, etichetta: "Messaggi", icona: "send", to: "/messaggi" },
-    { dove: "primaria", esatta: true, etichetta: "Crea", icona: "plus", to: "/scrivi" },
+    { dove: "primaria", esatta: true, etichetta: t("nav.home"), icona: "home", to: "/" },
+    { dove: "desktop", esatta: false, etichetta: t("nav.cerca"), icona: "search", to: "/cerca" },
     {
       dove: "primaria",
       esatta: true,
-      etichetta: "Notifiche",
+      etichetta: t("nav.messaggi"),
+      icona: "send",
+      to: "/messaggi",
+    },
+    { dove: "primaria", esatta: true, etichetta: t("nav.crea"), icona: "plus", to: "/scrivi" },
+    {
+      dove: "primaria",
+      esatta: true,
+      etichetta: t("nav.notifiche"),
       icona: "bell",
       to: "/notifiche",
     },
     {
       dove: "primaria",
       esatta: false,
-      etichetta: "Profilo",
+      etichetta: t("nav.profilo"),
       icona: "user",
       to: `/@${username}`,
     },
     {
       dove: "desktop",
       esatta: false,
-      etichetta: "Impostazioni",
+      etichetta: t("nav.impostazioni"),
       icona: "settings",
       to: "/impostazioni",
     },

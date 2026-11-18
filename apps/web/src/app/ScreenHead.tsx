@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { IconButton } from "../ui/index.js";
 import { ModeSwitch } from "./ModeSwitch.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * L'intestazione di una schermata: dove sei, e l'azione che riguarda solo
@@ -40,6 +41,7 @@ export function ScreenHead({
   lente = false,
   children,
 }: ScreenHeadProps): React.ReactElement {
+  useT();
   const navigate = useNavigate();
 
   return (
@@ -47,7 +49,7 @@ export function ScreenHead({
       {back && (
         <IconButton
           icon="arrow-left"
-          label="Torna indietro"
+          label={t("comune.torna_indietro")}
           onClick={() => {
             if (backTo !== undefined) {
               void navigate(backTo);

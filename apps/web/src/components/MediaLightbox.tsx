@@ -73,7 +73,7 @@ export function MediaLightbox({
 
   return (
     <dialog
-      aria-label={`Fotografie di ${authorName}`}
+      aria-label={t("media.fotografie_di", { nome: authorName })}
       className="lightbox"
       onClose={onClose}
       ref={dialog}

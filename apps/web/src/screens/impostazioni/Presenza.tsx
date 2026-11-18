@@ -1,8 +1,10 @@
 import type { FollowsView, Presence, ProfileView } from "@estia/contracts";
+import type { Chiave } from "@estia/lingue";
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../api.js";
 import { spiega } from "../../errori.js";
+import { t, useT } from "../../lingua.js";
 import { useSignedIn } from "../../state.js";
 import { Alert, Button, Choice, Live, SegmentedControl } from "../../ui/index.js";
 import { Sezione } from "./Sezione.js";
@@ -26,8 +28,20 @@ type Pannello = "istanza" | "rete";
 type ReteVisibilita = "privato" | "pubblico";
 
 const PANNELLI = [
-  { icon: "instance" as const, label: "Istanza", value: "istanza" as const },
-  { icon: "globe" as const, label: "Rete", value: "rete" as const },
+  {
+    icon: "instance" as const,
+    get label(): string {
+      return t("modo.istanza");
+    },
+    value: "istanza" as const,
+  },
+  {
+    icon: "globe" as const,
+    get label(): string {
+      return t("modo.rete");
+    },
+    value: "rete" as const,
+  },
 ];
 
 function inEstiaNet(presence: Presence): boolean {
@@ -43,14 +57,19 @@ function presenzaRete(rete: ReteVisibilita): Presence {
 }
 
 /** Che cosa sta succedendo, per gli interruttori che ne hanno uno solo. */
-const DETTO: Record<string, string> = {
-  "estianet:entra": "Entro in EstiaNet…",
-  "estianet:esci": "Esco da EstiaNet…",
-  "istanza:privato": "Profilo sull'istanza: privato…",
-  "istanza:pubblico": "Profilo sull'istanza: pubblico…",
-  "rete:privato": "Profilo di rete: privato…",
-  "rete:pubblico": "Profilo di rete: pubblico…",
+const DETTO: Readonly<Record<string, Chiave>> = {
+  "estianet:entra": "presenza.entro_estianet",
+  "estianet:esci": "presenza.esco_estianet",
+  "istanza:privato": "presenza.istanza_privato_in_corso",
+  "istanza:pubblico": "presenza.istanza_pubblico_in_corso",
+  "rete:privato": "presenza.rete_privato_in_corso",
+  "rete:pubblico": "presenza.rete_pubblico_in_corso",
 };
+
+function dettoDi(lavoro: string): string | undefined {
+  const chiave = DETTO[lavoro];
+  return chiave === undefined ? undefined : t(chiave);
+}
 
 /** E per i gesti sulle righe, dove l'id porta con sé quale riga. */
 function dettoPerRiga(lavoro: string): string | undefined {
@@ -58,19 +77,20 @@ function dettoPerRiga(lavoro: string): string | undefined {
 
   switch (azione) {
     case "accetta":
-      return "Accetto…";
+      return t("presenza.accetto");
     case "rifiuta":
-      return "Rifiuto…";
+      return t("presenza.rifiuto");
     case "smetti":
-      return "Smetto di seguire…";
+      return t("presenza.smetto_di_seguire");
     case "controlla":
-      return "Controllo…";
+      return t("comune.controllo");
     default:
       return undefined;
   }
 }
 
 export function Presenza(): React.ReactElement {
+  useT();
   const { token } = useSignedIn();
   const [profilo, setProfilo] = useState<ProfileView | undefined>();
   const [follows, setFollows] = useState<FollowsView | undefined>();
@@ -103,8 +123,8 @@ export function Presenza(): React.ReactElement {
 
   if (profilo === undefined) {
     return (
-      <Sezione titolo="Chi ti trova, chi ti segue">
-        <p className="muted">Carico…</p>
+      <Sezione titolo={t("sezioni.presenza")}>
+        <p className="muted">{t("comune.carico")}</p>
       </Sezione>
     );
   }
@@ -131,7 +151,7 @@ export function Presenza(): React.ReactElement {
         }),
       );
     } catch (causa) {
-      setErrore(spiega(causa, "Non sono riuscito a salvare la scelta. Riprova."));
+      setErrore(spiega(causa, t("aspetto.errore")));
       await carica();
     } finally {
       setLavoro(undefined);
@@ -154,7 +174,7 @@ export function Presenza(): React.ReactElement {
       await carica();
       setEsito(detto);
     } catch (causa) {
-      setErrore(spiega(causa, "Non ha funzionato. Riprova."));
+      setErrore(spiega(causa, t("comune.non_ha_funzionato")));
     } finally {
       setLavoro(undefined);
     }
@@ -181,9 +201,9 @@ export function Presenza(): React.ReactElement {
     try {
       await api.follow(token, { instanceKey: row.instanceKey, username: row.username });
       await carica();
-      setEsito("Controllato.");
+      setEsito(t("presenza.controllato"));
     } catch (causa) {
-      setErrore(spiega(causa, "Non sono riuscito a controllare. Riprova."));
+      setErrore(spiega(causa, t("presenza.controllo_fallito")));
     } finally {
       setLavoro(undefined);
     }
@@ -193,7 +213,7 @@ export function Presenza(): React.ReactElement {
   const suEstiaNet = inEstiaNet(profilo.presence);
   const rete = suEstiaNet ? reteDi(profilo.presence) : retePreferita;
   const occupato = lavoro !== undefined;
-  const durante = lavoro === undefined ? undefined : (DETTO[lavoro] ?? dettoPerRiga(lavoro));
+  const durante = lavoro === undefined ? undefined : (dettoDi(lavoro) ?? dettoPerRiga(lavoro));
 
   const scegliRete = (prossima: ReteVisibilita): void => {
     if (prossima === rete || occupato) {
@@ -227,21 +247,21 @@ export function Presenza(): React.ReactElement {
   };
 
   return (
-    <Sezione titolo="Chi ti trova, chi ti segue">
+    <Sezione titolo={t("sezioni.presenza")}>
       {errore !== undefined && <Alert tone="error">{errore}</Alert>}
       <Live>{durante ?? esito ?? ""}</Live>
 
       {inAttesa.length > 0 && (
         <div className="card card--flush">
-          <h2 className="gruppo">Vogliono seguirti</h2>
+          <h2 className="gruppo">{t("presenza.vogliono_seguirti")}</h2>
           {inAttesa.map((row) => (
             <div className="row" key={row.id}>
               <span className="row__body">
                 <span className="row__title">@{row.username}</span>
                 <span className="row__note">
                   {row.instanceKey === "locale"
-                    ? "Da questa istanza"
-                    : `Da un'istanza che si identifica con ${row.instanceKey.slice(0, 16)}…: quel nome lo dichiara lei, l'unica cosa verificata è l'istanza`}
+                    ? t("presenza.da_questa_istanza")
+                    : t("presenza.da_altra_istanza", { chiave: row.instanceKey.slice(0, 16) })}
                 </span>
               </span>
               <span className="row__end">
@@ -251,11 +271,11 @@ export function Presenza(): React.ReactElement {
                     void decidi(
                       `accetta:${row.id}`,
                       () => api.acceptFollower(token, row.id),
-                      `Adesso @${row.username} ti segue.`,
+                      t("presenza.ora_ti_segue", { nome: row.username }),
                     )
                   }
                 >
-                  {lavoro === `accetta:${row.id}` ? "Accetto…" : "Accetta"}
+                  {lavoro === `accetta:${row.id}` ? t("presenza.accetto") : t("presenza.accetta")}
                 </Button>
                 <Button
                   disabled={occupato}
@@ -263,12 +283,12 @@ export function Presenza(): React.ReactElement {
                     void decidi(
                       `rifiuta:${row.id}`,
                       () => api.removeFollower(token, row.id),
-                      "Richiesta rifiutata.",
+                      t("presenza.richiesta_rifiutata"),
                     )
                   }
                   variant="secondary"
                 >
-                  {lavoro === `rifiuta:${row.id}` ? "Rifiuto…" : "Rifiuta"}
+                  {lavoro === `rifiuta:${row.id}` ? t("presenza.rifiuto") : t("presenza.rifiuta")}
                 </Button>
               </span>
             </div>
@@ -277,9 +297,9 @@ export function Presenza(): React.ReactElement {
       )}
 
       <div className="card">
-        <h2>Il tuo profilo</h2>
+        <h2>{t("presenza.il_tuo_profilo")}</h2>
         <SegmentedControl
-          label="Quali impostazioni stai guardando"
+          label={t("presenza.quali_impostazioni")}
           onChange={setPannello}
           options={PANNELLI}
           value={pannello}
@@ -287,51 +307,59 @@ export function Presenza(): React.ReactElement {
 
         {pannello === "istanza" ? (
           <>
-            <p className="muted">
-              Su questa istanza chiunque può trovarti nella ricerca. Qui decidi che cosa vede chi
-              apre il tuo profilo: i post, oppure solo la possibilità di chiederti di seguirti.
-            </p>
+            <p className="muted">{t("presenza.istanza.intro")}</p>
             <Choice
               checked={!profilo.openFollows}
               disabled={occupato}
               name="istanza-profilo"
-              note="Chi apre il tuo profilo può chiederti di seguirti. I post li vede solo dopo che hai accettato."
+              note={t("presenza.privato.nota")}
               onChoose={() => void salva({ openFollows: false }, "istanza:privato")}
-              title={lavoro === "istanza:privato" ? "Privato…" : "Privato"}
+              title={
+                lavoro === "istanza:privato"
+                  ? t("presenza.privato.in_corso")
+                  : t("presenza.privato")
+              }
             />
             <Choice
               checked={profilo.openFollows}
               disabled={occupato}
               name="istanza-profilo"
-              note="Chi apre il tuo profilo vede i tuoi post. Può seguirti senza aspettare un sì."
+              note={t("presenza.istanza.pubblico.nota")}
               onChoose={() => void salva({ openFollows: true }, "istanza:pubblico")}
-              title={lavoro === "istanza:pubblico" ? "Pubblico…" : "Pubblico"}
+              title={
+                lavoro === "istanza:pubblico"
+                  ? t("presenza.pubblico.in_corso")
+                  : t("presenza.pubblico")
+              }
             />
           </>
         ) : (
           <>
             <p className="muted">
-              Sulla rete fra istanze, se sei in EstiaNet, chiunque può trovarti nella ricerca delle
-              istanze collegate. Qui decidi che cosa vede chi apre il tuo profilo: i post, oppure
-              solo la possibilità di chiederti di seguirti.
-              {!suEstiaNet &&
-                " Vale quando entri in EstiaNet: finché sei fuori, resta solo una preferenza."}
+              {t("presenza.rete.intro")}
+              {!suEstiaNet && t("presenza.rete.solo_preferenza")}
             </p>
             <Choice
               checked={rete === "privato"}
               disabled={occupato}
               name="rete-profilo"
-              note="Chi apre il tuo profilo può chiederti di seguirti. I post li vede solo dopo che hai accettato."
+              note={t("presenza.privato.nota")}
               onChoose={() => scegliRete("privato")}
-              title={lavoro === "rete:privato" ? "Privato…" : "Privato"}
+              title={
+                lavoro === "rete:privato" ? t("presenza.privato.in_corso") : t("presenza.privato")
+              }
             />
             <Choice
               checked={rete === "pubblico"}
               disabled={occupato}
               name="rete-profilo"
-              note="Chi apre il tuo profilo vede i tuoi post di rete."
+              note={t("presenza.rete.pubblico.nota")}
               onChoose={() => scegliRete("pubblico")}
-              title={lavoro === "rete:pubblico" ? "Pubblico…" : "Pubblico"}
+              title={
+                lavoro === "rete:pubblico"
+                  ? t("presenza.pubblico.in_corso")
+                  : t("presenza.pubblico")
+              }
             />
           </>
         )}
@@ -340,9 +368,7 @@ export function Presenza(): React.ReactElement {
       <div aria-busy={lavoro?.startsWith("estianet:") || undefined} className="card">
         <h2>EstiaNet</h2>
         <p className="muted">
-          {suEstiaNet
-            ? "Le istanze collegate possono trovarti e aprire il tuo profilo, nei limiti di privato o pubblico scelti sopra."
-            : "Sei solo in questa istanza. Nessuna altra istanza sa che ci sei, e non compari nelle loro ricerche."}
+          {suEstiaNet ? t("presenza.estianet.dentro") : t("presenza.estianet.fuori")}
         </p>
         {suEstiaNet ? (
           <Button
@@ -351,7 +377,7 @@ export function Presenza(): React.ReactElement {
             onClick={esciEstiaNet}
             variant="secondary"
           >
-            {lavoro === "estianet:esci" ? "Esco da EstiaNet…" : "Esci da EstiaNet"}
+            {lavoro === "estianet:esci" ? t("presenza.esco_estianet") : t("presenza.esci_estianet")}
           </Button>
         ) : (
           <Button
@@ -359,28 +385,26 @@ export function Presenza(): React.ReactElement {
             disabled={occupato}
             onClick={entraEstiaNet}
           >
-            {lavoro === "estianet:entra" ? "Entro in EstiaNet…" : "Entra in EstiaNet"}
+            {lavoro === "estianet:entra"
+              ? t("presenza.entro_estianet")
+              : t("presenza.entra_estianet")}
           </Button>
         )}
       </div>
 
       <div className="card card--flush">
-        <h2 className="gruppo">Chi segui</h2>
+        <h2 className="gruppo">{t("presenza.chi_segui")}</h2>
         {follows === undefined || follows.following.length === 0 ? (
-          <p className="empty-inline">Nessuno, per ora. Qualcuno si trova dalla ricerca.</p>
+          <p className="empty-inline">{t("presenza.nessuno")}</p>
         ) : (
           follows.following.map((row) => (
             <div className="row" key={row.id}>
               <span className="row__body">
                 <span className="row__title">@{row.username}</span>
                 <span className="row__note">
-                  {row.instanceKey === "locale" ? "Su questa istanza" : "Su un'altra istanza"}
-                  {row.state === "in_attesa"
-                    ? " · richiesta in attesa: chi accetta non ti avvisa, si controlla"
-                    : ""}
-                  {row.state === "accettato" && !row.leggibile
-                    ? " · manca la prova per leggere i suoi post: controlla"
-                    : ""}
+                  {row.instanceKey === "locale" ? t("presenza.su_questa") : t("presenza.su_altra")}
+                  {row.state === "in_attesa" ? t("presenza.richiesta_in_attesa") : ""}
+                  {row.state === "accettato" && !row.leggibile ? t("presenza.manca_prova") : ""}
                 </span>
               </span>
               <span className="row__end">
@@ -390,7 +414,9 @@ export function Presenza(): React.ReactElement {
                     onClick={() => void controlla(row)}
                     variant="secondary"
                   >
-                    {lavoro === `controlla:${row.id}` ? "Controllo…" : "Controlla"}
+                    {lavoro === `controlla:${row.id}`
+                      ? t("comune.controllo")
+                      : t("presenza.controlla")}
                   </Button>
                 )}
                 <Button
@@ -399,12 +425,12 @@ export function Presenza(): React.ReactElement {
                     void decidi(
                       `smetti:${row.id}`,
                       () => api.unfollow(token, row.id),
-                      `Non segui più @${row.username}.`,
+                      t("presenza.non_segui_piu", { nome: row.username }),
                     )
                   }
                   variant="secondary"
                 >
-                  {lavoro === `smetti:${row.id}` ? "Smetto…" : "Smetti"}
+                  {lavoro === `smetti:${row.id}` ? t("presenza.smetto") : t("presenza.smetti")}
                 </Button>
               </span>
             </div>

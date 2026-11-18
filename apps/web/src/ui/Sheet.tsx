@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 
 import { IconButton } from "./Button.js";
+import { t } from "../lingua.js";
 
 /**
  * Pannello overlay a tre forme. Una sola API: cambia `variant`.
@@ -128,7 +129,7 @@ export function Sheet({
     ) : title !== undefined ? (
       <div className="sheet__head">
         <h2 className="sheet__title">{title}</h2>
-        <IconButton icon="close" label="Chiudi" onClick={onClose} />
+        <IconButton icon="close" label={t("comune.chiudi")} onClick={onClose} />
       </div>
     ) : null;
 
