@@ -4,13 +4,13 @@
 - Data: 2026-11-14
 - Proprietario: progetto ESTIA
 - Dipende da: [ADR 0018](0018-federazione-fra-istanze-estia.md), [ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md), [ADR 0026](0026-i-commenti-remoti-restano-a-casa-di-chi-li-scrive.md)
-- Corregge: [`IMPLEMENTATION_PLAN.md`](../IMPLEMENTATION_PLAN.md), milestone successive, punto 4, voce «Le segnalazioni circolano, i verdetti no»; la stessa frase in [ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md) §4 e in [`PRODUCT_VISION.md`](../PRODUCT_VISION.md) §7
+- Corregge: [`IMPLEMENTATION_PLAN.md`](../IMPLEMENTATION_PLAN.md), milestone successive, punto 4, voce «Le segnalazioni circolano, i verdetti no»; la stessa idea in [ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md) §4 e in [`PRODUCT_VISION.md`](../PRODUCT_VISION.md) §7
 - Attua: il primo strato della moderazione federata (punto 4 delle milestone successive)
 - Non tocca: le segnalazioni di un contenuto **locale** ai moderatori della propria istanza ([`PRODUCT_VISION.md`](../PRODUCT_VISION.md) §7, «strumenti individuali»), che restano com'è
 
 ## Contesto
 
-Il piano dice che «un'istanza accumula segnalazioni da chi la incontra». La seconda metà della frase — **nessun verdetto vale per tutti** — resta giusta. La prima no: un'istanza che *accumula* segnalazioni altrui conserva giudizi scritti da altri, cioè delle copie. È lo stesso difetto per cui l'indice dei profili è stato tolto da ADR 0018 (§«Scoperta», «Rivisto»): una copia piccola, che sopravvive a chi l'ha generata, nel punto in cui nessuno guarda. E ADR 0018 ha già fissato il metodo: **i contenuti si visitano, non si replicano**.
+Il piano dice che «un'istanza accumula segnalazioni da chi la incontra». La seconda metà della frase — **nessun verdetto vale per tutti** — resta giusta. La prima no: un'istanza che _accumula_ segnalazioni altrui conserva giudizi scritti da altri, cioè delle copie. È lo stesso difetto per cui l'indice dei profili è stato tolto da ADR 0018 (§«Scoperta», «Rivisto»): una copia piccola, che sopravvive a chi l'ha generata, nel punto in cui nessuno guarda. E ADR 0018 ha già fissato il metodo: **i contenuti si visitano, non si replicano**.
 
 Una segnalazione è il caso peggiore di copia. Non è un post che qualcuno ha scelto di pubblicare: è **un giudizio su qualcun altro**. Se restasse nei database di venti istanze dopo che chi l'ha scritta ha cambiato idea, diventerebbe reputazione senza autore — il meccanismo delle piattaforme da cui ESTIA prende le distanze.
 
@@ -54,10 +54,10 @@ I nomi delle istanze in elenco sono quelli che **dichiarano di sé**, non dati v
 
 Per sapere chi ha segnalato l'istanza X, la mia istanza **lo chiede alle istanze a cui è collegata**, nel momento in cui serve: quando qualcuno apre il profilo di X, quando un admin valuta una richiesta di collegamento da X. Ognuna risponde per i propri membri.
 
-- **Un salto solo**, come la ricerca (ADR 0018, «Che cosa non cambia»: il salto transitivo è scartato). Le istanze collegate a Vanchiglia che a me non sono collegate non contano.
+- **Un salto solo**, come la ricerca (ADR 0018 §«Scoperta»: il salto transitivo è scartato). Le istanze collegate a Vanchiglia che a me non sono collegate non contano.
 - **Solo un'istanza collegata può fare questa domanda**, e solo su **una chiave che sa già nominare**: non esiste «dammi tutte le segnalazioni che hai», perché l'enumerazione resta vietata a ogni livello ([ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md) §1). Vale il budget per istanza di §2, e ogni domanda ha un **tetto di tempo** ([ADR 0041](0041-le-istanze-si-tengono-d-occhio.md)).
-- **Il risultato non si archivia.** Come ogni lettura federata, passa **in memoria e non si scrive su disco** (ADR 0018): al più una conservazione in memoria, con scadenza breve, per non rifare la domanda a ogni apertura del profilo.
-- **Chi risponde non registra chi chiede.** Contare, non registrare ([`SECURITY_BASELINE.md`](../SECURITY_BASELINE.md) §7), e nessuna funzione di prodotto può essere costruita su questo dato: niente «istanze che hanno chiesto di X».
+- **Il risultato non si archivia.** Come ogni lettura federata, passa **in memoria e non si scrive su disco** (ADR 0018 §«I contenuti si visitano, non si replicano»): al più una conservazione in memoria, con scadenza breve, per non rifare la domanda a ogni apertura del profilo.
+- **Chi risponde non registra chi chiede.** Contare, non registrare ([ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md) §3, che applica [`SECURITY_BASELINE.md`](../SECURITY_BASELINE.md) §7), e nessuna funzione di prodotto può essere costruita su questo dato: niente «istanze che hanno chiesto di X».
 - **Il prezzo, dichiarato:** un gruppo di bot già noto a Torino resta invisibile a Roma, se Roma e Torino non si conoscono. È la conseguenza diretta di «la scoperta segue il grafo sociale» (ADR 0018), e la stessa regola vale per la reputazione: ci si fida di chi ha scelto di fidarsi di qualcuno vicino.
 - **Un'istanza spenta porta via le proprie segnalazioni**, come porta via i propri post. Un avviso incompleto lo si dice («2 istanze non hanno risposto»), non lo si nasconde.
 
@@ -73,13 +73,13 @@ Nessuna soglia produce effetti da sola. Nessun numero di segnalazioni blocca, na
 
 ## Decisione 6: chi vede che cosa, e il diritto di replica
 
-| Chi                                | Vede                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------- |
-| Chi ha scritto la segnalazione     | Tutto, e può ritirarla                                                            |
-| L'admin della sua istanza          | Tutto, compreso chi l'ha scritta: ne risponde                                     |
-| Gli altri membri della sua istanza | Niente                                                                            |
+| Chi                                | Vede                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------ |
+| Chi ha scritto la segnalazione     | Tutto, e può ritirarla                                                               |
+| L'admin della sua istanza          | Tutto, compreso chi l'ha scritta: ne risponde                                        |
+| Gli altri membri della sua istanza | Niente                                                                               |
 | Un'istanza collegata che chiede    | Categoria, motivo, istanza di provenienza, data grossolana. **Non chi l'ha scritta** |
-| L'istanza segnalata                | Lo stesso, **se è collegata all'istanza di provenienza**. Non chi l'ha scritta    |
+| L'istanza segnalata                | Lo stesso, **se è collegata all'istanza di provenienza**. Non chi l'ha scritta       |
 
 La **data grossolana** (non l'ora, non il giorno) è una scelta di riservatezza: in una comunità piccola un orario preciso basta a riconoscere chi scrive.
 
@@ -101,16 +101,16 @@ Va scritto perché è il rischio vero: un avviso, per quanto «solo informativo�
 ## Che cosa vede il terzo
 
 - **L'istanza a cui chiedo** sa che mi interesso di X, e quando. È la stessa esposizione della ricerca inoltrata, e va nello stesso bilancio; la regola «contare, non registrare» (Decisione 4) la limita senza eliminarla.
-- **L'istanza segnalata**, se collegata alla provenienza, sa *da quale comunità* arriva la segnalazione. In un quartiere questo può bastare a restringere molto il campo di chi l'ha scritta. Non è eliminabile senza togliere il diritto di replica.
+- **L'istanza segnalata**, se collegata alla provenienza, sa _da quale comunità_ arriva la segnalazione. In un quartiere questo può bastare a restringere molto il campo di chi l'ha scritta. Non è eliminabile senza togliere il diritto di replica.
 - **Il relay** non vede niente di nuovo come categoria: vede che due istanze si parlano ([ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md) §5, [ADR 0045](0045-la-rete-dei-relay-della-comunita.md)), con qualche domanda in più fra istanze già collegate.
 
 ## Che cosa cambia nei documenti
 
-Nella successiva 4 di [`IMPLEMENTATION_PLAN.md`](../IMPLEMENTATION_PLAN.md) la voce diventa:
+Nel punto 4 delle milestone successive di [`IMPLEMENTATION_PLAN.md`](../IMPLEMENTATION_PLAN.md) la voce diventa:
 
-> **Le segnalazioni si visitano, i verdetti restano locali ([ADR 0047](adr/0047-le-segnalazioni-si-visitano.md)).** Chi segnala salva la segnalazione a casa propria e la ritira quando vuole; chi vuole sapere chiede alle istanze collegate, a un salto, e non archivia la risposta. Si contano le istanze, non le persone. Nessuna soglia agisce da sola.
+> **Le segnalazioni si visitano, i verdetti restano locali ([ADR 0047](0047-le-segnalazioni-si-visitano.md)).** Chi segnala salva la segnalazione a casa propria e la ritira quando vuole; chi vuole sapere chiede alle istanze collegate, a un salto, e non archivia la risposta. Si contano le istanze, non le persone. Nessuna soglia agisce da sola.
 
-La frase «le segnalazioni circolano, i verdetti no» in ADR 0020 §4 e in `PRODUCT_VISION.md` §7 va corretta con una nota datata che rimandi qui, come già si fa altrove: gli ADR sono verbali e non si riscrivono.
+La frase «le segnalazioni circolano, i verdetti no» in ADR 0020 §4, e la sua variante «segnalazioni che circolano ma verdetti che restano locali» in `PRODUCT_VISION.md` §7, vanno corrette con una nota datata che rimandi qui, come già si fa altrove: gli ADR sono verbali e non si riscrivono.
 
 ## Quando costruire
 

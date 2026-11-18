@@ -127,7 +127,7 @@ Il modello a ruoli dei social reali, senza procedure assembleari obbligatorie:
 - **Moderatori d'istanza** — gestiscono segnalazioni sul feed locale, nascondono contenuti, sospendono account.
 - **Admin di gruppo** — pieni poteri sul proprio gruppo.
 - **Strumenti individuali** — blocco, silenziamento, segnalazione: sempre disponibili a tutti.
-- **Livello federazione** — blocklist di istanze remote gestita dall'admin. Con [ADR 0018](adr/0018-federazione-fra-istanze-estia.md) questo livello diventa il più esposto, e le idee per farlo crescere senza costruire un'autorità centrale — segnalazioni che circolano ma verdetti che restano locali, offuscamento con i motivi in chiaro — sono registrate in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), milestone successiva 4.
+- **Livello federazione** — blocklist di istanze remote gestita dall'admin. Con [ADR 0018](adr/0018-federazione-fra-istanze-estia.md) questo livello diventa il più esposto, e le idee per farlo crescere senza costruire un'autorità centrale — segnalazioni che circolano ma verdetti che restano locali, offuscamento con i motivi in chiaro — sono registrate in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), milestone successiva 4. **Corretto il 2026-11-14** ([ADR 0047](adr/0047-le-segnalazioni-si-visitano.md)): le segnalazioni non circolano, **si visitano** — restano a casa di chi le scrive e si chiedono alle istanze collegate, a un salto — e i verdetti restano locali.
 
 Le comunità che vogliono processi deliberativi attivano il modulo di governance opzionale. Per tutte le altre quel modulo non esiste e non compare in interfaccia. La struttura è una scelta, non un'imposizione.
 
