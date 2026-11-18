@@ -33,3 +33,6 @@ __pycache__/
 # Misc
 .idea/
 .vscode/
+
+# macOS AppleDouble (exFAT)
+._*
