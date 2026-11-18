@@ -1,0 +1,91 @@
+# Ponte iroh in rete locale (container, 2026-11-18)
+
+## Casa Rust iroh 1.4.1 ← dispositivo Rust iroh 1.4.1
+{
+  "casa": "80d7ee1cc9692ef352623246dfb74772b699184d770628c15d85ed866957f198",
+  "dispositivo": "1c9813334c1eb9ddf44579bb6b13b9fe88f2118bf96c92e3072a67d372b52d2f",
+  "collegamento_ms": 2.879232,
+  "strada_iniziale": {
+    "tipo": "diretta",
+    "verso": "Ip(192.0.2.2:35574)",
+    "rtt_ms": 1.473232
+  },
+  "strada_finale": {
+    "tipo": "diretta",
+    "verso": "Ip(192.0.2.2:35574)",
+    "rtt_ms": 1.606601
+  },
+  "domande": 20,
+  "andata_ritorno_ms": [
+    0.778125,
+    0.966747,
+    0.703017,
+    0.6378860000000001,
+    0.675212,
+    0.705909,
+    0.893362,
+    0.818577,
+    0.7998770000000001,
+    1.0726259999999999,
+    0.7959860000000001,
+    0.720248,
+    0.713781,
+    0.813191,
+    0.636216,
+    0.703097,
+    0.759014,
+    0.832503,
+    0.8717860000000001,
+    0.793321
+  ],
+  "mediana_ms": 0.793321,
+  "eco_64k_ms": 1.834981
+}
+
+## Chiave non ammessa, stessa Casa
+chiusa dalla Casa: closed by peer: 0
+
+## Casa con @number0/iroh 1.1.0 (Node, quello di apps/core-api) ← dispositivo Rust iroh 1.4.1
+{
+  "casa": "8c2dfa6a28742cec5e1c78f6697b73957e41cf0a024611626651c4437270e888",
+  "dispositivo": "1c9813334c1eb9ddf44579bb6b13b9fe88f2118bf96c92e3072a67d372b52d2f",
+  "collegamento_ms": 3.644804,
+  "strada_iniziale": {
+    "tipo": "diretta",
+    "verso": "Ip(192.0.2.2:57542)",
+    "rtt_ms": 1.646546
+  },
+  "strada_finale": {
+    "tipo": "diretta",
+    "verso": "Ip(192.0.2.2:57542)",
+    "rtt_ms": 0.6369229999999999
+  },
+  "domande": 20,
+  "andata_ritorno_ms": [
+    1.517984,
+    1.2711540000000001,
+    1.8614140000000001,
+    1.476577,
+    1.594379,
+    1.716211,
+    1.2841459999999998,
+    1.3460729999999999,
+    1.239055,
+    2.437544,
+    1.312293,
+    1.8256080000000001,
+    1.6300990000000002,
+    2.4006190000000003,
+    1.173975,
+    1.128036,
+    1.393322,
+    1.465783,
+    1.3697780000000002,
+    1.463768
+  ],
+  "mediana_ms": 1.465783,
+  "eco_64k_ms": 10.554752
+}
+
+## Chiave non ammessa, Casa Node
+chiusa dalla Casa: closed by peer: 0

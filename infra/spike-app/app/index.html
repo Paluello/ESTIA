@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>ESTIA — spike S6</title>
+    <link rel="stylesheet" href="/src/stile.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Spike S6</h1>
+      <p class="sotto">Lo stack dell'app: WebView, MLS, cassaforte, iroh.</p>
+      <section>
+        <h2>Sonda</h2>
+        <p id="avanzamento" role="status">Avvio…</p>
+        <ol id="voci"></ol>
+      </section>
+      <section>
+        <h2>Bussa alla Casa</h2>
+        <p>La chiave di rete di questo dispositivo, da ammettere sulla Casa:</p>
+        <code id="mia-chiave">—</code>
+        <form id="bussa">
+          <label for="casa">Chiave della Casa</label>
+          <input
+            id="casa"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="64 caratteri esadecimali"
+          />
+          <button type="submit">Bussa</button>
+        </form>
+        <pre id="esito-bussa"></pre>
+      </section>
+      <section>
+        <h2>Risultato da copiare</h2>
+        <button id="copia" type="button">Copia il risultato</button>
+        <pre id="json"></pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

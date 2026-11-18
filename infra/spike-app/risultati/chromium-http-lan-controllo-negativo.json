@@ -1,0 +1,60 @@
+{
+  "quando": "2026-11-18T09:58:59.324Z",
+  "inTauri": false,
+  "voci": [
+    {
+      "nome": "Motore",
+      "esito": "info",
+      "dettaglio": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.8103.78 Safari/537.36"
+    },
+    {
+      "nome": "Origine",
+      "esito": "info",
+      "dettaglio": "http://estia.lan:8766"
+    },
+    {
+      "nome": "Contesto sicuro",
+      "esito": "no",
+      "dettaglio": "isSecureContext = false"
+    },
+    {
+      "nome": "crypto.subtle",
+      "esito": "no",
+      "dettaglio": "ASSENTE: ts-mls non può funzionare"
+    },
+    {
+      "nome": "CSP su WebAssembly",
+      "esito": "info",
+      "dettaglio": "bloccato (CompileError)"
+    },
+    {
+      "nome": "CSP viva (eval bloccato)",
+      "esito": "ok",
+      "dettaglio": "EvalError"
+    },
+    {
+      "nome": "Identità MLS da un avvio precedente",
+      "esito": "info",
+      "dettaglio": "no: primo avvio (o app reinstallata)"
+    },
+    {
+      "nome": "Anna: preparaDispositivo (identità + 10 KeyPackage)",
+      "esito": "no",
+      "dettaglio": "Tc: Cannot read properties of undefined (reading 'generateKey')",
+      "ms": 50
+    },
+    {
+      "nome": "Bruno: preparaDispositivo",
+      "esito": "no",
+      "dettaglio": "Tc: Cannot read properties of undefined (reading 'generateKey')",
+      "ms": 1
+    },
+    {
+      "nome": "Serializzazione del cassetto",
+      "esito": "ok",
+      "dettaglio": "Uint8Array e bigint attraversano il JSON"
+    }
+  ],
+  "riuscite": 2,
+  "fallite": 4
+}
