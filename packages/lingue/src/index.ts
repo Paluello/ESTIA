@@ -134,3 +134,42 @@ export function fraseDiErrore(
   }
   return traduci(lingua, chiave as Chiave, errore.params);
 }
+
+/** A sentence of the table sent by key, as the instance sends it (ADR 0046). */
+export interface FraseInviata {
+  chiave: string;
+  valori?: Valori;
+}
+
+function traduciUna(lingua: string, frase: FraseInviata): string | undefined {
+  const valori = frase.valori ?? {};
+
+  if (Object.hasOwn(RIFERIMENTO, frase.chiave)) {
+    return traduci(lingua, frase.chiave as Chiave, valori);
+  }
+
+  // A key with plural forms is sent by its base, with the count in `n`.
+  const n = valori["n"];
+  if (typeof n === "number" && Object.hasOwn(RIFERIMENTO, `${frase.chiave}.other`)) {
+    return traduciPlurale(lingua, frase.chiave as BasePlurale, n, valori);
+  }
+
+  return undefined;
+}
+
+/**
+ * Sentences the instance sent by key, read in `lingua` one after the other.
+ * `undefined` when one of the keys is not in the table: the caller then shows
+ * the instance's own English sentence, so a raw key is never the outcome.
+ */
+export function traduciFrasi(
+  lingua: string,
+  frasi: readonly FraseInviata[] | undefined,
+): string | undefined {
+  if (frasi === undefined || frasi.length === 0) {
+    return undefined;
+  }
+
+  const lette = frasi.map((frase) => traduciUna(lingua, frase));
+  return lette.every((letta): letta is string => letta !== undefined) ? lette.join(" ") : undefined;
+}

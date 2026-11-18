@@ -2,9 +2,11 @@ import {
   esisteLingua,
   formaPlurale,
   traduci,
+  traduciFrasi,
   traduciPlurale,
   type BasePlurale,
   type Chiave,
+  type FraseInviata,
   type Valori,
 } from "@estia/lingue";
 import { Fragment, createElement, useSyncExternalStore, type ReactNode } from "react";
@@ -55,6 +57,15 @@ export function impostaLingua(codice: string | undefined): void {
 
 export function t(chiave: Chiave, valori?: Valori): string {
   return traduci(corrente, chiave, valori);
+}
+
+/**
+ * Frasi che l'istanza manda per chiave (ADR 0046), nella lingua di adesso. Se
+ * una chiave non è nella tabella — un'istanza più nuova del client — si legge
+ * la frase inglese che l'istanza manda accanto, mai una chiave.
+ */
+export function tf(frasi: readonly FraseInviata[] | undefined, riserva: string): string {
+  return traduciFrasi(corrente, frasi) ?? riserva;
 }
 
 export function tn(base: BasePlurale, n: number, valori?: Valori): string {

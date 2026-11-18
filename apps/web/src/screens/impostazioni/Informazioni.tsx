@@ -2,7 +2,7 @@ import type { ConnectionView } from "@estia/contracts";
 import { useEffect, useState } from "react";
 
 import { api } from "../../api.js";
-import { t, tc, tn, useT } from "../../lingua.js";
+import { t, tc, tf, tn, useT } from "../../lingua.js";
 import { nomeIstanza, useSignedIn } from "../../state.js";
 import { Alert } from "../../ui/index.js";
 import { Sezione } from "./Sezione.js";
@@ -41,9 +41,9 @@ export function Informazioni(): React.ReactElement {
         {connessione === undefined ? (
           <p className="muted">{t("informazioni.connessione.guardo")}</p>
         ) : connessione.origin === "public" ? (
-          <Alert tone="error">{connessione.detail}</Alert>
+          <Alert tone="error">{tf(connessione.detailFrasi, connessione.detail)}</Alert>
         ) : (
-          <p className="muted">{connessione.detail}</p>
+          <p className="muted">{tf(connessione.detailFrasi, connessione.detail)}</p>
         )}
       </div>
 

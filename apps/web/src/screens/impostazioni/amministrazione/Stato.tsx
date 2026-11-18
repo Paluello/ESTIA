@@ -8,7 +8,7 @@ import type { Chiave } from "@estia/lingue";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../api.js";
-import { t, tc, useT } from "../../../lingua.js";
+import { t, tc, tf, useT } from "../../../lingua.js";
 import { useSignedIn } from "../../../state.js";
 import { Alert, Badge, Button } from "../../../ui/index.js";
 import { Sezione } from "../Sezione.js";
@@ -95,12 +95,17 @@ function ComandoCopiabile({ comando }: { comando: string }): React.ReactElement 
  * cartella sbagliata — si evitano solo leggendola.
  */
 function Passo({ passo }: { passo: UpdateCommand }): React.ReactElement {
+  useT();
   return (
     <div className="row">
       <span className="row__body">
-        <span className="row__title">{passo.title}</span>
+        <span className="row__title">
+          {tf(passo.titleFrase === undefined ? undefined : [passo.titleFrase], passo.title)}
+        </span>
         <ComandoCopiabile comando={passo.command} />
-        {passo.note !== undefined && <span className="row__note">{passo.note}</span>}
+        {passo.note !== undefined && (
+          <span className="row__note">{tf(passo.noteFrasi, passo.note)}</span>
+        )}
       </span>
     </div>
   );
@@ -121,7 +126,7 @@ function dettaglioAggiornamento(
     return t("stato.senza_backup_ora_si");
   }
 
-  return upgrade.detail;
+  return tf(upgrade.detailFrasi, upgrade.detail);
 }
 
 /**
@@ -213,7 +218,7 @@ export function Stato(): React.ReactElement {
         <div className="row">
           <span className="row__body">
             <span className="row__title">{t("stato.dove_dati")}</span>
-            <span className="row__note">{d.dataDurabilityDetail}</span>
+            <span className="row__note">{tf(d.dataDurabilityFrasi, d.dataDurabilityDetail)}</span>
           </span>
           <span className="row__end">
             <Badge tone={d.dataDurability === "persistent" ? "on" : "neutral"}>
@@ -234,7 +239,7 @@ export function Stato(): React.ReactElement {
         <div className="row">
           <span className="row__body">
             <span className="row__title">{t("stato.cifratura")}</span>
-            <span className="row__note">{d.atRest.detail}</span>
+            <span className="row__note">{tf(d.atRest.detailFrasi, d.atRest.detail)}</span>
             {d.atRest.declared !== "unspecified" && (
               <span className="row__note">
                 {t("stato.dichiarata", { come: t(DICHIARATA[d.atRest.declared]) })}
@@ -352,7 +357,7 @@ export function Stato(): React.ReactElement {
 
         {verifica !== undefined && (
           <>
-            <p className="muted">{verifica.detail}</p>
+            <p className="muted">{tf(verifica.detailFrasi, verifica.detail)}</p>
             {verifica.currentRevision !== undefined && (
               <p className="muted">
                 {tc("stato.revisione", {

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { esisteLingua, fraseDiErrore, lingue, traduci, traduciPlurale } from "./index.js";
+import {
+  esisteLingua,
+  fraseDiErrore,
+  lingue,
+  traduci,
+  traduciFrasi,
+  traduciPlurale,
+} from "./index.js";
 
 describe("traduci", () => {
   it("reads the phrase in the requested language", () => {
@@ -82,5 +89,32 @@ describe("lingue", () => {
     );
     expect(esisteLingua("it")).toBe(true);
     expect(esisteLingua("toString")).toBe(false);
+  });
+});
+
+describe("traduciFrasi", () => {
+  it("reads sentences sent by key in the language asked for, one after the other", () => {
+    const frasi = [
+      { chiave: "comune.salvo" },
+      { chiave: "comune.password_minimo", valori: { n: 8 } },
+    ];
+    expect(traduciFrasi("it", frasi)).toBe("Salvo… Almeno 8 caratteri.");
+    expect(traduciFrasi("en", frasi)).toBe("Saving… At least 8 characters.");
+  });
+
+  it("picks the plural form of a base sent with its count", () => {
+    expect(traduciFrasi("it", [{ chiave: "battito.minuti_fa", valori: { n: 1 } }])).toBe(
+      "un minuto fa",
+    );
+    expect(traduciFrasi("en", [{ chiave: "battito.minuti_fa", valori: { n: 5 } }])).toBe(
+      "5 minutes ago",
+    );
+  });
+
+  it("gives up on a key the table does not know, so the caller shows its fallback", () => {
+    expect(traduciFrasi("it", [{ chiave: "comune.salvo" }, { chiave: "non.esiste" }])).toBe(
+      undefined,
+    );
+    expect(traduciFrasi("it", undefined)).toBe(undefined);
   });
 });

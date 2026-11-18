@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 
-import type { DataDurability } from "@estia/contracts";
+import type { DataDurability, Frase } from "@estia/contracts";
 
+import { detto, frase } from "../frasi.js";
 import { findMountFor, type SystemRoots } from "./atrest.js";
 
 /**
@@ -53,7 +54,10 @@ const MARKERS: ContainerMarkers = {
 
 export interface DurabilityReport {
   durability: DataDurability;
+  /** In English, for the logs and the start-up refusal. */
   detail: string;
+  /** The same, by key (ADR 0046). */
+  detailFrasi: readonly Frase[];
 }
 
 /**
@@ -72,8 +76,7 @@ export function inspectDataDurability(
     mountInfo = readFileSync(roots.mountInfo, "utf8");
   } catch {
     return {
-      detail:
-        "Questo sistema non espone la tabella dei mount: l'istanza non può stabilire se i suoi dati sopravviveranno a un aggiornamento.",
+      ...detto(frase("diagnostica.durata.senza_mount")),
       durability: "unknown",
     };
   }
@@ -90,7 +93,7 @@ export function inspectDataDurability(
 
   if (mount === undefined) {
     return {
-      detail: `Non ho trovato quale volume contiene ${target}: la durata dei dati non è verificabile.`,
+      ...detto(frase("diagnostica.durata.volume_ignoto", { percorso: target })),
       durability: "unknown",
     };
   }
@@ -104,7 +107,7 @@ export function inspectDataDurability(
   // directory on it is as durable as anything else here.
   if (!containerised) {
     return {
-      detail: `I dati stanno in ${target}, su un filesystem di questa macchina.`,
+      ...detto(frase("diagnostica.durata.macchina", { percorso: target })),
       durability: "persistent",
     };
   }
@@ -113,7 +116,7 @@ export function inspectDataDurability(
   // the writable layer, and the writable layer is thrown away on every update.
   if (mount.mountPoint === "/") {
     return {
-      detail: `I dati stanno dentro il container, in ${target}, e non su un volume. **Al prossimo aggiornamento dell'immagine spariranno**: account, contenuti, fotografie e la chiave privata dell'istanza, che non è sostituibile. Ferma l'istanza e monta una cartella o un volume su ${target} prima di usarla davvero.`,
+      ...detto(frase("diagnostica.durata.effimera", { percorso: target })),
       durability: "ephemeral",
     };
   }
@@ -124,13 +127,18 @@ export function inspectDataDurability(
 
   if (anonymous) {
     return {
-      detail: `I dati stanno su un volume Docker **anonimo** (\`${volumeNameIn(mount.root)}\`), montato in ${mount.mountPoint}: nessuno l'ha chiesto, quindi nessuno se lo porta dietro. **Sopravvive solo se aggiorni con \`docker compose\`**; se ricrei il container dal pannello del NAS, da Portainer, con Watchtower o a mano, Docker ne attacca uno nuovo e vuoto e l'istanza riparte da zero — account, contenuti, fotografie e la chiave privata, che non è sostituibile. Monta una cartella tua o un volume con un nome su ${mount.mountPoint}.`,
+      ...detto(
+        frase("diagnostica.durata.anonima", {
+          volume: volumeNameIn(mount.root),
+          montato: mount.mountPoint,
+        }),
+      ),
       durability: "anonymous",
     };
   }
 
   return {
-    detail: `I dati stanno su un volume montato in ${mount.mountPoint}, quindi sopravvivono agli aggiornamenti dell'immagine.`,
+    ...detto(frase("diagnostica.durata.volume", { montato: mount.mountPoint })),
     durability: "persistent",
   };
 }

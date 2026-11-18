@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../../api.js";
 import { spiega } from "../../../errori.js";
-import { t, tc, useT } from "../../../lingua.js";
+import { t, tc, tf, useT } from "../../../lingua.js";
 import { useSignedIn } from "../../../state.js";
 import {
   Alert,
@@ -219,7 +219,7 @@ export function EstiaNet(): React.ReactElement {
       const ping = await api.pingInstance(token, publicKey);
       await caricaFederazione();
       setMessaggio({
-        testo: ping.detail,
+        testo: tf(ping.detailFrasi, ping.detail),
         tono: ping.reached ? "ok" : "error",
       });
     } catch (causa) {
@@ -463,7 +463,7 @@ export function EstiaNet(): React.ReactElement {
           {!accesa && (
             <div className="card">
               <h2 className="gruppo">{t("estianet.accendi.titolo")}</h2>
-              <p className="muted">{rete.detail}</p>
+              <p className="muted">{tf(rete.detailFrasi, rete.detail)}</p>
 
               {rete.editable ? (
                 <>

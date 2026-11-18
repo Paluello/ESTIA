@@ -84,6 +84,7 @@ export function registerAdminRoutes(
       connections: services.connections(),
       dataDurability: services.durability.durability,
       dataDurabilityDetail: services.durability.detail,
+      dataDurabilityFrasi: [...services.durability.detailFrasi],
       instanceState: services.instance.getPublicView().state,
       ...(services.lastUpgrade === undefined ? {} : { lastUpgrade: services.lastUpgrade }),
       memberCount: services.identity.countUsers(),

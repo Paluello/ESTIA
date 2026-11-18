@@ -1,3 +1,30 @@
+/**
+ * A sentence of the phrase table, sent by its key (ADR 0046): the client reads
+ * it in the language of whoever is looking, and the `detail` next to it stays
+ * as the English fallback for a client that does not know the key yet. A
+ * value named `n` picks the plural form, when the key has them.
+ */
+export interface Frase {
+  chiave: string;
+  valori?: Record<string, string | number>;
+}
+
+export const fraseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["chiave"],
+  properties: {
+    chiave: { type: "string" },
+    valori: {
+      type: "object",
+      additionalProperties: { anyOf: [{ type: "string" }, { type: "number" }] },
+    },
+  },
+} as const;
+
+/** One or more sentences of the table, read one after the other. */
+export const frasiSchema = { type: "array", items: fraseSchema } as const;
+
 export interface HealthResponse {
   status: "ok";
 }
@@ -948,6 +975,8 @@ export interface AtRestReport {
   detected: AtRestEncryptionState;
   /** The same thing in a sentence an administrator can act on. */
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
   declared: AtRestDeclaredLevel;
   /**
    * False when the declaration claims a protection the instance cannot see.
@@ -963,6 +992,7 @@ export const atRestReportSchema = {
   properties: {
     detected: { type: "string", enum: ["unknown", "active", "inactive"] },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
     declared: { type: "string", enum: AT_REST_DECLARED_LEVELS },
     consistent: { type: "boolean" },
   },
@@ -988,6 +1018,8 @@ export interface SchemaUpgradeView {
   backupName?: string;
   /** The same thing in a sentence an administrator can act on. */
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
 }
 
 export const schemaUpgradeViewSchema = {
@@ -1002,6 +1034,7 @@ export const schemaUpgradeViewSchema = {
     backupStatus: { type: "string", enum: ["created", "not_configured", "failed"] },
     backupName: { type: "string" },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
   },
 } as const;
 
@@ -1024,6 +1057,8 @@ export interface BackupReport {
   health: BackupHealth;
   /** The same thing in a sentence an administrator can act on. */
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
   intervalHours?: number;
   keep?: number;
   /** Newest periodic archive. */
@@ -1037,6 +1072,8 @@ export interface BackupReport {
    * rather than discovering.
    */
   memoryWarning?: string;
+  /** `memoryWarning` by its keys. */
+  memoryWarningFrasi?: Frase[];
 }
 
 const backupArchiveViewSchema = {
@@ -1060,11 +1097,13 @@ export const backupReportSchema = {
       enum: ["not_configured", "waiting", "healthy", "stale", "missing"],
     },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
     intervalHours: { type: "integer", minimum: 1 },
     keep: { type: "integer", minimum: 1 },
     last: backupArchiveViewSchema,
     lastUpgradeArchive: backupArchiveViewSchema,
     memoryWarning: { type: "string" },
+    memoryWarningFrasi: frasiSchema,
   },
 } as const;
 
@@ -1207,6 +1246,8 @@ const originSightingSchema = {
 export interface ConnectionView {
   origin: ConnectionOrigin;
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
 }
 
 export const connectionViewSchema = {
@@ -1216,6 +1257,7 @@ export const connectionViewSchema = {
   properties: {
     origin: { type: "string", enum: CONNECTION_ORIGINS },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
   },
 } as const;
 
@@ -1236,6 +1278,8 @@ export interface NetworkProbeReport {
   state: NetworkProbeState;
   /** The same thing in a sentence an administrator can act on. */
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
   /** What it is set to, which is not the same as how it turned out. */
   mode: NetworkProbeMode;
   /**
@@ -1272,6 +1316,7 @@ export const networkProbeReportSchema = {
   properties: {
     state: { type: "string", enum: ["off", "unavailable", "ready"] },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
     mode: { type: "string", enum: NETWORK_PROBE_MODES },
     editable: { type: "boolean" },
     endpointId: { type: "string" },
@@ -1307,6 +1352,8 @@ export const networkProbeRequestSchema = {
 export interface NetworkProbeResult {
   reached: boolean;
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
   elapsedMs?: number;
   /** False when the packets went straight there, true when a relay carried them. */
   viaRelay?: boolean;
@@ -1321,6 +1368,7 @@ export const networkProbeResultSchema = {
   properties: {
     reached: { type: "boolean" },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
     elapsedMs: { type: "number", minimum: 0 },
     viaRelay: { type: "boolean" },
     pathRttMs: { type: "number", minimum: 0 },
@@ -1344,6 +1392,8 @@ export interface AdminDiagnostics {
   dataDurability: DataDurability;
   /** The same thing in a sentence an administrator can act on. */
   dataDurabilityDetail: string;
+  /** `dataDurabilityDetail` by its keys. */
+  dataDurabilityFrasi?: Frase[];
   /** Which kinds of network have reached this instance since it started. */
   connections: OriginSighting[];
   /** The measurement rig of ADR 0018: off unless asked for. */
@@ -1374,6 +1424,7 @@ export const adminDiagnosticsSchema = {
     dataDirectorySecure: { type: "boolean" },
     dataDurability: { type: "string", enum: DATA_DURABILITIES },
     dataDurabilityDetail: { type: "string" },
+    dataDurabilityFrasi: frasiSchema,
     connections: { type: "array", items: originSightingSchema },
     network: networkProbeReportSchema,
     lastUpgrade: schemaUpgradeViewSchema,
@@ -1398,9 +1449,13 @@ export type UpdateCheckStatus = "up_to_date" | "available" | "unknown";
 export interface UpdateCommand {
   /** Che cosa fa, in una riga. */
   title: string;
+  /** `title` by its key, for the client to read in its own language. */
+  titleFrase?: Frase;
   command: string;
   /** L'avvertenza che rende il comando sicuro, quando ce n'è una. */
   note?: string;
+  /** `note` by its keys. */
+  noteFrasi?: Frase[];
 }
 
 export const updateCommandSchema = {
@@ -1409,8 +1464,10 @@ export const updateCommandSchema = {
   required: ["title", "command"],
   properties: {
     title: { type: "string" },
+    titleFrase: fraseSchema,
     command: { type: "string" },
     note: { type: "string" },
+    noteFrasi: frasiSchema,
   },
 } as const;
 
@@ -1418,6 +1475,8 @@ export interface UpdateCheckResult {
   status: UpdateCheckStatus;
   /** One sentence an administrator can act on. */
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
   /** Image ref compared against, e.g. `ghcr.io/chrono-web/estia:latest`. */
   channel: string;
   /** Commit this instance was built from, when the image declares it. */
@@ -1442,6 +1501,7 @@ export const updateCheckResultSchema = {
   properties: {
     status: { type: "string", enum: ["up_to_date", "available", "unknown"] },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
     channel: { type: "string" },
     currentRevision: { type: "string", minLength: 7, maxLength: 40 },
     latestRevision: { type: "string", minLength: 7, maxLength: 40 },
@@ -1657,6 +1717,8 @@ export const federationKeyRequestSchema = {
 export interface FederationPingResult {
   reached: boolean;
   detail: string;
+  /** `detail` by its keys, for the client to read in its own language. */
+  detailFrasi?: Frase[];
   declaredName?: string;
   via?: "diretto" | "relay";
 }
@@ -1668,6 +1730,7 @@ export const federationPingResultSchema = {
   properties: {
     reached: { type: "boolean" },
     detail: { type: "string" },
+    detailFrasi: frasiSchema,
     declaredName: { type: "string" },
     via: { type: "string", enum: ["diretto", "relay"] },
   },

@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -7,6 +8,10 @@ import { describe, expect, it } from "vitest";
 import { composeProjectIn, describeInstallation, updateCommands } from "./comandi.js";
 import { containerIdIn, detectInstallation, volumeNameIn } from "./installazione.js";
 import { DEFAULT_UPDATE_CHANNEL } from "./check.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 const ID = "3f2a1b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708";
 
@@ -119,15 +124,15 @@ describe("updateCommands", () => {
     const passi = updateCommands({ kind: "volume", volume: "estia-data" }, DEFAULT_UPDATE_CHANNEL);
 
     expect(passi[0]?.command).toBe("estia aggiorna");
-    expect(passi[0]?.title).toContain("estia");
-    expect(passi[0]?.note).toContain("scarica l'immagine nuova");
+    expect(inItaliano([passi[0]?.titleFrase ?? { chiave: "" }])).toContain("estia");
+    expect(inItaliano(passi[0]?.noteFrasi)).toContain("scarica l'immagine nuova");
   });
 
   it("mette il pull come primo passo manuale e dice che da solo non aggiorna niente", () => {
     const passi = updateCommands({ kind: "volume", volume: "estia-data" }, DEFAULT_UPDATE_CHANNEL);
 
     expect(passi[1]?.command).toBe(`docker pull ${DEFAULT_UPDATE_CHANNEL}`);
-    expect(passi[1]?.note).toContain("da solo non aggiorna niente");
+    expect(inItaliano(passi[1]?.noteFrasi)).toContain("da solo non aggiorna niente");
   });
 
   it("compila il cd con l'id del container, che è la sola cosa che l'istanza sa di sé", () => {
@@ -183,8 +188,12 @@ describe("updateCommands", () => {
   it("titola ogni ricreazione con il caso a cui serve, non con la sua posizione", () => {
     const passi = updateCommands({ kind: "bind", containerId: ID }, DEFAULT_UPDATE_CHANNEL);
 
-    expect(passi[2]?.title).toMatch(/se l'ha creata il pannello del NAS/i);
-    expect(passi[3]?.title).toMatch(/se l'istanza l'ha creata Compose/i);
+    expect(inItaliano([passi[2]?.titleFrase ?? { chiave: "" }])).toMatch(
+      /se l'ha creata il pannello del NAS/i,
+    );
+    expect(inItaliano([passi[3]?.titleFrase ?? { chiave: "" }])).toMatch(
+      /se l'istanza l'ha creata Compose/i,
+    );
   });
 
   it("su un volume senza prefisso propone per primo il comando di installazione tra i manuali", () => {

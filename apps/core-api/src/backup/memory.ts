@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 
+import type { Frase } from "@estia/contracts";
+
+import { frase } from "../frasi.js";
+
 /**
  * How much memory a backup needs, and whether this container has it.
  *
@@ -93,7 +97,7 @@ function gigabytes(bytes: number): string {
 export function backupMemoryWarning(
   storedBytes: number,
   limitBytes: number | undefined,
-): string | undefined {
+): Frase | undefined {
   if (limitBytes === undefined || storedBytes <= 0) {
     return undefined;
   }
@@ -104,5 +108,9 @@ export function backupMemoryWarning(
     return undefined;
   }
 
-  return `Questa istanza conserva ${gigabytes(storedBytes)} e il container ha un limite di memoria di ${gigabytes(limitBytes)}. Un backup ne chiede circa ${gigabytes(needed)}, perché l'archivio viene cifrato tutto in memoria: sotto quella soglia il sistema uccide il processo senza scrivere niente nei log, e l'istanza si riavvia. Alza il limite di memoria del container, oppure sposta i backup fuori dall'istanza.`;
+  return frase("diagnostica.backup.memoria", {
+    conserva: gigabytes(storedBytes),
+    limite: gigabytes(limitBytes),
+    serve: gigabytes(needed),
+  });
 }

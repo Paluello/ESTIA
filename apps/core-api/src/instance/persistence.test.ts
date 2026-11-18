@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -8,6 +9,10 @@ import { describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
 import { inspectDataDurability, type ContainerMarkers } from "./persistence.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * The failure this exists for was reproduced on the published image the
@@ -67,9 +72,9 @@ describe("whether the data survives the next update", () => {
       const report = inspectDataDurability("/data", roots, markers);
 
       expect(report.durability).toBe("ephemeral");
-      expect(report.detail).toMatch(/spariranno/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/spariranno/);
       // And it names the part that cannot be recovered by any means.
-      expect(report.detail).toMatch(/chiave privata/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/chiave privata/);
     });
   });
 
@@ -98,11 +103,11 @@ describe("whether the data survives the next update", () => {
       const report = inspectDataDurability("/data", roots, markers);
 
       expect(report.durability).toBe("anonymous");
-      expect(report.detail).toMatch(/anonimo/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/anonimo/);
       // Says where the data is lost, not merely that it might be.
-      expect(report.detail).toMatch(/pannello del NAS/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/pannello del NAS/);
       // And names the volume, which is what recovering an orphaned one takes.
-      expect(report.detail).toMatch(
+      expect(inItaliano(report.detailFrasi)).toMatch(
         /681ee294d25bfb06184de4a1375bb95764e0ef437e9715eb8dbac2937af2bff2/,
       );
     });
@@ -114,7 +119,9 @@ describe("whether the data survives the next update", () => {
         container: true,
       });
 
-      expect(inspectDataDurability("/data", roots, markers).detail).not.toMatch(/anonimo/);
+      expect(inItaliano(inspectDataDurability("/data", roots, markers).detailFrasi)).not.toMatch(
+        /anonimo/,
+      );
     });
   });
 
@@ -165,14 +172,17 @@ describe("what the person about to trust it is told", () => {
   const SETUP_TOKEN = "token-di-prova";
   const EPHEMERAL = {
     detail: "I dati stanno dentro il container e spariranno al prossimo aggiornamento.",
+    detailFrasi: [],
     durability: "ephemeral",
   } as const;
   const ANONYMOUS = {
     detail: "I dati stanno su un volume anonimo, e il pannello del NAS non se lo porta dietro.",
+    detailFrasi: [],
     durability: "anonymous",
   } as const;
   const PERSISTENT = {
     detail: "I dati stanno su un volume montato in /data.",
+    detailFrasi: [],
     durability: "persistent",
   } as const;
 

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../../api.js";
 import { spiega } from "../../../errori.js";
-import { t, tc, useT } from "../../../lingua.js";
+import { t, tc, tf, useT } from "../../../lingua.js";
 import { useSignedIn } from "../../../state.js";
 import { Alert, Badge, Button, Live, TextField } from "../../../ui/index.js";
 import { Sezione } from "../Sezione.js";
@@ -196,14 +196,16 @@ export function Backup(): React.ReactElement {
         <div className="row">
           <span className="row__body">
             <span className="row__title">{t("backup.stato")}</span>
-            <span className="row__note">{report.detail}</span>
+            <span className="row__note">{tf(report.detailFrasi, report.detail)}</span>
           </span>
           <span className="row__end">
             <Badge tone={tonoSalute(report.health)}>{t(SALUTE[report.health])}</Badge>
           </span>
         </div>
 
-        {report.memoryWarning !== undefined && <Alert>{report.memoryWarning}</Alert>}
+        {report.memoryWarning !== undefined && (
+          <Alert>{tf(report.memoryWarningFrasi, report.memoryWarning)}</Alert>
+        )}
 
         {ALLARMANTI.has(report.health) && (
           <Alert tone="error">
