@@ -153,7 +153,7 @@ Il modello target distingue:
 
 1. **Rete** — accesso al servizio soltanto da dispositivi autorizzati.
 2. **Dati a riposo** — cifratura del volume o del database e backup cifrati.
-3. **Messaggi E2E** — cifratura end-to-end. Costruita per i DM 1:1 in M6 con `ESTIA-E2E-v1` ([ADR 0036](adr/0036-estia-e2e-v1-e-il-debito-verso-mls.md)); **dal 2026-09-23 il client web usa MLS** ([ADR 0038](adr/0038-mls-si-adotta-e-si-comincia-dal-web.md)) con la custodia lato mittente di [ADR 0043](adr/0043-custodia-lato-mittente.md), e dal 2026-10-07 `ESTIA-E2E-v1` è ritirato. La verifica delle chiavi (il numero di sicurezza) non è ancora costruita. I gruppi restano fuori: chiedono MLS, e MLS non è costruito.
+3. **Messaggi E2E** — cifratura end-to-end. Costruita per i DM 1:1 in M6 con `ESTIA-E2E-v1` ([ADR 0036](adr/0036-estia-e2e-v1-e-il-debito-verso-mls.md)); **dal 2026-09-23 il client web usa MLS** ([ADR 0038](adr/0038-mls-si-adotta-e-si-comincia-dal-web.md)) con la custodia lato mittente di [ADR 0043](adr/0043-custodia-lato-mittente.md), e dal 2026-10-07 `ESTIA-E2E-v1` è ritirato. La verifica delle chiavi (il numero di sicurezza) è nel client web dal 2026-11-27, con la derivazione di [ADR 0048](adr/0048-il-numero-di-sicurezza.md), **Proposed**. I gruppi restano fuori: chiedono MLS, e MLS non è costruito.
 
 Il feed locale è leggibile dal server che lo ospita. Le chat non possono essere definite end-to-end finché le chiavi non risiedono esclusivamente sui dispositivi destinatari.
 
