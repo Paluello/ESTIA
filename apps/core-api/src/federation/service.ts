@@ -65,6 +65,14 @@ import {
   type ProtocolRequest,
   type ProtocolResponse,
   type RelationshipView,
+  CATEGORIE_SEGNALAZIONE,
+  MAX_MOTIVO_LENGTH,
+  MAX_REPLICA_LENGTH,
+  type ReplicaRequest,
+  type ReplicaResponse,
+  type SegnalazioneSulFilo,
+  type SegnalazioniRequest,
+  type SegnalazioniResponse,
 } from "./protocol.js";
 import type {
   ReachedVia,
@@ -307,6 +315,16 @@ export interface MessaggiDirectory {
     | undefined;
 }
 
+/**
+ * Le segnalazioni dei membri di qui, come le vede la rete ([ADR 0049]).
+ * Una porta e non il servizio, come le altre: il filo non sa che cos'è un
+ * database.
+ */
+export interface SegnalazioniDirectory {
+  perLaRete(istanza: string): SegnalazioneSulFilo[];
+  replicaPerLaRete(): { testo: string; mese: string } | undefined;
+}
+
 export interface FederationServiceOptions {
   remotes: RemoteInstanceRepository;
   /** Absent until profiles exist; then the two request types start answering. */
@@ -371,6 +389,7 @@ export class FederationService implements AlpnService {
   #follows: FollowDirectory | undefined;
   #boards: BoardDirectory | undefined;
   #messaggi: MessaggiDirectory | undefined;
+  #segnalazioni: SegnalazioniDirectory | undefined;
 
   /** Open connections by remote key, so that blocking can close them at once. */
   readonly #open = new Map<string, Set<IrohConnection>>();
@@ -402,6 +421,10 @@ export class FederationService implements AlpnService {
   /** Come `useFollows`, e per lo stesso motivo: il feed nasce dopo di qui. */
   public useBoards(boards: BoardDirectory): void {
     this.#boards = boards;
+  }
+
+  public useSegnalazioni(segnalazioni: SegnalazioniDirectory): void {
+    this.#segnalazioni = segnalazioni;
   }
 
   public useMessaggi(messaggi: MessaggiDirectory): void {
@@ -547,6 +570,8 @@ export class FederationService implements AlpnService {
     | CuoreResponse
     | CommentoResponse
     | DettaglioPostResponse
+    | SegnalazioniResponse
+    | ReplicaResponse
     | ReturnType<typeof errorResponse>
     | Promise<
         | PresentazioneResponse
@@ -708,6 +733,15 @@ export class FederationService implements AlpnService {
         "non_collegata",
         "Questa istanza risponde solo a chi è collegato o ha già qualcuno in comune.",
       );
+    }
+
+    // Le segnalazioni e la replica, solo fra **collegate** ([ADR 0049]
+    // Decisione 1): un follow accettato si ottiene da soli, e un giudizio su
+    // un'istanza non si dà a chi si è messo in contatto da solo. Prima di
+    // `markSeen`, e senza scrivere niente: chi risponde non registra chi
+    // chiede (ADR 0047 Decisione 4).
+    if (request.tipo === "segnalazioni" || request.tipo === "replica") {
+      return this.#serveSegnalazioni(view, request);
     }
 
     this.#remotes.markSeen({ at, declaredName: request.nome, publicKey: remoteKey });
@@ -951,6 +985,30 @@ export class FederationService implements AlpnService {
     return esito === undefined
       ? errorResponse("non_trovato", "Nessun post con questo identificativo.")
       : { ok: true };
+  }
+
+  #serveSegnalazioni(
+    view: RelationshipView,
+    request: SegnalazioniRequest | ReplicaRequest,
+  ): SegnalazioniResponse | ReplicaResponse | ReturnType<typeof errorResponse> {
+    if (view !== "collegata") {
+      return errorResponse(
+        "non_collegata",
+        "Questa istanza risponde sulle segnalazioni solo alle istanze con cui è collegata.",
+      );
+    }
+
+    if (this.#segnalazioni === undefined) {
+      return errorResponse("richiesta_sconosciuta", "Questa istanza non gestisce le segnalazioni.");
+    }
+
+    if (request.tipo === "segnalazioni") {
+      return { ok: true, segnalazioni: this.#segnalazioni.perLaRete(request.istanza) };
+    }
+
+    const replica = this.#segnalazioni.replicaPerLaRete();
+
+    return replica === undefined ? { ok: true } : { ok: true, replica };
   }
 
   #serveDettaglioPost(
@@ -1545,6 +1603,84 @@ export class FederationService implements AlpnService {
   /**
    * Va a prendere il dettaglio di un post e i suoi commenti su un'altra istanza.
    */
+  /**
+   * Che cosa dicono i membri di `target` dell'istanza `istanza` ([ADR 0049]).
+   *
+   * Si fida di quel che torna solo dopo averlo controllato: categoria nota,
+   * motivo entro il tetto, mese in forma `AAAA-MM`. Qualsiasi altra cosa —
+   * una casa spenta, una più vecchia che non conosce la domanda, una risposta
+   * storta — è una casa che **non ha risposto**, e l'avviso lo dice.
+   */
+  public async segnalazioniPresso(
+    target: string,
+    istanza: string,
+    timeoutMs = TIMEOUT_RICERCA_MS,
+  ): Promise<{ esito: "risposta"; segnalazioni: SegnalazioneSulFilo[] } | { esito: "muta" }> {
+    try {
+      const { response } = await this.#ask(
+        target,
+        { istanza, nome: this.#instanceName(), tipo: "segnalazioni" },
+        MAX_RESPONSE_BYTES,
+        timeoutMs,
+      );
+
+      if (!isOk(response) || !Array.isArray(response.segnalazioni)) {
+        return { esito: "muta" };
+      }
+
+      return {
+        esito: "risposta",
+        segnalazioni: response.segnalazioni.filter(isSegnalazioneSulFilo),
+      };
+    } catch {
+      return { esito: "muta" };
+    }
+  }
+
+  /** La replica di `target` alle segnalazioni su di sé, se ne ha scritta una. */
+  public async replicaPresso(
+    target: string,
+    timeoutMs = TIMEOUT_RICERCA_MS,
+  ): Promise<
+    { esito: "replica"; testo: string; mese: string } | { esito: "nessuna" } | { esito: "muta" }
+  > {
+    try {
+      const { response } = await this.#ask(
+        target,
+        { nome: this.#instanceName(), tipo: "replica" },
+        MAX_RESPONSE_BYTES,
+        timeoutMs,
+      );
+
+      if (!isOk(response)) {
+        return { esito: "muta" };
+      }
+
+      const replica = response.replica;
+
+      if (replica === undefined) {
+        return { esito: "nessuna" };
+      }
+
+      if (
+        typeof replica === "object" &&
+        replica !== null &&
+        typeof (replica as { testo?: unknown }).testo === "string" &&
+        (replica as { testo: string }).testo.length <= MAX_REPLICA_LENGTH &&
+        typeof (replica as { mese?: unknown }).mese === "string" &&
+        MESE.test((replica as { mese: string }).mese)
+      ) {
+        const { mese, testo } = replica as { testo: string; mese: string };
+
+        return { esito: "replica", mese, testo };
+      }
+
+      return { esito: "muta" };
+    } catch {
+      return { esito: "muta" };
+    }
+  }
+
   public async fetchDettaglioPost(
     instanceKey: string,
     chi: { nome: string; prova: string },
@@ -2431,6 +2567,26 @@ function codiceDi(response: unknown): unknown {
   return typeof response === "object" && response !== null
     ? (response as { codice?: unknown }).codice
     : undefined;
+}
+
+const MESE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function isSegnalazioneSulFilo(value: unknown): value is SegnalazioneSulFilo {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const { categoria, mese, motivo } = value as Record<string, unknown>;
+
+  return (
+    typeof categoria === "string" &&
+    (CATEGORIE_SEGNALAZIONE as readonly string[]).includes(categoria) &&
+    typeof motivo === "string" &&
+    motivo.length > 0 &&
+    motivo.length <= MAX_MOTIVO_LENGTH &&
+    typeof mese === "string" &&
+    MESE.test(mese)
+  );
 }
 
 function isOk(response: unknown): response is Record<string, unknown> & { ok: true } {
