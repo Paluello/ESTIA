@@ -56,8 +56,15 @@ export interface DeviceKeysRepository {
    * di cancellare la riga, quindi nemmeno il `ON DELETE CASCADE` scatta. Questa
    * query legge la verita' invece di fidarsi di una chiamata che non c'e'.
    */
-  getActiveDeviceKeysByUserId(userId: string): DeviceKeyRecord[];
-  /** Se questa persona ha gia' un dispositivo che puo' dire di si' a un altro. */
+  getActiveDeviceKeysByUserId(userId: string, adesso?: string): DeviceKeyRecord[];
+  /**
+   * Se questa persona ha **mai** avuto un dispositivo approvato.
+   *
+   * «Mai», non «adesso»: se contasse solo chi ha una sessione aperta, chi ha
+   * la password potrebbe uscire o revocare tutti i dispositivi della vittima e
+   * rientrare come «primo dispositivo», che si approva da solo. Il primo
+   * dispositivo è il primo davvero, una volta sola.
+   */
   hasApprovedDeviceKey(userId: string): boolean;
   /**
    * Se questa chiave pubblica e' gia' stata approvata per questa persona.
@@ -68,6 +75,8 @@ export interface DeviceKeysRepository {
    * essere lui, quindi non deve chiedere il permesso a nessuno.
    */
   isPublicKeyApproved(userId: string, publicKey: string): boolean;
+  /** Toglie dal registro le chiavi della sessione revocata da qualcun altro. */
+  revokeDeviceKeysOfSession(sessionId: string, revokedAt: string): void;
   getDeviceKeyById(id: string): DeviceKeyRecord | undefined;
   revokeDeviceKey(id: string, revokedAt: string): void;
   approvaDeviceKey(id: string, approvatoIl: string): void;
@@ -119,6 +128,10 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
         `INSERT INTO device_keys (id, session_id, user_id, public_key, algorithm, created_at, revoked_at, approvato_il)
          VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
          ON CONFLICT (id) DO UPDATE SET
+           approvato_il = CASE
+             WHEN device_keys.public_key = excluded.public_key THEN device_keys.approvato_il
+             ELSE excluded.approvato_il
+           END,
            public_key = excluded.public_key,
            algorithm = excluded.algorithm,
            created_at = excluded.created_at,
@@ -140,17 +153,35 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
   }
 
   hasApprovedDeviceKey(userId: string): boolean {
-    return this.getActiveDeviceKeysByUserId(userId).length > 0;
+    const row = this.db
+      .prepare(`SELECT 1 FROM device_keys WHERE user_id = ? AND approvato_il IS NOT NULL LIMIT 1`)
+      .get(userId);
+    return row !== undefined;
   }
 
+  /**
+   * Approvata almeno una volta, e **mai** tolta da qualcuno: un dispositivo
+   * revocato dal proprietario non rientra ripresentando la propria chiave.
+   */
   isPublicKeyApproved(userId: string, publicKey: string): boolean {
     const row = this.db
       .prepare(
         `SELECT 1 FROM device_keys
-         WHERE user_id = ? AND public_key = ? AND approvato_il IS NOT NULL`,
+         WHERE user_id = ? AND public_key = ? AND approvato_il IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM device_keys r
+             WHERE r.user_id = device_keys.user_id AND r.public_key = device_keys.public_key
+               AND r.approvato_il IS NOT NULL AND r.revoked_at IS NOT NULL
+           )`,
       )
       .get(userId, publicKey);
     return row !== undefined;
+  }
+
+  revokeDeviceKeysOfSession(sessionId: string, revokedAt: string): void {
+    this.db
+      .prepare(`UPDATE device_keys SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL`)
+      .run(revokedAt, sessionId);
   }
 
   getDeviceKeyBySessionId(sessionId: string): DeviceKeyRecord | undefined {
@@ -218,17 +249,21 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
     }));
   }
 
-  getActiveDeviceKeysByUserId(userId: string): DeviceKeyRecord[] {
+  getActiveDeviceKeysByUserId(
+    userId: string,
+    adesso: string = new Date().toISOString(),
+  ): DeviceKeyRecord[] {
     const rows = this.db
       .prepare(
         `SELECT k.id, k.session_id, k.user_id, k.public_key, k.algorithm, k.created_at, k.revoked_at
          FROM device_keys k
          JOIN sessions s ON s.id = k.session_id
          WHERE k.user_id = ? AND k.revoked_at IS NULL AND s.revoked_at IS NULL
+           AND s.expires_at > ?
            AND k.approvato_il IS NOT NULL
          ORDER BY k.created_at DESC`,
       )
-      .all(userId) as Array<{
+      .all(userId, adesso) as Array<{
       id: string;
       session_id: string;
       user_id: string;
@@ -343,7 +378,7 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
          ORDER BY created_at ASC LIMIT 1`,
     );
 
-    for (const device of this.getActiveDeviceKeysByUserId(userId)) {
+    for (const device of this.getActiveDeviceKeysByUserId(userId, consumedAt)) {
       if (device.algorithm !== algoritmo) {
         continue;
       }

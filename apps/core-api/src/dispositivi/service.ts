@@ -1,7 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
 
+import { messaggioDiProvaChiave } from "@estia/contracts";
 import type {
   ChiaviDiFirmaView,
+  SfidaView,
   KeyPackageMlsView,
   DeviceKeyView,
   KeyBackupView,
@@ -17,6 +19,47 @@ import type { DeviceKeyRecord, DeviceKeysRepository } from "./repository.js";
 /** L'algoritmo dei dispositivi MLS, come il client lo scrive in `device_keys`. */
 export const ALGORITMO_MLS = "MLS-P256-v1";
 
+/** Quanto vale una sfida per la prova di possesso. */
+const SFIDA_DURATA_MS = 5 * 60 * 1000;
+
+/** L'inizio DER di una chiave pubblica P-256, compressa (33 byte) o no (65). */
+const SPKI_P256 = {
+  33: Buffer.from("3039301306072a8648ce3d020106082a8648ce3d030107032200", "hex"),
+  65: Buffer.from("3059301306072a8648ce3d020106082a8648ce3d030107034200", "hex"),
+} as const;
+
+/**
+ * Se `firma` (base64, DER) è una firma ECDSA P-256 con SHA-256 di `messaggio`
+ * fatta con la privata di `publicKey` (base64, il punto grezzo come lo scrive
+ * `ts-mls`). Ogni errore di forma è un no.
+ */
+function firmaValida(publicKey: string, messaggio: string, firma: string): boolean {
+  try {
+    const punto = Buffer.from(publicKey, "base64");
+    const prefisso =
+      punto.length === 33 ? SPKI_P256[33] : punto.length === 65 ? SPKI_P256[65] : undefined;
+
+    if (prefisso === undefined) {
+      return false;
+    }
+
+    const chiave = createPublicKey({
+      format: "der",
+      key: Buffer.concat([prefisso, punto]),
+      type: "spki",
+    });
+
+    return verify(
+      "sha256",
+      Buffer.from(messaggio, "utf8"),
+      { dsaEncoding: "der", key: chiave },
+      Buffer.from(firma, "base64"),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface DispositiviServiceOptions {
   repository: DeviceKeysRepository;
   users: UserRepository;
@@ -27,6 +70,8 @@ export class DispositiviService {
   private readonly repo: DeviceKeysRepository;
   private readonly users: UserRepository;
   private readonly now: () => string;
+  /** Una sfida per sessione, in memoria: dura cinque minuti e si usa una volta. */
+  private readonly sfide = new Map<string, { sfida: string; scadeIl: string }>();
 
   constructor(options: DispositiviServiceOptions) {
     this.repo = options.repository;
@@ -61,15 +106,62 @@ export class DispositiviService {
    * strada C di quell'ADR — «basta saper entrare nell'account» — diventa
    * impossibile invece che sconsigliata.
    */
+  /**
+   * Una sfida per la prova di possesso di questa sessione. Ne sostituisce una
+   * precedente: ce n'è una sola alla volta.
+   */
+  sfida(sessionId: string): SfidaView {
+    const adesso = new Date(this.now());
+
+    for (const [chiave, valore] of this.sfide) {
+      if (valore.scadeIl <= adesso.toISOString()) {
+        this.sfide.delete(chiave);
+      }
+    }
+
+    const sfida = {
+      scadeIl: new Date(adesso.getTime() + SFIDA_DURATA_MS).toISOString(),
+      sfida: randomBytes(32).toString("base64url"),
+    };
+    this.sfide.set(sessionId, sfida);
+
+    return sfida;
+  }
+
+  /** Consuma la sfida della sessione e dice se `prova` firma quella, con `publicKey`. */
+  private provaValida(sessionId: string, req: RegisterDeviceKeyRequest): boolean {
+    const sfida = this.sfide.get(sessionId);
+    this.sfide.delete(sessionId);
+
+    if (
+      req.prova === undefined ||
+      req.algorithm !== ALGORITMO_MLS ||
+      sfida === undefined ||
+      sfida.scadeIl <= this.now()
+    ) {
+      return false;
+    }
+
+    return firmaValida(
+      req.publicKey,
+      messaggioDiProvaChiave(sfida.sfida, req.publicKey),
+      req.prova,
+    );
+  }
+
   registerKey(userId: string, sessionId: string, req: RegisterDeviceKeyRequest): DeviceKeyView {
     // Check if a device already exists for this session
     const existing = this.repo.getDeviceKeyBySessionId(sessionId);
     const id = existing ? existing.id : randomUUID();
     const createdAt = this.now();
 
+    // La chiave già approvata vale solo con la prova di possesso: è pubblica
+    // — il registro la mostra a ogni membro — e chi ha solo la password la può
+    // ripresentare. Chi ha anche la privata, cioè chi ha usato la frase
+    // segreta, firma la sfida e rientra.
     const daSolo =
       !this.repo.hasApprovedDeviceKey(userId) ||
-      this.repo.isPublicKeyApproved(userId, req.publicKey);
+      (this.repo.isPublicKeyApproved(userId, req.publicKey) && this.provaValida(sessionId, req));
 
     const record = this.repo.registerDeviceKey({
       id,
@@ -165,6 +257,22 @@ export class DispositiviService {
    * Un «no» che lasciasse la richiesta in coda si tradurrebbe in una domanda
    * che ricompare, e chi la vede la seconda volta clicca per farla sparire.
    */
+  /**
+   * Una sessione revocata **da un'altra** porta via anche le sue chiavi dal
+   * registro, per sempre: il dispositivo tolto dal proprietario non rientra
+   * ripresentando la stessa chiave. Uscire da sé non lo fa — chi esce rientra
+   * con la propria chiave, ed è la cronologia che ADR 0040 promette di tenere.
+   */
+  revocataDaAltri(sessionId: string): void {
+    this.repo.revokeDeviceKeysOfSession(sessionId, this.now());
+  }
+
+  /** Se questa sessione è un dispositivo che aspetta ancora il sì. */
+  inAttesa(sessionId: string): boolean {
+    const device = this.repo.getDeviceKeyBySessionId(sessionId);
+    return device !== undefined && device.approvatoIl === null;
+  }
+
   rifiuta(userId: string, sessionIdDiChiRifiuta: string, deviceId: string): { sessionId: string } {
     const chiRifiuta = this.repo.getDeviceKeyBySessionId(sessionIdDiChiRifiuta);
     if (chiRifiuta === undefined || chiRifiuta.approvatoIl === null) {
@@ -303,7 +411,7 @@ export class DispositiviService {
 
     return {
       chiavi: this.repo
-        .getActiveDeviceKeysByUserId(utente.id)
+        .getActiveDeviceKeysByUserId(utente.id, this.now())
         .map((chiave) => ({ algorithm: chiave.algorithm, publicKey: chiave.publicKey })),
     };
   }

@@ -9,7 +9,7 @@
  * Nessuna logica di protocollo in questo file. Se ce ne finisce, è nel posto
  * sbagliato.
  */
-import type { HandshakeTipo } from "@estia/contracts";
+import { messaggioDiProvaChiave, type HandshakeTipo } from "@estia/contracts";
 
 import { api } from "../api.js";
 import { ALGORITMO, type Anagrafe, type Cassetto } from "./dispositivo.js";
@@ -252,8 +252,28 @@ export function anagrafeSuApi(token: string): Anagrafe {
       await api.publishKeyPackages(token, { keyPackages });
     },
 
-    registra: async (chiave) => {
-      const registrato = await api.registerDeviceKey(token, chiave);
+    registra: async ({ firma, ...chiave }) => {
+      // La prova di possesso costa una firma e un giro in più, e la si manda
+      // sempre: l'istanza la guarda solo quando la chiave è già approvata, cioè
+      // quando chi rientra con la frase segreta deve dimostrare di averla.
+      let prova: string | undefined;
+      if (firma !== undefined) {
+        try {
+          const { sfida } = await api.sfidaDispositivo(token);
+          prova = b64(
+            await firma(new TextEncoder().encode(messaggioDiProvaChiave(sfida, chiave.publicKey))),
+          );
+        } catch {
+          // Un'istanza di prima, senza la rotta: si registra senza prova, e
+          // una chiave già approvata aspetta il sì come le altre.
+          prova = undefined;
+        }
+      }
+
+      const registrato = await api.registerDeviceKey(
+        token,
+        prova === undefined ? chiave : { ...chiave, prova },
+      );
       return { deviceId: registrato.device.id };
     },
 

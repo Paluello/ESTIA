@@ -35,6 +35,14 @@ La chiave della Casa arriva dalla fotocamera, non dalla rete: chi volesse sostit
 
 **Entrare nella Casa non è entrare nelle conversazioni.** Dopo l'ingresso l'app registra la sua chiave di firma con `POST /api/v1/dispositivi/chiave`, come fa oggi il browser, e il sì di [ADR 0040](adr/0040-un-membro-ha-piu-di-un-dispositivo.md) resta com'è: il primo dispositivo di una persona si approva da solo, ogni altro aspetta che uno già approvato dica di sì. Un codice QR si ottiene anche solo con la password, quindi non può bastare per leggere i messaggi: quello lo decide un dispositivo che si ha in mano.
 
+Dal 2026-11-27 la strada C di ADR 0040 è chiusa anche dove la si poteva percorrere con la sola password:
+
+- **Ripresentare una chiave già approvata** — il rientro con la frase segreta — vale solo con la **prova di possesso**: l'app chiede `POST /api/v1/dispositivi/sfida` e manda in `prova` la firma di `messaggioDiProvaChiave(sfida, publicKey)` con la privata. La chiave pubblica è nel registro che ogni membro legge, quindi da sola non prova niente.
+- **Il primo dispositivo** è il primo davvero: chi ha già avuto un dispositivo approvato, anche se oggi è uscito da tutti, non ne ha più uno «primo».
+- **Una sessione approvata che cambia chiave** perde il sì.
+- **Un dispositivo in attesa non revoca gli altri**, e una sessione tolta da un'altra porta via la sua chiave per sempre: un telefono rubato non rientra firmando con la propria privata.
+- **Il registro ignora le sessioni scadute**, e il prelievo di KeyPackage ha un tetto di trenta al minuto.
+
 ## Il filo dell'API
 
 Una richiesta è uno stream bidirezionale. Tutti e due i versi hanno la stessa forma:
