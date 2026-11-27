@@ -210,3 +210,216 @@ exit 0
     }
   });
 });
+
+/**
+ * Chi non conosce Docker: su un Linux con apt l'installatore lo installa da sé,
+ * con il consenso, dai pacchetti della distribuzione; su un NAS si ferma e
+ * rimanda al centro applicazioni. Tutto è finto: apt-get, sudo, systemctl e
+ * usermod scrivono i propri argomenti, e apt-get «installa» un docker finto.
+ * Il PATH contiene solo questi e gli strumenti di base, così il Docker vero
+ * di chi lancia i test non si vede.
+ */
+describe("install.sh — Docker per chi non lo conosce", () => {
+  const STRUMENTI = [
+    "sh",
+    "sed",
+    "tr",
+    "head",
+    "id",
+    "uname",
+    "mktemp",
+    "cp",
+    "chmod",
+    "mkdir",
+    "rm",
+    "hostname",
+    "cut",
+    "sleep",
+    "env",
+    "cat",
+    "grep",
+    "dirname",
+    "basename",
+    "printf",
+  ];
+
+  const DOCKER_FINTO = `#!/bin/sh
+printf 'docker %s\\n' "$*" >>"$FINTO_LOG"
+case "$1" in
+container) exit 1 ;;
+esac
+exit 0
+`;
+
+  function prepara(opzioni: { osRelease?: string; apt?: boolean }): {
+    root: string;
+    bin: string;
+    log: string;
+    env: NodeJS.ProcessEnv;
+  } {
+    const root = mkdtempSync(path.join(tmpdir(), "estia-docker-"));
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    for (const nome of STRUMENTI) {
+      try {
+        const dove = execFileSync("sh", ["-c", `command -v ${nome}`], { encoding: "utf8" }).trim();
+        if (dove.startsWith("/")) {
+          execFileSync("ln", ["-s", dove, path.join(bin, nome)]);
+        }
+      } catch {
+        // Non c'è su questa macchina: lo script non ne ha bisogno per forza.
+      }
+    }
+    const log = path.join(root, "log");
+    writeFileSync(log, "");
+    writeFileSync(path.join(root, "docker-finto"), DOCKER_FINTO);
+
+    const scrivi = (nome: string, corpo: string) => {
+      writeFileSync(path.join(bin, nome), `#!/bin/sh\n${corpo}\n`);
+      chmodSync(path.join(bin, nome), 0o755);
+    };
+    scrivi("sudo", 'printf "sudo %s\\n" "$*" >>"$FINTO_LOG"\nexec "$@"');
+    scrivi("systemctl", 'printf "systemctl %s\\n" "$*" >>"$FINTO_LOG"');
+    scrivi("usermod", 'printf "usermod %s\\n" "$*" >>"$FINTO_LOG"');
+    if (opzioni.apt !== false) {
+      scrivi(
+        "apt-get",
+        [
+          'printf "apt-get %s\\n" "$*" >>"$FINTO_LOG"',
+          'case "$*" in *install*docker.io*) cp "$FINTO_ROOT/docker-finto" "$FINTO_BIN/docker"; chmod 755 "$FINTO_BIN/docker" ;; esac',
+        ].join("\n"),
+      );
+    }
+
+    const osRelease = path.join(root, "os-release");
+    writeFileSync(osRelease, opzioni.osRelease ?? 'ID=linuxmint\nID_LIKE="ubuntu debian"\n');
+
+    return {
+      root,
+      bin,
+      log,
+      env: {
+        PATH: bin,
+        HOME: root,
+        ESTIA_OS_RELEASE: osRelease,
+        ESTIA_CLI_SRC: CLI,
+        ESTIA_CLI_BINDIR: path.join(root, "cli"),
+        ESTIA_LINGUA: "en",
+        FINTO_LOG: log,
+        FINTO_ROOT: root,
+        FINTO_BIN: bin,
+      },
+    };
+  }
+
+  function lancia(env: NodeJS.ProcessEnv): { codice: number; uscita: string } {
+    try {
+      const uscita = execFileSync(path.join(env.FINTO_BIN ?? "", "sh"), [INSTALL_SH], {
+        encoding: "utf8",
+        env: { NO_COLOR: "1", ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return { codice: 0, uscita };
+    } catch (errore) {
+      const e = errore as { status: number; stdout?: string; stderr?: string };
+      return { codice: e.status, uscita: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+  }
+
+  it("su un Linux con apt chiede, installa docker.io e poi installa ESTIA", () => {
+    const { root, log, env } = prepara({});
+    const tty = path.join(root, "tty");
+    writeFileSync(tty, "\n");
+
+    const { codice, uscita } = lancia({ ...env, ESTIA_TTY: tty });
+    const registro = readFileSync(log, "utf8");
+
+    expect(uscita).toContain("Install Docker? [Y/n]");
+    expect(uscita).toContain("apt-get install docker.io");
+    expect(registro).toMatch(/apt-get install -y -q docker\.io/);
+    expect(registro).toContain("systemctl enable --now docker");
+    expect(registro).toMatch(/docker run -d/);
+    expect(uscita).toContain("ESTIA is up");
+    expect(codice).toBe(0);
+  });
+
+  it("una risposta «no» non tocca niente", () => {
+    const { root, log, env } = prepara({});
+    const tty = path.join(root, "tty");
+    writeFileSync(tty, "n\n");
+
+    const { codice, uscita } = lancia({ ...env, ESTIA_TTY: tty });
+
+    expect(codice).not.toBe(0);
+    expect(uscita).toContain("I am not touching anything");
+    expect(readFileSync(log, "utf8")).not.toContain("apt-get");
+  });
+
+  it("senza terminale non installa niente da sé, salvo ESTIA_INSTALLA_DOCKER=1", () => {
+    const senza = prepara({});
+    const rifiuto = lancia({ ...senza.env, ESTIA_TTY: path.join(senza.root, "nessuno") });
+    expect(rifiuto.codice).not.toBe(0);
+    expect(rifiuto.uscita).toContain("Docker is not here");
+    expect(readFileSync(senza.log, "utf8")).not.toContain("apt-get");
+
+    const con = prepara({});
+    const esito = lancia({
+      ...con.env,
+      ESTIA_TTY: path.join(con.root, "nessuno"),
+      ESTIA_INSTALLA_DOCKER: "1",
+    });
+    expect(readFileSync(con.log, "utf8")).toMatch(/apt-get install -y -q docker\.io/);
+    expect(esito.codice).toBe(0);
+  });
+
+  it("su un NAS non installa Docker da terminale e rimanda al centro applicazioni", () => {
+    const { root, log, env } = prepara({});
+    const tty = path.join(root, "tty");
+    writeFileSync(tty, "\n");
+
+    const { codice, uscita } = lancia({ ...env, ESTIA_TTY: tty, ESTIA_FINTO_NAS: "1" });
+
+    expect(codice).not.toBe(0);
+    expect(uscita).toContain("this machine is a NAS");
+    expect(readFileSync(log, "utf8")).not.toContain("apt-get");
+  });
+
+  it("su un sistema che non sa riconoscere si ferma e dice come fare", () => {
+    const { root, log, env } = prepara({ osRelease: "ID=arch\n", apt: false });
+    const tty = path.join(root, "tty");
+    writeFileSync(tty, "\n");
+
+    const { codice, uscita } = lancia({ ...env, ESTIA_TTY: tty });
+
+    expect(codice).not.toBe(0);
+    expect(uscita).toContain("Docker is not here");
+    expect(readFileSync(log, "utf8")).toBe("");
+  });
+
+  // Da root il ramo sudo non esiste; in CI i test girano da utente normale.
+  it.skipIf(process.getuid?.() === 0)(
+    "appena installato, il gruppo docker non vale ancora: usa sudo invece di fermarsi",
+    () => {
+      const { root, bin, log, env } = prepara({});
+      // Docker c'è, ma risponde solo a chi passa da sudo.
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh\nprintf 'docker %s %s\\n' "\${FINTO_SUDO:-utente}" "$*" >>"$FINTO_LOG"\ncase "$1" in info) [ -n "$FINTO_SUDO" ] || exit 1 ;; container) exit 1 ;; esac\nexit 0\n`,
+      );
+      chmodSync(path.join(bin, "docker"), 0o755);
+      writeFileSync(
+        path.join(bin, "sudo"),
+        '#!/bin/sh\nprintf "sudo %s\\n" "$*" >>"$FINTO_LOG"\nFINTO_SUDO=sudo exec "$@"\n',
+      );
+      const tty = path.join(root, "tty");
+      writeFileSync(tty, "\n");
+
+      const { codice, uscita } = lancia({ ...env, ESTIA_TTY: tty });
+      const registro = readFileSync(log, "utf8");
+
+      expect(uscita).toContain("this time I am using sudo");
+      expect(registro).toMatch(/docker sudo run -d/);
+      expect(codice).toBe(0);
+    },
+  );
+});

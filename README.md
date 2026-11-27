@@ -23,7 +23,7 @@ L'accesso da fuori dalla rete locale è una milestone additiva (M4): il prodotto
 
 ## Installare un'istanza
 
-Su una macchina che resta accesa — un NAS, un mini-PC, un vecchio portatile con Linux — e che abbia Docker:
+Su una macchina che resta accesa — un NAS, un mini-PC, un vecchio portatile con Linux. Su Linux, se Docker manca, lo script lo installa da sé dopo averti chiesto il permesso; su un NAS si installa prima dal centro applicazioni:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
