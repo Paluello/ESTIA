@@ -114,7 +114,7 @@ check(
   v2a?.ok ? `${v2a.transferMs} ms, ${v2a.kibPerSecond} KiB/s` : path(v2a),
 );
 check(
-  "2b · lo stesso, `limits.client.rx` a 64 KiB/s",
+  "2b · lo stesso, sull'immagine del Nodo pubblico con `NODO_BANDA_KIB=64`",
   v2a?.ok && v2b?.ok ? v2b.transferMs > 8000 && v2b.transferMs > 4 * v2a.transferMs : false,
   v2b?.ok ? `${v2b.transferMs} ms, ${v2b.kibPerSecond} KiB/s` : path(v2b),
 );

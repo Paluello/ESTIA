@@ -11,6 +11,7 @@ on:
   pull_request:
     paths:
       - "infra/relay-lab/**"
+      - "infra/nodo-pubblico/**"
       - ".github/workflows/relay-lab.yml"
   workflow_dispatch:
 

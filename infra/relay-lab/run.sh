@@ -24,6 +24,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/results/out"
 RELAY_IMAGE="${RELAY_IMAGE:-n0computer/iroh-relay:v1.5.0@sha256:50a2f5697d8f69537037503c81b989be17eeb694dbb2d3fdfd5418c9a71c8ec6}"
 PROBE_IMAGE="estia-relay-lab-probe:local"
+NODO_IMAGE="estia-nodo-pubblico:local"
 SHARE="$(mktemp -d)"
 chmod 777 "$SHARE"
 
@@ -31,10 +32,13 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 cleanup() {
-  docker rm -f relay-a relay-b relay-lim casa-b-serve >/dev/null 2>&1 || true
+  docker rm -f relay-a relay-b relay-lim relay-nodo casa-b-serve >/dev/null 2>&1 || true
   docker ps -aq --filter label=estia-relay-lab | xargs -r docker rm -f >/dev/null 2>&1 || true
   docker network rm lab-a lab-b >/dev/null 2>&1 || true
-  rm -rf "$SHARE"
+  # I file li ha scritti la sonda come root: se l'host non può toglierli, li toglie un contenitore.
+  rm -rf "$SHARE" 2>/dev/null ||
+    docker run --rm -v "$SHARE:/share" --entrypoint sh "$PROBE_IMAGE" -c 'rm -rf /share/*' >/dev/null 2>&1 || true
+  rmdir "$SHARE" 2>/dev/null || true
 }
 trap cleanup EXIT
 cleanup
@@ -43,6 +47,8 @@ echo "::group::Immagini"
 docker image inspect "$RELAY_IMAGE" >/dev/null 2>&1 || docker pull "$RELAY_IMAGE"
 # shellcheck disable=SC2086 # PROBE_BUILD_FLAGS va diviso apposta.
 [[ "${PROBE_SKIP_BUILD:-0}" == "1" ]] || docker build --quiet ${PROBE_BUILD_FLAGS:-} -t "$PROBE_IMAGE" "$HERE/probe"
+# L'immagine del Nodo pubblico, la stessa che si pubblica: la prova 2b passa da lei.
+docker build --quiet -t "$NODO_IMAGE" "$HERE/../nodo-pubblico" >/dev/null
 echo "::endgroup::"
 
 docker network create lab-a >/dev/null
@@ -59,11 +65,17 @@ relay() {
 relay relay-a relay-dev.toml
 relay relay-b relay-dev.toml
 relay relay-lim relay-limited.toml
+
+# Il Nodo pubblico in modalità di prova, con il limite di banda dalle sue variabili.
+docker run -d --name relay-nodo --label estia-relay-lab --network lab-a \
+  -e NODO_PROVA=1 -e NODO_BANDA_KIB=64 -e NODO_RAFFICA_KIB=128 "$NODO_IMAGE" >/dev/null
+docker network connect lab-b relay-nodo
 sleep 2
 
 RA="http://relay-a:3340"
 RB="http://relay-b:3340"
 RL="http://relay-lim:3340"
+RN="http://relay-nodo:3340"
 
 # serve <rete> <file-indirizzo> [VAR=valore ...]  — la Casa che riceve, in sottofondo.
 serve() {
@@ -131,9 +143,9 @@ serve lab-b v2a.json PRESET=minimal "RELAYS=$RA"
 dial v2a-banda-senza-limiti lab-a v2a.json PRESET=minimal "RELAYS=$RA" ADDR=full BYTES=1048576 \
   CONNECT_TIMEOUT_MS=60000
 
-# 2b. Lo stesso MiB sul relay con 64 KiB/s in ingresso per client.
-serve lab-b v2b.json PRESET=minimal "RELAYS=$RL"
-dial v2b-banda-con-limiti lab-a v2b.json PRESET=minimal "RELAYS=$RL" ADDR=full BYTES=1048576 \
+# 2b. Lo stesso MiB sull'immagine del Nodo pubblico con NODO_BANDA_KIB=64.
+serve lab-b v2b.json PRESET=minimal "RELAYS=$RN"
+dial v2b-banda-con-limiti lab-a v2b.json PRESET=minimal "RELAYS=$RN" ADDR=full BYTES=1048576 \
   CONNECT_TIMEOUT_MS=120000
 
 # 2c. Tasso di connessioni: dieci Case che si accendono insieme sul relay limitato
