@@ -153,27 +153,24 @@ describe("il registro delle chiavi di firma", () => {
     });
   });
 
-  it("la stessa chiave che si ripresenta entra: è chi ha la frase segreta", async () => {
-    // La via di riserva di ADR 0040. Riprodurre quella chiave pubblica richiede
-    // la privata, quindi chi ci riesce ha già dimostrato di essere lui: non deve
-    // chiedere il permesso a un dispositivo che magari non ha più.
+  it("la stessa chiave che si ripresenta senza la privata aspetta: la password non basta", async () => {
+    // La chiave pubblica di Anna è nel registro, che ogni membro legge: chi ha
+    // soltanto la sua password la può ripresentare. Senza la prova di
+    // possesso, aspetta il sì come ogni dispositivo nuovo (ADR 0040, strada C).
     await withRig(async ({ app, annaToken }) => {
       const secondo = await app.identityService.login({
         password: "password-lunga-anna",
         username: "anna",
       });
-      await app.inject({
+      const registrato = await app.inject({
         headers: bearer(secondo.token),
         method: "POST",
         payload: { algorithm: "ECDSA-P256", publicKey: "CHIAVE_DI_ANNA" },
         url: "/api/v1/dispositivi/chiave",
       });
 
-      const lette = (await chiavi(app, annaToken, "anna")).json().chiavi as {
-        publicKey: string;
-      }[];
-
-      expect(lette.map((c) => c.publicKey)).toEqual(["CHIAVE_DI_ANNA", "CHIAVE_DI_ANNA"]);
+      expect(registrato.json().device.approvatoIl).toBeNull();
+      expect((await chiavi(app, annaToken, "anna")).json().chiavi).toHaveLength(1);
     });
   });
 
@@ -283,20 +280,28 @@ describe("il registro di un'altra casa (ADR 0042 §1)", () => {
 
 describe("il prelievo di un KeyPackage MLS", () => {
   it("consegna un KeyPackage MLS e non l'ultimo dispositivo registrato", async () => {
-    await withRig(async ({ app, annaToken, brunoToken }) => {
+    await withRig(async ({ app, annaToken }) => {
       const casa = (
         await app.inject({ headers: bearer(annaToken), method: "GET", url: "/api/v1/mls/casa" })
       ).json().casa as string;
 
-      // Bruno ha un dispositivo MLS con due KeyPackage…
+      // Carla ha un dispositivo MLS, il suo primo, con due KeyPackage…
+      await app.identityService.createUser({
+        password: "password-lunga-carla",
+        role: "member",
+        username: "carla",
+      });
+      const carla = (
+        await app.identityService.login({ password: "password-lunga-carla", username: "carla" })
+      ).token;
       await app.inject({
-        headers: bearer(brunoToken),
+        headers: bearer(carla),
         method: "POST",
-        payload: { algorithm: "MLS-P256-v1", publicKey: "FIRMA_MLS_DI_BRUNO" },
+        payload: { algorithm: "MLS-P256-v1", publicKey: "FIRMA_MLS_DI_CARLA" },
         url: "/api/v1/dispositivi/chiave",
       });
       await app.inject({
-        headers: bearer(brunoToken),
+        headers: bearer(carla),
         method: "POST",
         payload: { keyPackages: ["KP_MLS_1", "KP_MLS_2"] },
         url: "/api/v1/dispositivi/key-packages",
@@ -305,7 +310,7 @@ describe("il prelievo di un KeyPackage MLS", () => {
       const primo = await app.inject({
         headers: bearer(annaToken),
         method: "GET",
-        url: `/api/v1/mls/key-package/${casa}/bruno`,
+        url: `/api/v1/mls/key-package/${casa}/carla`,
       });
       expect(primo.statusCode).toBe(200);
       expect(primo.json().keyPackage).toBe("KP_MLS_1");
@@ -314,14 +319,14 @@ describe("il prelievo di un KeyPackage MLS", () => {
       const secondo = await app.inject({
         headers: bearer(annaToken),
         method: "GET",
-        url: `/api/v1/mls/key-package/${casa}/bruno`,
+        url: `/api/v1/mls/key-package/${casa}/carla`,
       });
       expect(secondo.json().keyPackage).toBe("KP_MLS_2");
 
       const terzo = await app.inject({
         headers: bearer(annaToken),
         method: "GET",
-        url: `/api/v1/mls/key-package/${casa}/bruno`,
+        url: `/api/v1/mls/key-package/${casa}/carla`,
       });
       expect(terzo.statusCode).toBe(404);
     });

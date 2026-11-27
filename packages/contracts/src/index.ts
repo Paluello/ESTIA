@@ -2369,19 +2369,55 @@ export interface RegisterDeviceKeyRequest {
   publicKey: string;
   algorithm: string;
   keyPackages?: string[];
+  /**
+   * La prova di possesso della chiave ([ADR 0040](../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)):
+   * la firma, in base64, di `messaggioDiProvaChiave(sfida, publicKey)` con la
+   * chiave privata, sulla sfida chiesta da questa sessione a
+   * `POST /api/v1/dispositivi/sfida`. Serve **solo** a chi ripresenta una
+   * chiave già approvata — il rientro con la frase segreta — e senza, quella
+   * chiave aspetta il sì come ogni altra.
+   */
+  prova?: string;
 }
+
+/** Quanti KeyPackage al massimo in una richiesta, e quanto lungo ognuno. */
+export const KEY_PACKAGE_MAX_PER_RICHIESTA = 100;
+export const KEY_PACKAGE_MAX_LUNGHEZZA = 16 * 1024;
+
+/**
+ * Il testo che il dispositivo firma per provare di avere la chiave privata.
+ * Porta la sfida, che lo lega a questa sessione e a questo momento, e la
+ * chiave, che lo lega a questa chiave: non si riusa altrove.
+ */
+export function messaggioDiProvaChiave(sfida: string, publicKey: string): string {
+  return `ESTIA-prova-chiave-v1\n${sfida}\n${publicKey}`;
+}
+
+export interface SfidaView {
+  sfida: string;
+  scadeIl: string;
+}
+
+export const sfidaViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["sfida", "scadeIl"],
+  properties: { sfida: { type: "string" }, scadeIl: { type: "string" } },
+} as const;
 
 export const registerDeviceKeyRequestSchema = {
   type: "object",
   additionalProperties: false,
   required: ["publicKey", "algorithm"],
   properties: {
-    publicKey: { type: "string", minLength: 1 },
-    algorithm: { type: "string", minLength: 1 },
+    publicKey: { type: "string", minLength: 1, maxLength: 1024 },
+    algorithm: { type: "string", minLength: 1, maxLength: 64 },
     keyPackages: {
       type: "array",
-      items: { type: "string", minLength: 1 },
+      maxItems: KEY_PACKAGE_MAX_PER_RICHIESTA,
+      items: { type: "string", minLength: 1, maxLength: KEY_PACKAGE_MAX_LUNGHEZZA },
     },
+    prova: { type: "string", minLength: 1, maxLength: 512 },
   },
 } as const;
 
@@ -2432,7 +2468,8 @@ export const publishKeyPackagesRequestSchema = {
   properties: {
     keyPackages: {
       type: "array",
-      items: { type: "string", minLength: 1 },
+      maxItems: KEY_PACKAGE_MAX_PER_RICHIESTA,
+      items: { type: "string", minLength: 1, maxLength: KEY_PACKAGE_MAX_LUNGHEZZA },
     },
   },
 } as const;
@@ -2449,10 +2486,10 @@ export const saveKeyBackupRequestSchema = {
   additionalProperties: false,
   required: ["encryptedBlob", "algorithm", "salt", "iterations"],
   properties: {
-    encryptedBlob: { type: "string", minLength: 1 },
-    algorithm: { type: "string", minLength: 1 },
-    salt: { type: "string", minLength: 1 },
-    iterations: { type: "integer", minimum: 1000 },
+    encryptedBlob: { type: "string", minLength: 1, maxLength: 64 * 1024 },
+    algorithm: { type: "string", minLength: 1, maxLength: 64 },
+    salt: { type: "string", minLength: 1, maxLength: 256 },
+    iterations: { type: "integer", minimum: 1000, maximum: 100_000_000 },
   },
 } as const;
 

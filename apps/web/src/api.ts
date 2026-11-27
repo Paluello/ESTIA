@@ -58,6 +58,7 @@ import type {
   PublishKeyPackagesRequest,
   RegisterDeviceKeyRequest,
   RegisterDeviceKeyResponse,
+  SfidaView,
   SaveKeyBackupRequest,
   ArchivioPage,
   ChiaviDiFirmaView,
@@ -555,6 +556,9 @@ export const api = {
 
     return response.blob();
   },
+
+  sfidaDispositivo: (token: string): Promise<SfidaView> =>
+    request("/api/v1/dispositivi/sfida", { method: "POST", token }),
 
   registerDeviceKey: (
     token: string,

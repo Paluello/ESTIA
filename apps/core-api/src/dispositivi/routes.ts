@@ -4,6 +4,8 @@ import {
   keyPackageMlsViewSchema,
   dispositiviResponseSchema,
   ingressoEmessoViewSchema,
+  sfidaViewSchema,
+  type SfidaView,
   type IngressoEmessoView,
   keyBackupViewSchema,
   publishKeyPackagesRequestSchema,
@@ -84,6 +86,20 @@ export function registerDispositiviRoutes(
       },
     );
   }
+
+  /**
+   * Una sfida per la prova di possesso della chiave (ADR 0040): la firma chi
+   * ripresenta una chiave già approvata, cioè chi rientra con la frase segreta.
+   */
+  app.post<{ Reply: SfidaView }>(
+    "/api/v1/dispositivi/sfida",
+    {
+      preHandler: asMember,
+      config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+      schema: { response: { 200: sfidaViewSchema } },
+    },
+    async (request) => services.dispositivi.sfida(request.caller!.sessionId),
+  );
 
   /** Registra la chiave pubblica del dispositivo per la sessione attiva. */
   app.post<{
@@ -275,6 +291,10 @@ export function registerDispositiviRoutes(
     "/api/v1/mls/key-package/:casa/:username",
     {
       preHandler: asMember,
+      // Ogni prelievo consuma un KeyPackage di qualcun altro: senza tetto, un
+      // membro solo svuoterebbe la scorta di tutti. Aprire una conversazione
+      // ne preleva uno per dispositivo, quindi trenta al minuto sono larghi.
+      config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
       schema: {
         params: {
           type: "object",

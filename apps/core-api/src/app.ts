@@ -632,6 +632,11 @@ export async function buildApp(
     ...clockOption,
   });
 
+  identityService.useDispositivi({
+    inAttesa: (sessionId) => dispositiviService.inAttesa(sessionId),
+    revocataDaAltri: (sessionId) => dispositiviService.revocataDaAltri(sessionId),
+  });
+
   const messaggiService = new MessaggiService({
     repository: new SqliteMessaggiRepository(database),
     users: userRepository,

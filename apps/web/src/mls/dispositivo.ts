@@ -33,6 +33,7 @@ import {
   nuovaIdentita,
   sceltaPerWelcome,
   scriviKeyPackage,
+  suite,
   type IdentitaDispositivo,
   type Membro,
   type Portachiavi,
@@ -81,6 +82,11 @@ export interface Anagrafe {
     publicKey: string;
     algorithm: string;
     keyPackages?: string[];
+    /**
+     * Firma con la chiave privata, per la prova di possesso di ADR 0040: chi
+     * ripresenta una chiave già approvata entra da solo solo se la firma.
+     */
+    firma?: (messaggio: Uint8Array) => Promise<Uint8Array>;
   }) => Promise<{ deviceId: string }>;
   pubblica: (keyPackages: string[]) => Promise<void>;
   leggiBackup: () => Promise<
@@ -248,6 +254,8 @@ export async function preparaDispositivo(ctx: Contesto, username: string): Promi
 
   const { deviceId } = await ctx.anagrafe.registra({
     algorithm: ALGORITMO,
+    firma: async (messaggio) =>
+      (await suite()).signature.sign(materiale.chiaviDiFirma.signKey, messaggio),
     publicKey: b64(materiale.chiaviDiFirma.publicKey),
   });
 
