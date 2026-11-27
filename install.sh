@@ -30,11 +30,11 @@
 
 set -eu
 
-IMAGE="${ESTIA_IMAGE:-ghcr.io/chrono-web/estia:latest}"
+IMAGE="${ESTIA_IMAGE:-ghcr.io/paluello/estia:latest}"
 NAME="${ESTIA_CONTAINER:-estia}"
 VOLUME="${ESTIA_VOLUME:-estia-data}"
 PORT="${ESTIA_PORT:-3000}"
-CLI_URL="${ESTIA_CLI_URL:-https://raw.githubusercontent.com/chrono-web/estia/main/bin/estia}"
+CLI_URL="${ESTIA_CLI_URL:-https://raw.githubusercontent.com/Paluello/ESTIA/main/bin/estia}"
 
 CLI_DEST=""
 CLI_NEL_PATH=0
@@ -607,5 +607,5 @@ sayb "💾 ${C1}$(frase esito.aggiornare)${C0}
 
       docker logs ${NAME} | head -20
 
-${CDIM}$(frase esito.documentazione) https://github.com/chrono-web/estia${C0}
+${CDIM}$(frase esito.documentazione) https://github.com/Paluello/ESTIA${C0}
 "

@@ -202,7 +202,7 @@ describe("updateCommands", () => {
     const passi = comandi({ kind: "volume", volume: "estia-data", containerId: ID });
 
     expect(passi[2]).toBe(
-      "curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | sh",
+      "curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh",
     );
   });
 
