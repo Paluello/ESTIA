@@ -14,6 +14,16 @@ Questo piano copre la **Fase 1** del piano di progetto di luglio 2026 e la espan
 - I budget di esperienza di [`PRODUCT_VISION.md`](PRODUCT_VISION.md) §4 sono criteri di gate, non aspirazioni.
 - Ricerca con utenti e reclutamento del pilot non rientrano in questo piano tecnico. I budget di esperienza sì.
 
+### Deroga del 2026-11-27: il mese verso la 1.0
+
+**Decisa dal proprietario il 2026-11-27**: il lavoro verso la 1.0 procede **in parallelo** invece che una milestone per volta. Insieme sono aperti: l'accesso del Dispositivo e l'app ([ADR 0044](adr/0044-il-dispositivo-e-l-app.md), con il multi-dispositivo di [ADR 0040](adr/0040-un-membro-ha-piu-di-un-dispositivo.md)), i relay della comunità ([ADR 0045](adr/0045-la-rete-dei-relay-della-comunita.md)), M8, la moderazione federata ([ADR 0047](adr/0047-le-segnalazioni-si-visitano.md)) e la preparazione del lancio. Le PR si uniscono quando i controlli sono verdi.
+
+**Che cosa la deroga apre.** Apre la **costruzione**: codice, test e documentazione di più milestone nello stesso tempo.
+
+**Che cosa non apre.** Non apre i **gate**. I gate sul campo restano nell'ordine di ADR 0044 (app → M8 → 1.0) e li fa il proprietario su Case e persone vere. Una voce costruita in parallelo resta `[~]` finché la sua prova non c'è. Una casella diventa `[x]` solo dopo una verifica contro il codice, perché M7 è stata ritirata per nove caselle che non vi corrispondevano.
+
+**Che cosa la revoca.** Se un gate sul campo trova un difetto che tocca la riservatezza o i dati di qualcuno, il lavoro in parallelo si ferma finché quel difetto non è corretto.
+
 ## Il cambio di rotta, in breve
 
 Lo spike di rete ha stabilito che il control plane non serve: il primo contatto avviene sulla **rete locale**, dove non occorre alcuna infrastruttura di fiducia. Ne conseguono tre semplificazioni:
