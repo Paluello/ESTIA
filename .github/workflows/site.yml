@@ -1,0 +1,41 @@
+name: site
+
+# Pubblica il sito in inglese (site/) su GitHub Pages: la pagina che si linka
+# dagli store e la privacy policy che gli store chiedono.
+#
+# Serve una volta sola un gesto del proprietario: Settings → Pages → Source:
+# «GitHub Actions». Finche' non c'e', il deploy fallisce con un errore di
+# Pages e la verifica delle PR non ne risente.
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

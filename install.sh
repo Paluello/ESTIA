@@ -137,7 +137,7 @@ without this password the command goes into your home folder." ;;
 	it:docker.installato) printf '%s' "Docker e' installato." ;;
 	*:docker.installato) printf '%s' "Docker is installed." ;;
 	it:docker.fallito) printf '%s' "L'installazione di Docker non e' riuscita. Il messaggio qui sopra dice perche'; la strada a mano e' il passo 1 della guida: https://github.com/Paluello/ESTIA/blob/main/docs/INSTALLAZIONE.md" ;;
-	*:docker.fallito) printf '%s' "Installing Docker did not work. The message above says why; the manual way is step 1 of the guide: https://github.com/Paluello/ESTIA/blob/main/docs/INSTALLAZIONE.md" ;;
+	*:docker.fallito) printf '%s' "Installing Docker did not work. The message above says why; the manual way is step 1 of the guide: https://github.com/Paluello/ESTIA/blob/main/docs/en/INSTALL.md" ;;
 	it:docker.rifiutato) printf '%s' "Va bene, non tocco niente. Quando Docker c'e', rilancia questo stesso comando." ;;
 	*:docker.rifiutato) printf '%s' "Fine, I am not touching anything. Once Docker is here, run this same command again." ;;
 	it:docker.con_sudo) printf '%s' "Il tuo utente non e' ancora nel gruppo docker (vale dal prossimo accesso): per questa volta uso sudo." ;;
