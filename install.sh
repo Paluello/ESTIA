@@ -602,6 +602,107 @@ assicura_docker
 # volume che gestiamo noi, ricrearlo li lascerebbe orfani: durano, ma l'istanza
 # nuova non li vedrebbe e ripartirebbe vuota. E' esattamente il modo in cui si
 # perde una configurazione, quindi ci si ferma e si dice dove sono.
+# --- Quello che il container di prima aveva, e che si conserva ----------------
+#
+# Ricreare il container con le sole righe di questo script toglieva tutto il
+# resto: la porta legata a 127.0.0.1 tornava su 0.0.0.0, le variabili dei
+# backup e della cifratura sparivano, la cartella dei backup su un altro disco
+# si staccava (gli archivi finivano in silenzio accanto ai dati) e i limiti di
+# memoria si perdevano (revisione interna, 2026-11-27). Quindi prima di
+# toglierlo si legge che cosa aveva, e lo si rimette.
+
+CONSERVA_ENV=""
+CONSERVA_MOUNT=""
+CONSERVA_PORTE=""
+CONSERVA_MEMORIA=""
+CONSERVA_CPU=""
+
+leggi_container_esistente() {
+	CONSERVA_ENV="$(docker container inspect "$NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+		grep '^ESTIA_' | grep -v -e '^ESTIA_DATA_DIR=' -e '^ESTIA_HOST=' -e '^ESTIA_LINGUA=' || true)"
+	CONSERVA_MOUNT="$(docker container inspect "$NAME" --format '{{range .Mounts}}{{if ne .Destination "/data"}}{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}|{{.Destination}}|{{.RW}}{{println}}{{end}}{{end}}' 2>/dev/null || true)"
+	CONSERVA_PORTE="$(docker container inspect "$NAME" --format '{{range $p, $conf := .HostConfig.PortBindings}}{{range $conf}}{{.HostIp}}|{{.HostPort}}|{{$p}}{{println}}{{end}}{{end}}' 2>/dev/null || true)"
+	CONSERVA_MEMORIA="$(docker container inspect "$NAME" --format '{{.HostConfig.Memory}}' 2>/dev/null || true)"
+	CONSERVA_CPU="$(docker container inspect "$NAME" --format '{{.HostConfig.NanoCpus}}' 2>/dev/null || true)"
+}
+
+# avvia_estia DATI PORTA LINGUA — il docker run di ESTIA, con la postura del
+# Compose di riferimento e quello che il container di prima aveva in piu'.
+avvia_estia() {
+	dati="$1"
+	porta="$2"
+	lingua="$3"
+
+	set -- run -d \
+		--name "$NAME" \
+		--restart unless-stopped \
+		--volume "${dati}:/data" \
+		--env ESTIA_DATA_DIR=/data \
+		--env ESTIA_HOST=0.0.0.0 \
+		--user 10001:10001 \
+		--init \
+		--read-only \
+		--tmpfs /tmp \
+		--cap-drop ALL \
+		--security-opt no-new-privileges:true \
+		--pids-limit 256
+
+	if [ -n "$lingua" ]; then
+		set -- "$@" --env "ESTIA_LINGUA=$lingua"
+	fi
+
+	# Una riga per variabile: i valori possono contenere spazi, non a capo.
+	vecchio_ifs="$IFS"
+	IFS='
+'
+	for riga in $CONSERVA_ENV; do
+		set -- "$@" --env "$riga"
+	done
+
+	porte_messe=0
+	for riga in $CONSERVA_PORTE; do
+		IFS='|' read -r ip host interna <<FINE
+$riga
+FINE
+		[ -n "$host" ] || continue
+		if [ -n "$ip" ]; then
+			set -- "$@" --publish "${ip}:${host}:${interna}"
+		else
+			set -- "$@" --publish "${host}:${interna}"
+		fi
+		porte_messe=1
+	done
+
+	for riga in $CONSERVA_MOUNT; do
+		IFS='|' read -r sorgente destinazione scrivibile <<FINE
+$riga
+FINE
+		[ -n "$sorgente" ] && [ -n "$destinazione" ] || continue
+		if [ "$scrivibile" = "false" ]; then
+			set -- "$@" --volume "${sorgente}:${destinazione}:ro"
+		else
+			set -- "$@" --volume "${sorgente}:${destinazione}"
+		fi
+	done
+	IFS="$vecchio_ifs"
+
+	if [ "$porte_messe" = "0" ]; then
+		set -- "$@" --publish "${porta}:3000"
+	fi
+
+	case "$CONSERVA_MEMORIA" in
+	"" | 0) ;;
+	*) set -- "$@" --memory "$CONSERVA_MEMORIA" ;;
+	esac
+
+	case "$CONSERVA_CPU" in
+	"" | 0) ;;
+	*) set -- "$@" --cpus "$(awk "BEGIN { print $CONSERVA_CPU / 1000000000 }")" ;;
+	esac
+
+	docker "$@" "$IMAGE"
+}
+
 if docker container inspect "$NAME" >/dev/null 2>&1; then
 	MOUNTED="$(docker container inspect "$NAME" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}')"
 	EXISTING_PORT="$(docker inspect -f '{{range $p, $conf := .NetworkSettings.Ports}}{{if $conf}}{{(index $conf 0).HostPort}}{{end}}{{end}}' "$NAME" 2>/dev/null || true)"
@@ -609,6 +710,10 @@ if docker container inspect "$NAME" >/dev/null 2>&1; then
 	if [ -n "$EXISTING_PORT" ] && [ "${PORT}" = "3000" ]; then
 		PORT="$EXISTING_PORT"
 	fi
+
+	leggi_container_esistente
+	# Una porta chiesta per nome con ESTIA_PORT vince su quella di prima.
+	[ -z "${ESTIA_PORT:-}" ] || CONSERVA_PORTE=""
 
 	case "$MOUNTED" in
 	"")
@@ -636,7 +741,11 @@ fi
 # Creato esplicitamente e prima del container: cosi' esiste con un nome anche
 # se il run qui sotto fallisce, e il nome e' l'unica cosa che rende dei dati
 # ritrovabili sei mesi dopo.
-docker volume create "$VOLUME" >/dev/null
+# Un percorso (dati montati da una cartella dell'host) non e' un volume da creare.
+case "$VOLUME" in
+/*) ;;
+*) docker volume create "$VOLUME" >/dev/null ;;
+esac
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
@@ -645,22 +754,7 @@ sayb "${CCYAN}→${C0} $(frase avvio.avvio)"
 # La stessa postura del Compose in infra/: utente non root, filesystem in sola
 # lettura tranne il volume, nessuna capability, nessun privilegio nuovo.
 # ESTIA_LINGUA e' la lingua della Casa: l'istanza la valida all'avvio.
-docker run -d \
-	--name "$NAME" \
-	--restart unless-stopped \
-	--publish "${PORT}:3000" \
-	--volume "${VOLUME}:/data" \
-	--env ESTIA_DATA_DIR=/data \
-	--env ESTIA_HOST=0.0.0.0 \
-	--env ESTIA_LINGUA="$LINGUA" \
-	--user 10001:10001 \
-	--init \
-	--read-only \
-	--tmpfs /tmp \
-	--cap-drop ALL \
-	--security-opt no-new-privileges:true \
-	--pids-limit 256 \
-	"$IMAGE" >/dev/null || die "$(frase avvio.fallito)"
+avvia_estia "$VOLUME" "$PORT" "$LINGUA" >/dev/null || die "$(frase avvio.fallito)"
 
 WAITED=0
 
