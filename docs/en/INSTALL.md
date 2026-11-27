@@ -244,6 +244,8 @@ Skip this section if you have just started the instance from the terminal.
 
 **If your NAS can import a Compose file, use that.** On Synology it is Container Manager → **Project** → Create, and in the file field you paste the contents of step 5 (the lines from `name: estia` to `estia-backup:`). It is exactly the same installation as this guide, with an interface on top.
 
+**The ready-to-paste file** is [`infra/nas/docker-compose.yml`](../../infra/nas/docker-compose.yml): no variables to fill in, nothing to build. The same file works for QNAP Container Station (Applications → Create), UGREEN (Docker → Project), TrueNAS SCALE (Apps → Install via YAML), Portainer (Stacks) and CasaOS (Custom install → Import). The only line people usually change is `ESTIA_LINGUA`, the home's language: `en` or `it`. On **Unraid** there is the template [`infra/nas/estia-unraid.xml`](../../infra/nas/estia-unraid.xml), to load in Docker → Add Container.
+
 **If your panel cannot import Compose, do not build the container by hand in the form**: that is where the volume line gets forgotten, and that is how two instances were lost. Open an SSH terminal and give one command, which carries everything needed:
 
 ```sh
