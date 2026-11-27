@@ -26,7 +26,7 @@ Non vanno mescolate: la stessa istanza si installa in un modo **o** nell'altro. 
 
 ## Installare con un comando solo
 
-Se sulla macchina c'è già Docker — e se non c'è, è il passo 1 — questo la installa e la accende:
+Su un Linux qualunque — mini-PC, vecchio portatile, Raspberry Pi — questo installa l'istanza e la accende. **Se manca Docker, te lo propone e lo installa lui**, dai pacchetti del sistema (`apt-get install docker.io` su Debian, Ubuntu, Mint e Raspberry Pi OS; lo script ufficiale di Docker su Fedora e RHEL), dopo averti chiesto il permesso. Su un NAS invece Docker si installa dal centro applicazioni, ed è il passo 1:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
 
 Di solito non chiede niente. Su un Linux da desktop (Mint, Ubuntu, …) può chiedere **una volta** la password di amministratore: serve solo a copiare il comando `estia` in `/usr/local/bin`, perché da utente normale quella cartella non è scrivibile. Non avvolgere tutto in `sudo` (`curl … | sudo sh`): Docker deve restare del tuo utente. Se non dai la password, l'istanza parte lo stesso e il comando finisce in `~/.local/bin`.
 
-Scarica l'immagine, prepara il posto dove staranno i dati, avvia l'istanza, installa `estia` e ti stampa l'indirizzo a cui aprirla. Da lì vai al **passo 7**.
+Se ha dovuto installare Docker, il tuo utente entra nel gruppo `docker` dal prossimo accesso: per questa volta lo script usa `sudo`, e non devi chiudere niente. Poi scarica l'immagine, prepara il posto dove staranno i dati, avvia l'istanza, installa `estia` e ti stampa l'indirizzo a cui aprirla. Da lì vai al **passo 7**.
 
 **Se l'istanza gira già e manca solo il comando** (`estia: comando non trovato` su Linux Mint, dopo un'installazione fatta da utente normale):
 
@@ -51,7 +51,7 @@ Il resto di questa guida serve se vuoi fare le stesse cose a mano, un pezzo alla
 ## Che cosa serve
 
 - Una **macchina che resti accesa**: NAS (Synology, QNAP, UGREEN, Asustor, TerraMaster), mini-PC Linux, o un vecchio portatile con Linux.
-- **Docker**. Se non ce l'hai, è il passo 1: non darlo per installato, quasi nessuna macchina ce l'ha già.
+- **Docker**. Su Linux, se non c'è, lo installa il comando solo; sui NAS e per la strada passo per passo è il passo 1. Non darlo per installato: quasi nessuna macchina ce l'ha già.
 - **Un accesso a un terminale**: SSH è il modo più comodo. Sui NAS va abilitato dal pannello, di solito sotto «Terminale» o «SSH».
 - Un **secondo dispositivo sulla stessa rete** — telefono o portatile — per completare la configurazione.
 
