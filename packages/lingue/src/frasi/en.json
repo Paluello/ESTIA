@@ -233,6 +233,7 @@
   "errori.rete_spenta": "The network between instances is off on this instance: turn it on from the panel or with ESTIA_NETWORK_PROBE.",
   "errori.richiesta_follow_inesistente": "This request no longer exists.",
   "errori.richiesta_incompleta": "Say who to follow, and on which instance.",
+  "errori.richiesta_su_stream_non_valida": "The app sent a request this Home cannot read. Updating the app should fix it.",
   "errori.richiesta_troppo_grande": "What you sent is too large for this instance.",
   "errori.segui_te_stesso": "You cannot follow yourself.",
   "errori.session_not_found": "This session does not exist.",

@@ -233,6 +233,7 @@
   "errori.rete_spenta": "La rete fra istanze è spenta su questa istanza: si accende dal pannello o con ESTIA_NETWORK_PROBE.",
   "errori.richiesta_follow_inesistente": "Questa richiesta non esiste più.",
   "errori.richiesta_incompleta": "Serve chi seguire, e su quale istanza.",
+  "errori.richiesta_su_stream_non_valida": "L'app ha mandato una richiesta che questa Casa non sa leggere. Aggiornare l'app dovrebbe bastare.",
   "errori.richiesta_troppo_grande": "Quello che hai mandato è troppo grande per questa istanza.",
   "errori.segui_te_stesso": "Non puoi seguire te stesso.",
   "errori.session_not_found": "Questa sessione non esiste.",

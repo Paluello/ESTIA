@@ -284,6 +284,71 @@ export class IdentityService {
     return { expiresAt: expiresAt.toISOString(), token, user: this.toAuthenticatedUser(user) };
   }
 
+  /**
+   * Apre la sessione di un Dispositivo entrato con il QR (ADR 0044 §5).
+   *
+   * Nessun token esce di qui: il token si genera e si butta, perché da fuori
+   * l'unica credenziale è la chiave di rete che QUIC prova a ogni connessione.
+   * La sessione esiste perché il membro la veda nell'elenco e la possa
+   * revocare, come quella di un browser.
+   */
+  public openDeviceSession(userId: string, deviceLabel: string): AuthenticatedCaller {
+    const user = this.users.findById(userId);
+
+    if (user === undefined || user.deletedAt !== null) {
+      throw new DomainError("unauthenticated", 401);
+    }
+
+    const issuedAt = this.now();
+    const id = randomUUID();
+
+    this.sessions.create({
+      createdAt: issuedAt.toISOString(),
+      deviceLabel: deviceLabel.trim(),
+      expiresAt: new Date(issuedAt.getTime() + SESSION_LIFETIME_MS).toISOString(),
+      id,
+      lastSeenAt: issuedAt.toISOString(),
+      revokedAt: null,
+      tokenHash: hashSessionToken(createSessionToken()),
+      userId: user.id,
+    });
+
+    return { sessionId: id, user: this.toAuthenticatedUser(user) };
+  }
+
+  /**
+   * Come `authenticate`, ma per id di sessione. **Solo** per il canale dei
+   * Dispositivi: lì l'id viene dalla chiave che l'handshake ha provato, mai da
+   * un campo che il chiamante scrive. Ogni uso allunga la scadenza: un'app
+   * che si fa vedere resta dentro, una revocata no.
+   */
+  public authenticateSession(sessionId: string): AuthenticatedCaller | undefined {
+    const session = this.sessions.findById(sessionId);
+
+    if (session === undefined || !this.isSessionUsable(session)) {
+      return undefined;
+    }
+
+    const user = this.users.findById(session.userId);
+
+    if (user === undefined || user.deletedAt !== null) {
+      return undefined;
+    }
+
+    const now = this.now();
+    this.sessions.touch(session.id, now.toISOString());
+    this.sessions.extend(session.id, new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString());
+
+    return { sessionId: session.id, user: this.toAuthenticatedUser(user) };
+  }
+
+  /** Chi sa dire quale chiave di rete sta dietro una sessione (l'accesso dei Dispositivi). */
+  public useChiaviDiRete(lookup: (sessionId: string) => string | undefined): void {
+    this.chiaveDiRete = lookup;
+  }
+
+  private chiaveDiRete: (sessionId: string) => string | undefined = () => undefined;
+
   /** Resolves a bearer token to a caller, or undefined if it grants nothing. */
   public authenticate(token: string): AuthenticatedCaller | undefined {
     const session = this.sessions.findByTokenHash(hashSessionToken(token));
@@ -321,14 +386,19 @@ export class IdentityService {
     return this.sessions
       .listForUser(userId)
       .filter((session) => this.isSessionUsable(session))
-      .map((session) => ({
-        createdAt: session.createdAt,
-        current: session.id === currentSessionId,
-        deviceLabel: session.deviceLabel,
-        expiresAt: session.expiresAt,
-        id: session.id,
-        lastSeenAt: session.lastSeenAt,
-      }));
+      .map((session) => {
+        const chiaveDiRete = this.chiaveDiRete(session.id);
+
+        return {
+          createdAt: session.createdAt,
+          current: session.id === currentSessionId,
+          deviceLabel: session.deviceLabel,
+          expiresAt: session.expiresAt,
+          id: session.id,
+          lastSeenAt: session.lastSeenAt,
+          ...(chiaveDiRete === undefined ? {} : { chiaveDiRete }),
+        };
+      });
   }
 
   /** Revokes one session. A caller may only revoke a session that is theirs. */

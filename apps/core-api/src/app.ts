@@ -36,6 +36,9 @@ import { FeedService } from "./feed/service.js";
 import { SqliteNotificheRepository } from "./notifiche/repository.js";
 import { registerNotificheRoutes } from "./notifiche/routes.js";
 import { NotificheService } from "./notifiche/service.js";
+import { AccessoDispositivi, SqliteAccessoRepository } from "./dispositivi/accesso.js";
+import { ServizioDispositivo, ServizioIngresso, type Iniettore } from "./dispositivi/alpn.js";
+import { INTESTAZIONE_CANALE, contrassegnoDi } from "./dispositivi/canale.js";
 import { SqliteDeviceKeysRepository } from "./dispositivi/repository.js";
 import { registerDispositiviRoutes } from "./dispositivi/routes.js";
 import { DispositiviService } from "./dispositivi/service.js";
@@ -163,7 +166,12 @@ export async function buildApp(
         : {
             level: config.logLevel,
             redact: {
-              paths: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
+              paths: [
+                "req.headers.authorization",
+                "req.headers.cookie",
+                `req.headers["${INTESTAZIONE_CANALE}"]`,
+                "res.headers.set-cookie",
+              ],
               remove: true,
             },
             ...(options.logDestination === undefined ? {} : { stream: options.logDestination }),
@@ -182,6 +190,13 @@ export async function buildApp(
   const connections = new ConnectionOriginLog();
 
   app.addHook("onRequest", async (request) => {
+    // Una richiesta portata da uno stream iroh non ha un indirizzo: è nata qui
+    // dentro con `app.inject()`, per conto di una chiave (ADR 0044 §4). Contarla
+    // come «loopback» sarebbe falso, e il suo IP non dice niente.
+    if (contrassegnoDi(request) !== undefined) {
+      return;
+    }
+
     const origin = connections.record(
       request.ip,
       options.now === undefined ? new Date() : options.now(),
@@ -400,6 +415,14 @@ export async function buildApp(
     // starts failing gets restarted, which would turn a burst of traffic into
     // an outage.
     allowList: (request) => request.url.startsWith("/health/"),
+    // Le richieste dei Dispositivi arrivano tutte da `app.inject()`, quindi
+    // dallo stesso indirizzo finto: il conto si fa per chiave, o tutte le app
+    // di una Casa dividerebbero un limite solo.
+    keyGenerator: (request) => {
+      const canale = contrassegnoDi(request);
+
+      return canale === undefined ? request.ip : `dispositivo:${canale.chiave}`;
+    },
   });
 
   await app.register(swagger, {
@@ -556,8 +579,20 @@ export async function buildApp(
 
   app.decorate("federationService", federation);
 
+  // L'accesso del Dispositivo (ADR 0044 §4–§5): due ALPN in più sullo stesso
+  // endpoint, perché la chiave della Casa è una sola.
+  const accessoDispositivi = new AccessoDispositivi({
+    identity: identityService,
+    repository: new SqliteAccessoRepository(database),
+    ...clockOption,
+  });
+
+  identityService.useChiaviDiRete((sessionId) => accessoDispositivi.chiaveDellaSessione(sessionId));
+
   endpoint.register(networkProbe);
   endpoint.register(federation);
+  endpoint.register(new ServizioIngresso(accessoDispositivi));
+  endpoint.register(new ServizioDispositivo(accessoDispositivi, app as unknown as Iniettore));
   const startingProbe = effectiveProbe({
     environment: config.network,
     stored: readStoredProbe(settingsRepository),
@@ -648,7 +683,17 @@ export async function buildApp(
   registerInstanceRoutes(app, instanceService);
   registerIdentityRoutes(app, identityService);
   registerDispositiviRoutes(app, {
+    accesso: accessoDispositivi,
     casa: deriveNetworkPublicId(identity),
+    rete: () =>
+      endpoint.endpointId === undefined
+        ? undefined
+        : {
+            chiave: endpoint.endpointId,
+            ...(endpoint.reachableByKey || endpoint.ticket === undefined
+              ? {}
+              : { ticket: endpoint.ticket }),
+          },
     dispositivi: dispositiviService,
     federation,
     identity: identityService,
