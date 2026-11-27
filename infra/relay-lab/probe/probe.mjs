@@ -178,14 +178,12 @@ async function dial() {
     result.echoOk = echoed.length === bytes && echoed.every((byte, index) => byte === index % 251);
     result.transferMs = transferMs;
     result.kibPerSecond = Math.round(((bytes * 2) / 1024 / (transferMs / 1000)) * 10) / 10;
-    result.paths = connection
-      .paths()
-      .map(({ isSelected, isRelay, remoteAddr, rttMs }) => ({
-        isSelected,
-        isRelay,
-        remoteAddr,
-        rttMs,
-      }));
+    result.paths = connection.paths().map(({ isSelected, isRelay, remoteAddr, rttMs }) => ({
+      isSelected,
+      isRelay,
+      remoteAddr,
+      rttMs,
+    }));
     const selected = result.paths.find((path) => path.isSelected);
     result.selectedIsRelay = selected?.isRelay ?? null;
     result.selectedRemote = selected?.remoteAddr ?? null;
