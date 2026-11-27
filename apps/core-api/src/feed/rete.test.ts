@@ -61,7 +61,8 @@ interface Casa {
   scrive: (autore: AuthenticatedUser, testo: string, quando: string, dove?: "local") => string;
 }
 
-function casa(dataDir: string, chiave: string): Casa {
+/** `collegataA`: la chiave dell'altra casa, che un amministratore di qua ha accettato. */
+function casa(dataDir: string, chiave: string, collegataA: string): Casa {
   const database = openDatabase(dataDir);
   const users = new SqliteUserRepository(database);
   const profiles = new SqliteProfileRepository(database);
@@ -78,10 +79,13 @@ function casa(dataDir: string, chiave: string): Casa {
    * fabbrica per un test sarebbe più codice di quanto ne provi.
    */
   let rete: FollowNetwork | undefined;
+  // Le case che questa considera collegate: quelle a cui la si è collegata.
+  const collegate = new Set<string>([collegataA]);
 
   return {
     collega: (altra) => {
       rete = ponte(altra, chiave);
+      collegate.add(altra.chiave);
     },
     abita: (username, apertura = true) => {
       const id = randomBytes(8).toString("hex");
@@ -110,6 +114,7 @@ function casa(dataDir: string, chiave: string): Casa {
       };
     },
     bacheche: new BachecheServite({
+      collegata: (instanceKey) => collegate.has(instanceKey),
       comments: commentRepository,
       commenti: commentiRemoti,
       cuori,
@@ -286,7 +291,10 @@ function client(
 async function dueCase(use: (qua: Casa, la: Casa) => Promise<void>): Promise<void> {
   await withTempDataDir(async (primo) => {
     await withTempDataDir(async (secondo) => {
-      await use(casa(primo, "chiave-di-qua"), casa(secondo, "chiave-di-la"));
+      await use(
+        casa(primo, "chiave-di-qua", "chiave-di-la"),
+        casa(secondo, "chiave-di-la", "chiave-di-qua"),
+      );
     });
   });
 }
@@ -331,6 +339,7 @@ describe("la bacheca servita a un'altra istanza", () => {
 
       // Stessa casa, ma con i byte: è l'unica cosa che questo test aggiunge.
       const conFoto = new BachecheServite({
+        collegata: () => true,
         comments: la.commentRepository,
         commenti: la.commentiRemoti,
         cuori: la.cuori,
@@ -877,6 +886,40 @@ describe("un cuore che attraversa", () => {
         true,
       );
       void qua;
+    });
+  });
+
+  /**
+   * Revisione interna, 2026-11-27: la sentinella è una stringa pubblica, e
+   * veniva accettata da qualunque chiave. Una casa mai collegata leggeva la
+   * bacheca, metteva cuori e commenti con il nome che voleva, e vedeva chi
+   * commenta qui.
+   */
+  it("la sentinella non vale per una casa che non è collegata", async () => {
+    await dueCase(async (qua, la) => {
+      const marco = la.abita("marco");
+      const post = la.scrive(marco, "Ciao a tutte le case", OGGI);
+      const sentinella = { nome: "marco", prova: PROVA_PROFILO_PUBBLICO };
+      const estranea = "chiave-di-una-estranea";
+
+      expect(
+        la.bacheche.cuore({ chi: sentinella, da: "eva", instanceKey: estranea, post, stato: true }),
+      ).toBeUndefined();
+      expect(la.cuori.count(post)).toBe(0);
+      expect(
+        la.bacheche.bacheca({ chi: [sentinella], da: "eva", instanceKey: estranea, quanti: 10 }),
+      ).toEqual([]);
+
+      // La stessa sentinella, da una casa collegata, continua a funzionare.
+      expect(
+        la.bacheche.cuore({
+          chi: sentinella,
+          da: "lucia",
+          instanceKey: qua.chiave,
+          post,
+          stato: true,
+        }),
+      ).toEqual({ cuori: 1, mio: true });
     });
   });
 

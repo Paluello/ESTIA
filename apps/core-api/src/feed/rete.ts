@@ -91,6 +91,11 @@ export interface BachecheServiteOptions {
   cuori: RemoteLikeRepository;
   commenti: RemoteCommentRepository;
   comments: CommentRepository;
+  /**
+   * Se questa casa è **collegata** a quella chiave: un sì dato da un
+   * amministratore di qua, non un follow che si ottiene da soli.
+   */
+  collegata: (instanceKey: string) => boolean;
 }
 
 export class BachecheServite {
@@ -101,6 +106,7 @@ export class BachecheServite {
   readonly #cuori: RemoteLikeRepository;
   readonly #commenti: RemoteCommentRepository;
   readonly #comments: CommentRepository;
+  readonly #collegata: (instanceKey: string) => boolean;
 
   public constructor(options: BachecheServiteOptions) {
     this.#posts = options.posts;
@@ -110,6 +116,7 @@ export class BachecheServite {
     this.#cuori = options.cuori;
     this.#commenti = options.commenti;
     this.#comments = options.comments;
+    this.#collegata = options.collegata;
   }
 
   /**
@@ -388,6 +395,14 @@ export class BachecheServite {
 
     for (const voce of chi) {
       if (voce.prova === PROVA_PROFILO_PUBBLICO) {
+        // La sentinella vale solo per una casa **collegata** ([ADR 0025] §2):
+        // è una stringa che tutti conoscono, quindi a una casa qualsiasi
+        // darebbe bacheca, foto, cuori e commenti di ogni profilo pubblico,
+        // e i nomi di chi commenta qui (revisione interna, 2026-11-27).
+        if (!this.#collegata(instanceKey)) {
+          continue;
+        }
+
         const persona = this.#profiles.findByUsername(voce.nome);
 
         if (persona !== undefined && persona.presence === "presente_pubblico") {

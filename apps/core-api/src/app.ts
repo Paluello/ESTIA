@@ -544,6 +544,8 @@ export async function buildApp(
   // niente dell'altra.
   federation.useBoards(
     new BachecheServite({
+      collegata: (instanceKey) =>
+        federation.list().some((r) => r.publicKey === instanceKey && r.state === "collegata"),
       commenti: commentiRemoti,
       comments: commentRepository,
       cuori: cuoriRemoti,
