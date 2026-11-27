@@ -1483,7 +1483,7 @@ export interface UpdateCheckResult {
   detail: string;
   /** `detail` by its keys, for the client to read in its own language. */
   detailFrasi?: Frase[];
-  /** Image ref compared against, e.g. `ghcr.io/chrono-web/estia:latest`. */
+  /** Image ref compared against, e.g. `ghcr.io/paluello/estia:latest`. */
   channel: string;
   /** Commit this instance was built from, when the image declares it. */
   currentRevision?: string;
