@@ -71,17 +71,18 @@ jobs:
 
       - name: Progetto Android
         working-directory: apps/app
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        # ANDROID_NDK_LATEST_HOME è una variabile dell'immagine del runner, non
+        # del contesto `env` di GitHub: si legge dalla shell.
         run: |
+          export NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
           pnpm tauri android init --ci
           node scripts/prepara-android.mjs
 
       - name: Build dell'APK
         working-directory: apps/app
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
-        run: pnpm tauri android build --apk --target aarch64 --ci
+        run: |
+          export NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          pnpm tauri android build --apk --target aarch64 --ci
 
       - name: Firma
         working-directory: apps/app
