@@ -2,6 +2,7 @@
 
 - Stato: **Accepted** — decisa dal proprietario il 2026-08-22
 - Aggiornamento del 2026-10-07: la consegna di buste che questo ADR protegge (`messaggio`) si è ritirata con `ESTIA-E2E-v1` ([ADR 0038](0038-mls-si-adotta-e-si-comincia-dal-web.md) punto 4). Restano il budget di consegna e la prova di coppia sulle operazioni che li usano ancora, a partire da `chiavi`
+- Aggiornamento del 2026-11-27: la regola del punto 1 vale anche per **l'annuncio di una conversazione MLS** (`segnaposto`), che fino a quel giorno non la chiedeva: una conversazione nasce da un annuncio solo se fra le due persone c'è un follow accettato, o se le due case sono collegate e la persona di qui è presente in rete. Il rifiuto è indistinguibile, come al punto 2. Vedi [ADR 0042](0042-come-mls-attraversa.md) §«Correzioni del 2026-11-27» e `messaggi/direttorio.ts`
 - Data: 2026-08-22
 - Proprietario: progetto ESTIA
 - Dipende da: [ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md), [ADR 0021](0021-la-forma-del-protocollo-fra-istanze.md), [ADR 0023](0023-come-si-legge-la-bacheca-di-una-persona-di-un-altra-istanza.md), [ADR 0029](0029-un-messaggio-si-consegna.md)

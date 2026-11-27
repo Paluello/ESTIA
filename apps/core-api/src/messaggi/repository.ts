@@ -156,8 +156,25 @@ export interface MessaggiRepository {
   ritiraVoce(conversazioneId: string, autoreId: string, id: string): boolean;
   /** Le case con almeno un membro nella conversazione. */
   caseDellaConversazione(conversazioneId: string): string[];
-  /** Questa casa ha almeno un membro in una qualunque conversazione di qui? */
+  /**
+   * Questa casa è in una conversazione **per un gesto di qualcuno di qui**?
+   *
+   * Conta una conversazione che ordina questa casa (l'ha aperta un membro
+   * nostro), o una in cui un membro nostro ha scritto. Non conta una
+   * conversazione che l'altra casa ha soltanto annunciato: altrimenti chiunque
+   * si darebbe da sola il budget di una casa collegata, con un annuncio.
+   */
   casaPartecipa(remoteKey: string): boolean;
+  /**
+   * Quante conversazioni sono nate da un annuncio di `casa` da `dal` in poi —
+   * tutte, o solo quelle con dentro `userId`. È il conto delle quote di §4.1.
+   */
+  contaNateDa(casa: string, dal: string, userId?: string): number;
+  /**
+   * Quanti Welcome sono in fila in una conversazione da `dal` in poi: tutti, o
+   * solo quelli per `destinatario`.
+   */
+  contaWelcome(conversazioneId: string, dal: string, destinatario?: string): number;
 
   /** Le voci in ordine di tempo, dalla piu' vecchia. */
   listVociArchivio(
@@ -168,13 +185,21 @@ export interface MessaggiRepository {
   /**
    * Deposita un handshake MLS (commit o Welcome) — ADR 0038.
    *
-   * **Un commit si accetta solo se porta un'epoch più alta di ogni commit già
-   * in fila** ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3).
-   * Due commit che creano la stessa epoch sono una corsa: il primo entra, il
-   * secondo torna `false` e chi l'ha scritto lo rifà sull'epoch nuova. Senza
-   * questo controllo la fila sola non basterebbe — accetterebbe entrambi, e
-   * ogni client ne applicherebbe uno scoprendo solo dopo che l'altro non si
-   * apre più.
+   * **Un commit si accetta solo se crea esattamente l'epoch che segue l'ultimo
+   * commit in fila** ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3) —
+   * la prima è la 1. Due commit che creano la stessa epoch sono una corsa: il
+   * primo entra, il secondo torna `false` e chi l'ha scritto lo rifà sull'epoch
+   * nuova. Senza questo controllo la fila sola non basterebbe — accetterebbe
+   * entrambi, e ogni client ne applicherebbe uno scoprendo solo dopo che
+   * l'altro non si apre più.
+   *
+   * «Esattamente la seguente», e non «più alta di tutte»: fino al 2026-11-27
+   * bastava essere più alta, e un solo partecipante che dichiarava l'epoch
+   * 2^53 chiudeva la fila per sempre — nessun commit vero sarebbe più stato
+   * più alto del suo.
+   *
+   * Un Welcome porta l'epoch del commit che l'ha prodotto: si accetta solo se
+   * quell'epoch in fila c'è già.
    */
   insertHandshake(
     record: Omit<HandshakeRecord, "seq"> & { conversazioneId: string; destinatario?: string },
@@ -250,6 +275,13 @@ export interface HandshakeRecord {
  * vorrebbero dire «qualunque carattere», e una chiave che li contenesse
  * finirebbe per corrispondere ai membri di case che non sono la sua.
  */
+/**
+ * L'epoch a cui la fila è arrivata: quella dell'ultimo commit, o zero se non
+ * ce n'è ancora nessuno. Un frammento SQL con **un** parametro, la conversazione.
+ */
+const EPOCH_IN_FILA = `(SELECT COALESCE(MAX(epoch), 0) FROM conversazione_handshake
+                          WHERE conversazione_id = ? AND tipo = 'commit')`;
+
 function escapeLike(valore: string): string {
   return valore.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
@@ -574,19 +606,22 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
     updatedAt: string;
     updatedBy: string;
   }): boolean {
-    // `WHERE epoch <= excluded.epoch` e' la regola, ed e' in SQL apposta: due
-    // client che depositano insieme non possono far vincere il piu' vecchio.
+    // La regola è in SQL apposta: due client che depositano insieme non
+    // possono far vincere il più vecchio. E l'epoch è **quella dell'ultimo
+    // commit in fila**, non «una non più bassa»: un `GroupInfo` che dichiara
+    // un'epoch che la fila non ha mai visto manderebbe chi rientra verso un
+    // gruppo che non esiste, e nessun deposito vero lo sostituirebbe più.
     const esito = this.db
       .prepare(
         `INSERT INTO conversazione_group_info
            (conversazione_id, epoch, group_info, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?)
+         SELECT ?, ?, ?, ?, ?
+          WHERE ? = ${EPOCH_IN_FILA}
          ON CONFLICT (conversazione_id) DO UPDATE SET
            epoch = excluded.epoch,
            group_info = excluded.group_info,
            updated_at = excluded.updated_at,
-           updated_by = excluded.updated_by
-         WHERE conversazione_group_info.epoch <= excluded.epoch`,
+           updated_by = excluded.updated_by`,
       )
       .run(
         record.conversazioneId,
@@ -594,6 +629,8 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
         record.groupInfo,
         record.updatedAt,
         record.updatedBy,
+        record.epoch,
+        record.conversazioneId,
       );
 
     return esito.changes > 0;
@@ -639,15 +676,23 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
       .prepare(
         `INSERT INTO conversazione_archivio_chiavi
            (conversazione_id, epoch, mazzo, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?)
+         SELECT ?, ?, ?, ?, ?
+          WHERE ? = ${EPOCH_IN_FILA}
          ON CONFLICT (conversazione_id) DO UPDATE SET
            epoch = excluded.epoch,
            mazzo = excluded.mazzo,
            updated_at = excluded.updated_at,
-           updated_by = excluded.updated_by
-         WHERE conversazione_archivio_chiavi.epoch <= excluded.epoch`,
+           updated_by = excluded.updated_by`,
       )
-      .run(record.conversazioneId, record.epoch, record.mazzo, record.updatedAt, record.updatedBy);
+      .run(
+        record.conversazioneId,
+        record.epoch,
+        record.mazzo,
+        record.updatedAt,
+        record.updatedBy,
+        record.epoch,
+        record.conversazioneId,
+      );
 
     return esito.changes > 0;
   }
@@ -1008,8 +1053,21 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
 
   public casaPartecipa(remoteKey: string): boolean {
     const row = this.db
-      .prepare(`SELECT 1 FROM conversazione_membri WHERE user_id LIKE ? ESCAPE '\\' LIMIT 1`)
-      .get(`remote:${escapeLike(remoteKey)}:%`);
+      .prepare(
+        `SELECT 1 FROM conversazione_membri m
+           JOIN conversazioni c ON c.id = m.conversazione_id
+          WHERE m.user_id LIKE ? ESCAPE '\\'
+            AND (
+              c.casa_che_ordina IS NULL
+              OR c.casa_che_ordina <> ?
+              OR EXISTS (
+                SELECT 1 FROM archivio_voci v
+                 WHERE v.conversazione_id = c.id AND v.autore_id IS NOT NULL
+              )
+            )
+          LIMIT 1`,
+      )
+      .get(`remote:${escapeLike(remoteKey)}:%`, remoteKey);
 
     return row !== undefined;
   }
@@ -1083,10 +1141,10 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
         `INSERT INTO conversazione_handshake
            (id, conversazione_id, epoch, tipo, destinatario, busta, created_at)
          SELECT ?, ?, ?, ?, ?, ?, ?
-         WHERE ? <> 'commit' OR NOT EXISTS (
-           SELECT 1 FROM conversazione_handshake
-             WHERE conversazione_id = ? AND tipo = 'commit' AND epoch >= ?
-         )`,
+          WHERE CASE WHEN ? = 'commit'
+                  THEN ? = ${EPOCH_IN_FILA} + 1
+                  ELSE ? >= 1 AND ? <= ${EPOCH_IN_FILA}
+                END`,
       )
       .run(
         record.id,
@@ -1097,11 +1155,56 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
         record.busta,
         record.createdAt,
         record.tipo,
+        record.epoch,
         record.conversazioneId,
         record.epoch,
+        record.epoch,
+        record.conversazioneId,
       );
 
     return Number(esito.changes) > 0;
+  }
+
+  public contaWelcome(conversazioneId: string, dal: string, destinatario?: string): number {
+    const row = (
+      destinatario === undefined
+        ? this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazione_handshake
+                 WHERE conversazione_id = ? AND tipo = 'welcome' AND created_at >= ?`,
+            )
+            .get(conversazioneId, dal)
+        : this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazione_handshake
+                 WHERE conversazione_id = ? AND tipo = 'welcome' AND created_at >= ?
+                   AND destinatario = ?`,
+            )
+            .get(conversazioneId, dal, destinatario)
+    ) as { n: number };
+
+    return row.n;
+  }
+
+  public contaNateDa(casa: string, dal: string, userId?: string): number {
+    const row = (
+      userId === undefined
+        ? this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazioni
+                 WHERE casa_che_ordina = ? AND created_at >= ?`,
+            )
+            .get(casa, dal)
+        : this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazioni c
+                 JOIN conversazione_membri m ON m.conversazione_id = c.id
+                WHERE c.casa_che_ordina = ? AND c.created_at >= ? AND m.user_id = ?`,
+            )
+            .get(casa, dal, userId)
+    ) as { n: number };
+
+    return row.n;
   }
 
   /**

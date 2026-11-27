@@ -471,6 +471,11 @@ export class FederationService implements AlpnService {
    * visita — e il tetto delle sconosciute (cinque al minuto) la chiuderebbe in
    * meno di un minuto. Non è un permesso: che cosa le si risponde lo decide
    * ancora la regola di ADR 0042 §2, richiesta per richiesta.
+   *
+   * «Si condivide» vuol dire **per un gesto di qualcuno di qui**: la
+   * conversazione l'ha aperta un membro nostro, o un membro nostro ci ha
+   * scritto. Una conversazione che l'altra casa ha soltanto annunciato non
+   * conta — altrimenti si darebbe da sola questo budget, con un annuncio.
    */
   #budgetLevel(view: RelationshipView | "bloccata", remoteKey: string): BudgetLevel {
     if (view === "collegata" || view === "in-contatto") {

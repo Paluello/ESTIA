@@ -114,6 +114,28 @@ const deposita = async (
     url: `/api/v1/conversazioni/${id}/group-info`,
   });
 
+/**
+ * Porta la fila fino a `epoch`, un commit alla volta dalla 1: l'istanza accetta
+ * un `GroupInfo` solo all'epoch dell'ultimo commit in fila.
+ */
+const avanza = async (
+  app: FastifyInstance,
+  token: string,
+  id: string,
+  epoch: number,
+  da = 1,
+): Promise<void> => {
+  for (let e = da; e <= epoch; e += 1) {
+    const res = await app.inject({
+      headers: bearer(token),
+      method: "POST",
+      payload: { busta: `COMMIT_${e}`, epoch: e, tipo: "commit" },
+      url: `/api/v1/conversazioni/${id}/handshake`,
+    });
+    expect(res.statusCode).toBe(200);
+  }
+};
+
 const leggi = async (app: FastifyInstance, token: string, id: string) =>
   app.inject({
     headers: bearer(token),
@@ -134,6 +156,7 @@ describe("il GroupInfo di una conversazione", () => {
   it("si deposita e si rilegge identico: l'istanza non lo tocca", async () => {
     await withRig(async ({ app, annaToken, brunoToken, conversazioneId }) => {
       const blob = "R1JPVVBJTkZPX09QQUNPX0JBU0U2NA==";
+      await avanza(app, annaToken, conversazioneId, 3);
       const put = await deposita(app, annaToken, conversazioneId, 3, blob);
       expect(put.statusCode).toBe(200);
       expect(put.json().epoch).toBe(3);
@@ -149,6 +172,7 @@ describe("il GroupInfo di una conversazione", () => {
 
   it("l'epoch non torna indietro: un GroupInfo vecchio manderebbe chi rientra in un'epoch morta", async () => {
     await withRig(async ({ app, annaToken, brunoToken, conversazioneId }) => {
+      await avanza(app, annaToken, conversazioneId, 5);
       await deposita(app, annaToken, conversazioneId, 5, "EPOCH_5");
 
       const vecchio = await deposita(app, brunoToken, conversazioneId, 4, "EPOCH_4");
@@ -160,8 +184,37 @@ describe("il GroupInfo di una conversazione", () => {
     });
   });
 
+  it("un'epoch che la fila non ha mai visto si rifiuta: non si salta in avanti", async () => {
+    await withRig(async ({ app, annaToken, brunoToken, conversazioneId }) => {
+      await avanza(app, annaToken, conversazioneId, 2);
+      await deposita(app, annaToken, conversazioneId, 2, "EPOCH_2");
+
+      // Fino al 2026-11-27 bastava «non più bassa»: un membro dichiarava
+      // un'epoch enorme, e nessun GroupInfo vero l'avrebbe più sostituito.
+      for (const epoch of [3, 2 ** 53 - 1]) {
+        const avanti = await deposita(app, brunoToken, conversazioneId, epoch, "DAL_FUTURO");
+        expect(avanti.statusCode).toBe(409);
+      }
+
+      const letto = (await leggi(app, annaToken, conversazioneId)).json();
+      expect(letto.groupInfo).toBe("EPOCH_2");
+
+      // E la fila va avanti come prima.
+      await avanza(app, brunoToken, conversazioneId, 3, 3);
+      expect((await deposita(app, brunoToken, conversazioneId, 3, "EPOCH_3")).statusCode).toBe(200);
+    });
+  });
+
+  it("senza nessun commit in fila l'epoch è la zero, e solo quella", async () => {
+    await withRig(async ({ app, annaToken, conversazioneId }) => {
+      expect((await deposita(app, annaToken, conversazioneId, 1, "UNO")).statusCode).toBe(409);
+      expect((await deposita(app, annaToken, conversazioneId, 0, "ZERO")).statusCode).toBe(200);
+    });
+  });
+
   it("la stessa epoch si può riscrivere: due membri possono commettere insieme", async () => {
     await withRig(async ({ app, annaToken, brunoToken, conversazioneId }) => {
+      await avanza(app, annaToken, conversazioneId, 5);
       await deposita(app, annaToken, conversazioneId, 5, "DA_ANNA");
       const pari = await deposita(app, brunoToken, conversazioneId, 5, "DA_BRUNO");
 
@@ -172,7 +225,9 @@ describe("il GroupInfo di una conversazione", () => {
 
   it("avanzare di epoch sostituisce quello di prima", async () => {
     await withRig(async ({ app, annaToken, conversazioneId }) => {
+      await avanza(app, annaToken, conversazioneId, 1);
       await deposita(app, annaToken, conversazioneId, 1, "PRIMA");
+      await avanza(app, annaToken, conversazioneId, 2, 2);
       await deposita(app, annaToken, conversazioneId, 2, "DOPO");
 
       const letto = (await leggi(app, annaToken, conversazioneId)).json();
@@ -183,6 +238,7 @@ describe("il GroupInfo di una conversazione", () => {
 
   it("chi non è della conversazione non lo legge e non lo scrive", async () => {
     await withRig(async ({ app, annaToken, carlaToken, conversazioneId }) => {
+      await avanza(app, annaToken, conversazioneId, 1);
       await deposita(app, annaToken, conversazioneId, 1, "SEGRETO");
 
       expect((await leggi(app, carlaToken, conversazioneId)).statusCode).toBe(403);
@@ -222,7 +278,10 @@ describe("il GroupInfo di una conversazione", () => {
 
   it("cancellata la conversazione, il suo GroupInfo se ne va con lei", async () => {
     await withRig(async ({ app, annaToken, conversazioneId, dataDir }) => {
-      await deposita(app, annaToken, conversazioneId, 1, "RESTA_DA_SOLO?");
+      await avanza(app, annaToken, conversazioneId, 1);
+      expect(
+        (await deposita(app, annaToken, conversazioneId, 1, "RESTA_DA_SOLO?")).statusCode,
+      ).toBe(200);
 
       await app.inject({
         headers: bearer(annaToken),

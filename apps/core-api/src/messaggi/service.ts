@@ -12,6 +12,7 @@ import type {
 } from "@estia/contracts";
 
 import { DomainError } from "../errors.js";
+import { idDiVoce, istanteValido, nomeValido } from "./forma.js";
 import { codificaCursore, decodificaCursore } from "./repository.js";
 import type { UserRepository } from "../identity/repository.js";
 import type {
@@ -140,13 +141,54 @@ export interface ReteFraCase {
   ) => Promise<void>;
 }
 
+/**
+ * Chi può aprire una conversazione con chi, da un'altra casa
+ * ([ADR 0030](../../../../docs/adr/0030-chi-puo-scrivere-a-chi.md) §1).
+ *
+ * Una porta e non il registro dei follow, perché la regola sta in un posto
+ * solo — [`direttorio.ts`](direttorio.ts) — e questo servizio non deve sapere
+ * che cosa sia un follow o un collegamento. **Assente, nessun annuncio fa
+ * nascere una conversazione**: il difetto da cui viene questa porta era
+ * proprio un sì dato per mancanza di domanda.
+ */
+export interface ChiPuoScrivere {
+  /**
+   * `da`, della casa `casa`, può aprire una conversazione con questa persona
+   * di qui? `casa` è la chiave della connessione; `da` è dichiarato da lei.
+   */
+  puoAprire(casa: string, da: string, destinatario: { id: string; username: string }): boolean;
+}
+
 export interface MessaggiServiceOptions {
   repository: MessaggiRepository;
   users: UserRepository;
   now?: (() => Date) | (() => string);
   /** Assente finché la rete non c'è: allora ordina soltanto questa casa. */
   rete?: ReteFraCase;
+  /** Assente = nessuna conversazione nasce da un annuncio. */
+  chiPuoScrivere?: ChiPuoScrivere;
 }
+
+/**
+ * Le quote di ADR 0042 §4.1 e §3, tutte su una finestra di un giorno.
+ *
+ * Sono larghe per una casa — venti persone che si scrivono non ci arrivano —
+ * e strette per chi prova a riempire un disco: ogni riga che un'altra casa può
+ * far scrivere qui ha un tetto che non dipende dalla sua buona volontà.
+ */
+export const QUOTE = {
+  /** Conversazioni nate dagli annunci di una casa. */
+  annunciPerCasa: 32,
+  /** Conversazioni nate dagli annunci di una casa per la stessa persona di qui. */
+  annunciPerPersona: 8,
+  finestraMs: 24 * 60 * 60 * 1000,
+  /** Welcome messi in fila da una stessa casa, in tutte le sue conversazioni. */
+  welcomePerCasa: 256,
+  /** Welcome in fila in una conversazione. */
+  welcomePerConversazione: 128,
+  /** Welcome in fila per lo stesso destinatario di una conversazione. */
+  welcomePerDestinatario: 16,
+} as const;
 
 /**
  * Il costo dichiarato di ADR 0042 §3, detto con le parole che l'interfaccia
@@ -210,11 +252,15 @@ export class MessaggiService {
   private rete: ReteFraCase | undefined;
   /** Quando si sono chiesti i segnaposto l'ultima volta, per casa e conversazione. Solo in memoria. */
   readonly #ultimeRichieste = new Map<string, number>();
+  /** I Welcome depositati da ogni casa nella finestra: gli istanti, in memoria. */
+  readonly #welcomeDiCasa = new Map<string, number[]>();
+  #chiPuoScrivere: ChiPuoScrivere | undefined;
 
   constructor(options: MessaggiServiceOptions) {
     this.repo = options.repository;
     this.users = options.users;
     this.rete = options.rete;
+    this.#chiPuoScrivere = options.chiPuoScrivere;
     if (options.now) {
       const fn = options.now;
       this.now = () => {
@@ -473,6 +519,13 @@ export class MessaggiService {
       throw new DomainError("forbidden", 403);
     }
 
+    // La stessa forma che le altre case pretendono da un segnaposto
+    // ([`forma.ts`](forma.ts)): una voce che qui entrasse con un id o una data
+    // che là non passano non arriverebbe mai a nessuno, in silenzio.
+    if (!voci.every((v) => idDiVoce(v.id) && istanteValido(v.createdAt))) {
+      throw new DomainError("invalid_request", 400);
+    }
+
     const scritte = this.repo.insertVociArchivio(conversazioneId, callerId, voci);
     if (scritte === undefined) {
       throw new DomainError("conflict", 409);
@@ -601,6 +654,11 @@ export class MessaggiService {
    * crea, con la casa che ordina scritta: è l'annuncio. Una casa può dire di
    * ordinare solo una conversazione che ha fatto nascere lei, quindi una
    * menzogna qui tocca soltanto le sue conversazioni.
+   *
+   * **Ogni rifiuto è lo stesso `false`**: un nome che qui non esiste, una
+   * persona che esiste e non si può raggiungere da quella casa, una quota
+   * finita. Distinguerli direbbe a un'altra casa chi abita qua, un nome per
+   * volta ([ADR 0020](../../../../docs/adr/0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md) §1).
    */
   riceviSegnapostiSpinti(spinta: {
     conversazioneId: string;
@@ -635,12 +693,35 @@ export class MessaggiService {
     da: string;
     destinatari: readonly string[];
   }): boolean {
-    const locali = spinta.destinatari.map((nome) => this.users.findByUsername(nome));
-    if (locali.length === 0 || locali.some((u) => u === undefined)) {
+    // Fino al 2026-11-27 bastava che i nomi esistessero: una casa mai vista
+    // faceva nascere qui una conversazione con chiunque, e la risposta le
+    // diceva quali nomi c'erano. Ora la domanda è quella di ADR 0030 — questa
+    // persona, da quella casa, si può raggiungere? — e la fa una porta sola.
+    const regola = this.#chiPuoScrivere;
+    if (regola === undefined || !nomeValido(spinta.da) || spinta.destinatari.length === 0) {
       return false;
     }
 
-    const membri = [...locali.map((u) => u!.id), `remote:${spinta.remoteKey}:${spinta.da}`];
+    const locali: { id: string; username: string }[] = [];
+    for (const nome of new Set(spinta.destinatari)) {
+      const persona = this.users.findByUsername(nome);
+      if (persona === undefined || !regola.puoAprire(spinta.remoteKey, spinta.da, persona)) {
+        return false;
+      }
+      locali.push({ id: persona.id, username: persona.username });
+    }
+
+    const dal = new Date(Date.parse(this.now()) - QUOTE.finestraMs).toISOString();
+    if (
+      this.repo.contaNateDa(spinta.remoteKey, dal) >= QUOTE.annunciPerCasa ||
+      locali.some(
+        (p) => this.repo.contaNateDa(spinta.remoteKey, dal, p.id) >= QUOTE.annunciPerPersona,
+      )
+    ) {
+      return false;
+    }
+
+    const membri = [...locali.map((u) => u.id), `remote:${spinta.remoteKey}:${spinta.da}`];
 
     this.repo.createConversazione({
       casaCheOrdina: spinta.remoteKey,
@@ -909,7 +990,10 @@ export class MessaggiService {
     };
   }
 
-  /** Questa casa partecipa a qualche conversazione di qui? Solo per i limiti di frequenza. */
+  /**
+   * Questa casa è in una conversazione di qui **per un gesto di qualcuno di
+   * qui**? Solo per i limiti di frequenza, e mai per un annuncio suo soltanto.
+   */
   casaPartecipa(remoteKey: string): boolean {
     return this.repo.casaPartecipa(remoteKey);
   }
@@ -980,6 +1064,16 @@ export class MessaggiService {
       throw new DomainError("invalid_request", 400);
     }
 
+    // Un Welcome è per qualcuno che nella conversazione c'è: per l'istanza è
+    // una riga che resta in fila, e un destinatario qualunque sarebbe un posto
+    // dove scrivere senza che nessuno la legga mai.
+    if (
+      input.destinatario !== undefined &&
+      !this.repo.isMember(conversazioneId, input.destinatario)
+    ) {
+      throw new DomainError("invalid_request", 400);
+    }
+
     const id = randomUUID();
     const createdAt = this.now();
     const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
@@ -1010,6 +1104,13 @@ export class MessaggiService {
       }
 
       return { id };
+    }
+
+    if (
+      input.destinatario !== undefined &&
+      this.#troppiWelcome(conversazioneId, input.destinatario)
+    ) {
+      throw new DomainError("troppe_richieste", 429);
     }
 
     const accettato = this.repo.insertHandshake({
@@ -1240,6 +1341,11 @@ export class MessaggiService {
     this.rete = rete;
   }
 
+  /** Come `useRete`: la regola di ADR 0030 nasce dopo questo servizio. */
+  useChiPuoScrivere(regola: ChiPuoScrivere): void {
+    this.#chiPuoScrivere = regola;
+  }
+
   /**
    * Il deposito che arriva da un'altra casa (ADR 0042 §2).
    *
@@ -1275,17 +1381,61 @@ export class MessaggiService {
       return undefined;
     }
 
+    if (record.destinatario !== undefined) {
+      // Per un membro, e dentro le quote: per casa, per conversazione, per
+      // destinatario. Il rifiuto è lo stesso di ogni altro (§2), così chi
+      // deposita non impara da qui chi c'è in una conversazione.
+      if (
+        !this.repo.isMember(record.conversazioneId, record.destinatario) ||
+        this.#troppiWelcome(record.conversazioneId, record.destinatario) ||
+        !this.#contaWelcomeDi(record.remoteKey)
+      ) {
+        return undefined;
+      }
+    }
+
+    // L'id e l'orario li mette chi ordina. Quelli dell'altra casa sono campi
+    // di un messaggio: un id già usato qui farebbe fallire la scrittura, e un
+    // orario scelto da lei sposterebbe la finestra delle quote dove le pare.
+    const id = randomUUID();
     const accettato = this.repo.insertHandshake({
       busta: record.busta,
       conversazioneId: record.conversazioneId,
-      createdAt: record.createdAt,
+      createdAt: this.now(),
       epoch: record.epoch,
-      id: record.id,
+      id,
       tipo: record.tipo,
       ...(record.destinatario !== undefined ? { destinatario: record.destinatario } : {}),
     });
 
-    return accettato ? { id: record.id } : "indietro";
+    return accettato ? { id } : "indietro";
+  }
+
+  /** La fila ha già troppi Welcome, in questa conversazione o per questo destinatario? */
+  #troppiWelcome(conversazioneId: string, destinatario: string): boolean {
+    const dal = new Date(Date.parse(this.now()) - QUOTE.finestraMs).toISOString();
+
+    return (
+      this.repo.contaWelcome(conversazioneId, dal, destinatario) >= QUOTE.welcomePerDestinatario ||
+      this.repo.contaWelcome(conversazioneId, dal) >= QUOTE.welcomePerConversazione
+    );
+  }
+
+  /** Conta un Welcome di questa casa. `false` quando la sua quota del giorno è finita. */
+  #contaWelcomeDi(casa: string): boolean {
+    const adesso = Date.parse(this.now());
+    const recenti = (this.#welcomeDiCasa.get(casa) ?? []).filter(
+      (quando) => adesso - quando < QUOTE.finestraMs,
+    );
+
+    if (recenti.length >= QUOTE.welcomePerCasa) {
+      this.#welcomeDiCasa.set(casa, recenti);
+      return false;
+    }
+
+    recenti.push(adesso);
+    this.#welcomeDiCasa.set(casa, recenti);
+    return true;
   }
 
   /**
