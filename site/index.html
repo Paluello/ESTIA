@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ESTIA — a social network that lives in your home</title>
+    <meta
+      name="description"
+      content="ESTIA is a real social network whose content lives on a small machine in your home or your community's space. Encrypted, no algorithm, no ads, no developer servers."
+    />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 15 16 5l12 10v12H4z' fill='%23b4552d'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="./">ESTIA</a>
+        <nav aria-label="Site">
+          <a class="wide" href="#how">How it works</a>
+          <a href="#install">Install</a>
+          <a href="privacy.html">Privacy</a>
+          <a href="https://github.com/Paluello/ESTIA">Code</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap hero">
+        <span class="badge">Public beta in preparation · free and open source</span>
+        <h1>A social network that lives <em>in your home</em>.</h1>
+        <p class="lead">
+          ESTIA is a real social network — photos, posts, private chats — whose content stays on a
+          small machine in your flat, your building or your community centre. Encrypted, with no
+          algorithm, no ads, and no server run by the people who make it.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="#install">Set up a home</a>
+          <a class="button" href="https://github.com/Paluello/ESTIA/blob/main/README.en.md"
+            >Read the project</a
+          >
+        </div>
+      </div>
+
+      <section id="why">
+        <div class="wrap">
+          <h2>Five words, at the same time</h2>
+          <ul class="words">
+            <li>Owned</li>
+            <li>Shared</li>
+            <li>Communal</li>
+            <li>Protected</li>
+            <li>Connected with anyone</li>
+          </ul>
+          <p class="prose muted">
+            Each of these already exists somewhere on its own. ESTIA's point is to demand all five
+            together: your content is physically yours, your community shares a place, and you can
+            still reach anyone in the world — without your content moving anywhere.
+          </p>
+        </div>
+      </section>
+
+      <section id="how">
+        <div class="wrap">
+          <h2>How it works</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>A home, not a platform</h3>
+              <p>
+                Each community runs a <strong>home</strong>: ESTIA on a NAS, a mini-PC or an old
+                laptop that stays on. The database, the photos and the keys are on that machine, and
+                nowhere else.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Three surfaces, one identity</h3>
+              <p>
+                The local feed of the people who share the home; a profile that reaches other homes;
+                and chats that cross homes. One account, and the default is always the smallest
+                circle.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Visited, not copied</h3>
+              <p>
+                When someone reads you from another home, they visit your content; they do not get a
+                copy to keep. Delete a post, and it is really gone.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Found by key</h3>
+              <p>
+                Homes find each other by public key, with no domain and no open ports. When two
+                routers will not connect directly, a community relay forwards encrypted packets it
+                cannot read and does not keep.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Private messages are end-to-end</h3>
+              <p>
+                Chats use MLS (RFC 9420). The home that stores your messages cannot read them, and
+                neither can its administrator.
+              </p>
+            </div>
+            <div class="card">
+              <h3>No algorithm, no ads</h3>
+              <p>
+                Your feed is chronological and made of the people you follow and your own home.
+                Nobody receives "all of ESTIA", and nothing becomes public by omission.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install">
+        <div class="wrap">
+          <h2>Set up a home</h2>
+          <p class="prose">
+            On a machine that stays on — a NAS, a Linux mini-PC, a Raspberry Pi — run one command.
+            It asks the language your home will speak, installs Docker if your Linux does not have
+            it yet (after asking), starts the home and prints the address to open from your phone.
+          </p>
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh</code></pre>
+          <p class="prose muted">
+            No domain, no certificate, no port forwarding. On a NAS, install Docker first from the
+            app centre (Container Manager on Synology, Container Station on QNAP). The full guide,
+            with backups and disk encryption, is in
+            <a href="https://github.com/Paluello/ESTIA/blob/main/docs/en/INSTALL.md"
+              >the installation guide</a
+            >.
+          </p>
+        </div>
+      </section>
+
+      <section id="status">
+        <div class="wrap">
+          <h2>Where the project stands</h2>
+          <p class="prose">
+            ESTIA is <strong>pre-1.0</strong>, built in the open, and says honestly what exists.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">State</th>
+                <th scope="col">What</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Proven on real hardware</td>
+                <td>
+                  Feed, comments, likes and photos; encrypted backups and restore; content crossing
+                  homes
+                </td>
+              </tr>
+              <tr>
+                <td>Built, field test open</td>
+                <td>End-to-end encrypted private messages between homes</td>
+              </tr>
+              <tr>
+                <td>Being built</td>
+                <td>
+                  Apps for iPhone, Android and desktop; several devices per person; group chats
+                  across many homes; federated moderation
+                </td>
+              </tr>
+              <tr>
+                <td>Not yet</td>
+                <td>Store releases, push notifications, an independent security audit</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="promise">
+        <div class="wrap prose">
+          <h2>The promise, stated precisely</h2>
+          <p>
+            No central application server run by the developers, and no community content kept
+            outside the home, unless its administrator explicitly chooses so. DNS, push notification
+            services and relays can be outside services: they are declared, and replaceable.
+          </p>
+          <p class="muted">
+            ESTIA is free software under the GNU Affero General Public License v3. What members
+            write and publish remains theirs.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <p>
+          ESTIA ·
+          <a href="https://github.com/Paluello/ESTIA">Source code</a> ·
+          <a href="privacy.html">Privacy policy</a> ·
+          <a href="https://github.com/Paluello/ESTIA/blob/main/SECURITY.md"
+            >Report a vulnerability</a
+          >
+        </p>
+        <p>
+          This site sets no cookies and loads nothing from other servers. It is hosted on GitHub
+          Pages, which keeps its own server logs.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,228 @@
+/* ESTIA's public site. Same tokens as the app (apps/web/src/styles/tokens.css):
+   terracotta for the home, teal for the network, system fonts, no external
+   requests of any kind. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface-2: #f4f4f4;
+  --border: #e5e5e5;
+  --text: #0a0a0a;
+  --text-soft: #5c5c5c;
+  --accent: #b4552d;
+  --accent-text: #97441f;
+  --accent-bg: #f6e7df;
+  --on-accent: #ffffff;
+  --rete-text: #1d5563;
+  --rete-bg: #e6f0f2;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141414;
+    --surface-2: #1f1f1f;
+    --border: #2e2e2e;
+    --text: #f2f2f2;
+    --text-soft: #b0b0b0;
+    --accent: #c8653b;
+    --accent-text: #e9946c;
+    --accent-bg: #2c1d16;
+    --on-accent: #ffffff;
+    --rete-text: #7cc3d3;
+    --rete-bg: #13262b;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 1rem/1.6 var(--font);
+}
+a {
+  color: var(--accent-text);
+}
+a:focus-visible,
+.button:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
+}
+.wrap {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+header.top {
+  border-bottom: 1px solid var(--border);
+}
+header.top .wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  text-decoration: none;
+}
+nav a {
+  margin-left: 1rem;
+  color: var(--text-soft);
+  text-decoration: none;
+}
+nav a:hover {
+  color: var(--text);
+}
+.hero {
+  padding-top: 4.5rem;
+  padding-bottom: 3rem;
+}
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  line-height: 1.12;
+  margin: 0 0 1.25rem;
+  max-width: 20ch;
+}
+.hero h1 em {
+  font-style: normal;
+  color: var(--accent-text);
+}
+.lead {
+  font-size: 1.2rem;
+  color: var(--text-soft);
+  max-width: 40rem;
+  margin: 0 0 2rem;
+}
+.badge {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--rete-bg);
+  color: var(--rete-text);
+  margin-bottom: 1.25rem;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.button {
+  display: inline-block;
+  padding: 0.75rem 1.2rem;
+  border-radius: 0.6rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+section {
+  padding: 3rem 0;
+  border-top: 1px solid var(--border);
+}
+section h2 {
+  font-size: 1.6rem;
+  margin: 0 0 1.5rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.5rem;
+}
+.card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+}
+.card p {
+  margin: 0;
+  color: var(--text-soft);
+}
+.words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 0 0 1.5rem;
+  list-style: none;
+}
+.words li {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  font-weight: 600;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+}
+pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 1rem;
+  overflow-x: auto;
+  font: 0.9rem/1.5 var(--mono);
+}
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+.prose {
+  max-width: 44rem;
+}
+.prose h2 {
+  margin-top: 2.5rem;
+  font-size: 1.35rem;
+}
+.prose h1 {
+  font-size: 2rem;
+  line-height: 1.2;
+}
+.muted {
+  color: var(--text-soft);
+}
+footer {
+  border-top: 1px solid var(--border);
+  padding: 2rem 0 3rem;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+@media (max-width: 34rem) {
+  nav a {
+    margin-left: 0.7rem;
+  }
+  nav a.wide {
+    display: none;
+  }
+  .hero {
+    padding-top: 3rem;
+  }
+}

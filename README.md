@@ -1,5 +1,7 @@
 # ESTIA
 
+_[Read in English](README.en.md)_
+
 Un social network vero, in cui **i tuoi contenuti stanno fisicamente in un posto che è tuo** — casa tua, o lo spazio comune della tua comunità — cifrato, senza algoritmo e senza pubblicità.
 
 L'unità di base è un'istanza ospitata su un NAS in un luogo reale: un appartamento, un condominio, una via, uno spazio sociale. Sopra questa base convivono tre superfici sociali con un'unica identità: il **feed locale** di chi condivide l'istanza, il **profilo** che raggiunge le altre istanze ESTIA — e il Fediverso, per chi sceglie di adottare un dominio — e i **gruppi** di messaggistica, che attraversano le istanze.
