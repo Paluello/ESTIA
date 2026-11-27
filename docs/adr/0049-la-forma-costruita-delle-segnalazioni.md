@@ -1,6 +1,6 @@
-# ADR 0048 — La forma costruita delle segnalazioni
+# ADR 0049 — La forma costruita delle segnalazioni
 
-- Stato: **Accepted** per la forma sul filo e per i tetti; la scelta sulla domanda aperta 1 di ADR 0047 è **provvisoria**, ed è dichiarata tale qui sotto
+- Stato: **Accepted** — la scelta sulla domanda aperta 1 di ADR 0047 (Decisione 4) è stata confermata dal proprietario il 2026-11-27, come scelta per ora
 - Data: 2026-11-27
 - Proprietario: progetto ESTIA
 - Dipende da: [ADR 0047](0047-le-segnalazioni-si-visitano.md), [ADR 0021](0021-la-forma-del-protocollo-fra-istanze.md), [ADR 0020](0020-che-cosa-puo-chiedere-un-istanza-che-non-conosciamo.md), [ADR 0041](0041-le-istanze-si-tengono-d-occhio.md)
@@ -36,11 +36,11 @@ ADR 0047 Decisione 6 dice «non l'ora, non il giorno». Sul filo viaggia `AAAA-M
 
 I numeri vanno ritarati con il pilot, insieme ai budget di ADR 0020 §2. Sono scritti qui perché un tetto deciso nel codice e non in un documento è un tetto che nessuno sa di poter cambiare.
 
-## Decisione 4: la replica verso chi non è collegato (domanda aperta 1 di ADR 0047) — provvisoria
+## Decisione 4: la replica verso chi non è collegato (domanda aperta 1 di ADR 0047) — per ora
 
 Si costruisce la seconda delle due opzioni di ADR 0047: **la replica si visita solo dove l'istanza segnalata è collegata a chi guarda**, e altrove l'avviso dice «replica non disponibile». Non si tocca ADR 0020 §1, e quindi la presentazione resta ciò che è oggi.
 
-È la scelta reversibile: aggiungere più tardi la replica come campo della presentazione è un campo in più, additivo per ADR 0021, mentre toglierlo dopo averlo distribuito non lo è. Il proprietario può ribaltarla con una riga qui sotto, datata, senza che il codice di oggi vada buttato.
+È la scelta reversibile: aggiungere più tardi la replica come campo della presentazione è un campo in più, additivo per ADR 0021, mentre toglierlo dopo averlo distribuito non lo è. **Confermata dal proprietario il 2026-11-27**, come scelta per ora: si può ribaltare con una riga qui sotto, datata, senza che il codice di oggi vada buttato.
 
 ## Decisione 5: che cosa vuol dire «ignorare le segnalazioni»
 
