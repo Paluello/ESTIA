@@ -377,13 +377,17 @@ export function registerProfileRoutes(
           throw new DomainError("media_too_large", 413);
         }
 
-        return reply
-          .header("cache-control", "private, max-age=31536000, immutable")
-          .header("content-length", esito.bytes.byteLength)
-          .header("content-security-policy", "default-src 'none'; sandbox")
-          .header("content-type", esito.mediaType)
-          .header("x-content-type-options", "nosniff")
-          .send(Buffer.from(esito.bytes));
+        return (
+          reply
+            // Visited, not copied (ADR 0023): a year in the disk cache would keep
+            // a photo its author deleted, and would outlive the session.
+            .header("cache-control", "private, no-store")
+            .header("content-length", esito.bytes.byteLength)
+            .header("content-security-policy", "default-src 'none'; sandbox")
+            .header("content-type", esito.mediaType)
+            .header("x-content-type-options", "nosniff")
+            .send(Buffer.from(esito.bytes))
+        );
       },
     );
   }
