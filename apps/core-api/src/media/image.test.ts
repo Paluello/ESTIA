@@ -168,4 +168,30 @@ describe("thumbnails", () => {
 
     await expect(makeThumbnail(broken, "jpeg", 320)).rejects.toThrow();
   });
+
+  /**
+   * The decoder reads `ff 00` as padding and keeps scanning, so a frame hidden
+   * inside what looks like a segment's payload is the one it decodes. The
+   * header walk must refuse the file rather than trust the fake 1×1 frame that
+   * follows (revisione interna, 2026-11-27).
+   */
+  it("refuses a JPEG that hides its real frame behind an unknown marker", async () => {
+    const real = await encodeJpegForTests(samplePixels(64, 48));
+    const rest = real.subarray(2);
+    const length = rest.byteLength + 2;
+    const fakeSof = [0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00];
+    const bomb = new Uint8Array([
+      0xff,
+      0xd8,
+      0xff,
+      0x00,
+      length >> 8,
+      length & 0xff,
+      ...rest,
+      ...fakeSof,
+    ]);
+
+    expect(sniffFormat(bomb)).toBe("jpeg");
+    expect(readDimensions(bomb, "jpeg")).toBeUndefined();
+  });
 });

@@ -3067,3 +3067,52 @@ a.post__author:hover {
   align-items: center;
   margin-block: var(--s-2);
 }
+
+/* ============================ L'avviso su un'istanza (ADR 0047) ============================ */
+
+/*
+ * Una nota, non un allarme: niente rosso, niente icone di pericolo. Le due
+ * categorie si distinguono per il segno sul bordo — pieno per un fatto,
+ * tratteggiato per un'opinione — e non condividono mai lo stesso segno.
+ */
+.avviso-istanza {
+  display: grid;
+  gap: var(--s-3);
+  margin-block: var(--s-3);
+}
+
+.avviso-istanza__blocco {
+  display: grid;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.avviso-istanza__categoria {
+  padding-inline-start: var(--s-3);
+  border-inline-start: 3px solid var(--border-strong);
+}
+
+.avviso-istanza__categoria--non_gradita {
+  border-inline-start-style: dashed;
+  border-inline-start-color: var(--text-soft);
+}
+
+.avviso-istanza__titolo {
+  margin: 0 0 var(--s-1);
+  font-size: var(--t-md);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.avviso-istanza__motivi {
+  margin: var(--s-2) 0 0;
+  padding-inline-start: var(--s-4);
+}
+
+.avviso-istanza__replica {
+  padding-block-start: var(--s-3);
+  border-block-start: 1px solid var(--border);
+}

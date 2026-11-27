@@ -8,6 +8,10 @@ on:
     branches: [main]
   pull_request:
 
+# Legge il codice e basta: nessun permesso in scrittura al token.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest

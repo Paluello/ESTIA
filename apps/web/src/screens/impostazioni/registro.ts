@@ -7,6 +7,7 @@ import { Dispositivi } from "./Dispositivi.js";
 import { Aspetto } from "./Aspetto.js";
 import { Informazioni } from "./Informazioni.js";
 import { Presenza } from "./Presenza.js";
+import { Segnalazioni } from "./Segnalazioni.js";
 import { Backup } from "./amministrazione/Backup.js";
 import { EstiaNet } from "./amministrazione/EstiaNet.js";
 import { Inviti } from "./amministrazione/Inviti.js";
@@ -100,6 +101,18 @@ export const GRUPPI: readonly Gruppo[] = [
           return TITOLI.dispositivi;
         },
         to: "/impostazioni/dispositivi",
+      },
+      {
+        chiave: "segnalazioni",
+        componente: Segnalazioni,
+        icona: "shield",
+        get nota(): string {
+          return t("impostazioni.nota.segnalazioni");
+        },
+        get titolo(): string {
+          return TITOLI.segnalazioni;
+        },
+        to: "/impostazioni/segnalazioni",
       },
     ],
   },

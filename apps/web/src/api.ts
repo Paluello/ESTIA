@@ -70,6 +70,11 @@ import type {
   MazzoArchivioView,
   SaveGroupInfoRequest,
   SaveMazzoArchivioRequest,
+  AvvisoView,
+  CreaSegnalazioneRequest,
+  ReplicaView,
+  SegnalazioneView,
+  VerdettoView,
 } from "@estia/contracts";
 import { fraseDiErrore } from "@estia/lingue";
 
@@ -724,4 +729,40 @@ export const api = {
       method: "DELETE",
       token,
     }),
+
+  // --- Segnalazioni (ADR 0047, ADR 0049) ---------------------------------
+
+  segnala: (token: string, body: CreaSegnalazioneRequest): Promise<SegnalazioneView> =>
+    request("/api/v1/segnalazioni", { body, method: "POST", token }),
+
+  mieSegnalazioni: (token: string): Promise<{ segnalazioni: SegnalazioneView[] }> =>
+    request("/api/v1/segnalazioni/mie", { token }),
+
+  segnalazioniDiQui: (token: string): Promise<{ segnalazioni: SegnalazioneView[] }> =>
+    request("/api/v1/segnalazioni", { token }),
+
+  ritiraSegnalazione: (token: string, id: string): Promise<void> =>
+    request(`/api/v1/segnalazioni/${encodeURIComponent(id)}`, { method: "DELETE", token }),
+
+  avvisoIstanza: (token: string, chiave: string): Promise<AvvisoView> =>
+    request(`/api/v1/istanze/${encodeURIComponent(chiave)}/avviso`, { token }),
+
+  replicaSegnalazioni: (token: string): Promise<{ replica: ReplicaView | null }> =>
+    request("/api/v1/segnalazioni/replica", { token }),
+
+  scriviReplica: (token: string, testo: string): Promise<{ replica: ReplicaView | null }> =>
+    request("/api/v1/segnalazioni/replica", { body: { testo }, method: "PUT", token }),
+
+  togliReplica: (token: string): Promise<void> =>
+    request("/api/v1/segnalazioni/replica", { method: "DELETE", token }),
+
+  decidiVerdetto: (
+    token: string,
+    chiave: string,
+    body: { ignora: boolean; nota: string },
+  ): Promise<VerdettoView> =>
+    request(`/api/v1/verdetti/${encodeURIComponent(chiave)}`, { body, method: "PUT", token }),
+
+  revocaVerdetto: (token: string, chiave: string): Promise<void> =>
+    request(`/api/v1/verdetti/${encodeURIComponent(chiave)}`, { method: "DELETE", token }),
 };
