@@ -6,6 +6,7 @@
  */
 
 import { t } from "./lingua.js";
+import { chiedi } from "./piattaforma/app.js";
 
 /** Long side after compression. Comfortably more than any screen shows a feed image at. */
 const MAX_SIDE = 1600;
@@ -142,7 +143,7 @@ export function mediaObjectUrl(
   }
 
   const pending = (async (): Promise<string> => {
-    const response = await fetch(path, { headers: { authorization: `Bearer ${token}` } });
+    const response = await chiedi(path, { headers: { authorization: `Bearer ${token}` } });
 
     if (!response.ok) {
       throw new Error(`media ${response.status}`);
