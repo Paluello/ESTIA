@@ -1,18 +1,25 @@
 import { randomUUID } from "node:crypto";
-import type {
-  ArchivioPage,
-  DepositaHandshakeRequest,
-  HandshakePage,
-  ConversazioneView,
-  CronologiaPage,
-  GroupInfoView,
-  MazzoArchivioView,
-  RigaCronologiaView,
-  VoceArchivioInput,
+import {
+  MAX_FOGLIE_GRUPPO,
+  MIN_MEMBRI_GRUPPO,
+  type ArchivioPage,
+  type ConversazioneTipo,
+  type CreaGruppoRequest,
+  type MembroGruppoInput,
+  type RuoloGruppo,
+  type DepositaHandshakeRequest,
+  type HandshakePage,
+  type ConversazioneView,
+  type CronologiaPage,
+  type GroupInfoView,
+  type MazzoArchivioView,
+  type RigaCronologiaView,
+  type VoceArchivioInput,
 } from "@estia/contracts";
+import type { CodiceErrore } from "@estia/lingue";
 
 import { DomainError } from "../errors.js";
-import { idDiVoce, istanteValido, nomeValido } from "./forma.js";
+import { casaValida, idDiVoce, istanteValido, nomeValido } from "./forma.js";
 import { codificaCursore, decodificaCursore } from "./repository.js";
 import type { UserRepository } from "../identity/repository.js";
 import type {
@@ -21,6 +28,80 @@ import type {
   SegnapostoInput,
   SegnapostoRecord,
 } from "./repository.js";
+
+/**
+ * La composizione di una conversazione, come la dichiara **la casa che
+ * ordina** ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3).
+ *
+ * È il pezzo che mancava ai gruppi fra tre case: l'annuncio di §4.1 porta i
+ * destinatari di una casa sola, quindi la casa di chi è invitato conosceva i
+ * propri membri e chi aveva creato la conversazione — e una terza casa non le
+ * risultava partecipante. Chi c'è lo sa chi ordina, e glielo si chiede.
+ *
+ * Le persone sono nominate come nella credenziale MLS, `username@casa`
+ * (§0): è l'unica forma che vuol dire la stessa cosa in tutte le case.
+ */
+export interface Composizione {
+  /** Cresce a ogni cambio. Uno specchio non accetta una versione più bassa di quella che ha. */
+  versione: number;
+  tipo: ConversazioneTipo;
+  nome: string | null;
+  membri: { chi: string; ruolo: RuoloGruppo; dal: string }[];
+  /** Chi è stato tolto o è uscito: `da` è chi l'ha tolto, lui stesso se è uscito. */
+  rimossi: { chi: string; il: string; da: string }[];
+}
+
+/** Un cambio di composizione chiesto a chi ordina, con le persone per indirizzo. */
+export type CambioMembri =
+  | { azione: "aggiungi"; chi: string }
+  | { azione: "togli"; chi: string }
+  | { azione: "esci" }
+  | { azione: "nomina"; chi: string; ruolo: "amministratore" | "membro" };
+
+/**
+ * Perché chi ordina ha detto di no a un cambio, quando il no è una regola del
+ * gruppo e non un rifiuto di §2. Sono codici della tabella delle frasi: la casa
+ * di chi ha chiesto li mostra nella lingua di chi legge.
+ */
+export const MOTIVI_DI_RIFIUTO = [
+  "solo_amministratori",
+  "solo_il_creatore",
+  "creatore_non_si_toglie",
+  "gruppo_pieno",
+  "gia_nel_gruppo",
+  "non_nel_gruppo",
+  "non_un_gruppo",
+  "user_not_found",
+] as const satisfies readonly CodiceErrore[];
+export type MotivoDiRifiuto = (typeof MOTIVI_DI_RIFIUTO)[number];
+
+const STATO_DEL_RIFIUTO: Record<MotivoDiRifiuto, number> = {
+  creatore_non_si_toglie: 403,
+  gia_nel_gruppo: 409,
+  gruppo_pieno: 409,
+  non_nel_gruppo: 404,
+  non_un_gruppo: 400,
+  solo_amministratori: 403,
+  solo_il_creatore: 403,
+  user_not_found: 404,
+};
+
+export function eMotivoDiRifiuto(codice: string): codice is MotivoDiRifiuto {
+  return (MOTIVI_DI_RIFIUTO as readonly string[]).includes(codice);
+}
+
+/** Un cambio come lo applica chi ordina: le persone per id di questa casa. */
+type Cambio =
+  | { azione: "aggiungi"; bersaglio: string }
+  | { azione: "togli"; bersaglio: string }
+  | { azione: "esci" }
+  | { azione: "nomina"; bersaglio: string; ruolo: "amministratore" | "membro" };
+
+/** Quanti rimossi viaggiano in una composizione: i più recenti. */
+const MAX_RIMOSSI_IN_COMPOSIZIONE = 256;
+
+/** Ogni quanto si richiede la composizione a chi ordina, per conversazione. */
+const COMPOSIZIONE_MINIMA_MS = 60 * 1000;
 
 /** Una finestra di segnaposto come la dichiara la casa custode (ADR 0042 §4.1). */
 export interface FinestraSegnaposti {
@@ -137,8 +218,45 @@ export interface ReteFraCase {
       /** I membri della conversazione che abitano **là**. */
       destinatari: string[];
       voci: SegnapostoInput[];
+      /**
+       * Chi spinge **ordina** questa conversazione? Solo allora la spinta può
+       * farla nascere presso chi la riceve: con tre case, il messaggio di una
+       * casa che partecipa può arrivare prima dell'annuncio di chi ordina, e
+       * farla nascere da quello vorrebbe dire scrivere la casa sbagliata.
+       */
+      ordina: boolean;
     },
   ) => Promise<void>;
+  /** La composizione, chiesta a chi ordina (`composizione`, azione `leggi`). */
+  composizione: (
+    casa: string,
+    conversazioneId: string,
+  ) => Promise<
+    | { esito: "composizione"; composizione: Composizione }
+    | { esito: "rifiutato" }
+    | { esito: "irraggiungibile" }
+  >;
+  /** La composizione, detta da chi ordina a una casa che custodisce. Best effort. */
+  annunciaComposizione: (
+    casa: string,
+    conversazioneId: string,
+    composizione: Composizione,
+  ) => Promise<void>;
+  /**
+   * Un cambio di composizione chiesto a chi ordina (`membri`), a nome di un
+   * membro di **questa** casa. `negato` è un no che viene dalle regole del
+   * gruppo; `rifiutato` è il rifiuto unico di §2.
+   */
+  cambiaMembri: (
+    casa: string,
+    conversazioneId: string,
+    richiesta: { da: string } & CambioMembri,
+  ) => Promise<
+    | { esito: "fatto"; composizione: Composizione }
+    | { esito: "negato"; motivo: MotivoDiRifiuto }
+    | { esito: "rifiutato" }
+    | { esito: "irraggiungibile" }
+  >;
 }
 
 /**
@@ -255,6 +373,8 @@ export class MessaggiService {
   /** I Welcome depositati da ogni casa nella finestra: gli istanti, in memoria. */
   readonly #welcomeDiCasa = new Map<string, number[]>();
   #chiPuoScrivere: ChiPuoScrivere | undefined;
+  /** Quando si è chiesta la composizione l'ultima volta, per conversazione. Solo in memoria. */
+  readonly #ultimeComposizioni = new Map<string, number>();
 
   constructor(options: MessaggiServiceOptions) {
     this.repo = options.repository;
@@ -345,29 +465,641 @@ export class MessaggiService {
       createdAt: item.conversazione.createdAt,
       ordinataQui: this.#ordinaQui(item.conversazione.id),
       peerVistoFinoA: this.repo.vistoDellAltroFinoA(item.conversazione.id, callerId),
+      ...this.#datiDelGruppo(item.conversazione),
     }));
   }
 
-  getConversazione(callerId: string, id: string): ConversazioneView {
-    if (!this.repo.isMember(id, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+  async getConversazione(callerId: string, id: string): Promise<ConversazioneView> {
+    this.#richiediMembro(id, callerId);
+    // Chi c'è lo sa chi ordina: prima di mostrarlo lo si richiede, e chi nel
+    // frattempo è stato tolto lo scopre qui invece di leggere un elenco vecchio.
+    await this.#aggiornaComposizione(id);
+    this.#richiediMembro(id, callerId);
 
+    return this.#vista(callerId, id);
+  }
+
+  #vista(callerId: string, id: string): ConversazioneView {
     const conv = this.repo.getConversazioneById(id);
     if (!conv) {
       throw new DomainError("conversazione_inesistente", 404);
     }
 
-    const membri = this.repo.getMembers(id);
     return {
       id: conv.id,
       tipo: conv.tipo,
-      membri,
+      membri: this.repo.getMembers(id),
       nonLetti: 0,
       createdAt: conv.createdAt,
       ordinataQui: this.#ordinaQui(conv.id),
       peerVistoFinoA: this.repo.vistoDellAltroFinoA(conv.id, callerId),
+      ...this.#datiDelGruppo(conv),
     };
+  }
+
+  /** Il nome e i ruoli, che solo un gruppo ha. */
+  #datiDelGruppo(conv: { id: string; tipo: ConversazioneTipo }): {
+    nome?: string;
+    ruoli?: Record<string, RuoloGruppo>;
+  } {
+    if (conv.tipo !== "gruppo") {
+      return {};
+    }
+
+    return {
+      nome: this.repo.nomeDi(conv.id) ?? "",
+      ruoli: Object.fromEntries(this.repo.membriConRuolo(conv.id).map((m) => [m.userId, m.ruolo])),
+    };
+  }
+
+  /**
+   * Chi chiede dev'essere dentro. Chi è stato tolto riceve **un no che dice
+   * perché**: è il criterio 3 di M8 — l'istanza rifiuta di servirgli la
+   * conversazione — detto con la sua frase invece che con «non sei membro».
+   */
+  #richiediMembro(conversazioneId: string, callerId: string): void {
+    if (this.repo.isMember(conversazioneId, callerId)) {
+      return;
+    }
+
+    throw this.repo.rimosso(conversazioneId, callerId) === undefined
+      ? new DomainError("non_membro", 403)
+      : new DomainError("rimosso_dal_gruppo", 403);
+  }
+
+  /* ---------- i gruppi (M8) ---------- */
+
+  /**
+   * Crea un gruppo: un nome, chi crea, e almeno altre due persone — di questa
+   * casa o di altre.
+   *
+   * La casa di chi crea è **la casa che ordina** (ADR 0042 §3), e da qui in
+   * poi la composizione la sa lei. Alle case degli altri la dice subito, per
+   * intero: è ciò che permette a una terza casa di riconoscere la seconda.
+   */
+  creaGruppo(callerId: string, request: CreaGruppoRequest): { conversazione: ConversazioneView } {
+    const nome = request.nome.trim();
+    if (nome.length === 0) {
+      throw new DomainError("invalid_request", 400);
+    }
+
+    const altri = new Set<string>();
+    for (const chi of request.membri) {
+      const id = this.#idDelMembro(chi);
+      if (id !== callerId) {
+        altri.add(id);
+      }
+    }
+
+    if (altri.size + 1 < MIN_MEMBRI_GRUPPO) {
+      throw new DomainError("gruppo_troppo_piccolo", 400);
+    }
+
+    if (altri.size + 1 > MAX_FOGLIE_GRUPPO) {
+      throw new DomainError("gruppo_pieno", 409);
+    }
+
+    const conv = this.repo.createConversazione({
+      createdAt: this.now(),
+      id: randomUUID(),
+      membri: [callerId, ...altri],
+      nome,
+      ruoli: { [callerId]: "creatore" },
+      tipo: "gruppo",
+    });
+    this.repo.avanzaVersioneComposizione(conv.id);
+    void this.#annunciaComposizione(conv.id).catch(() => undefined);
+
+    return { conversazione: this.#vista(callerId, conv.id) };
+  }
+
+  /** Fa entrare qualcuno. Lo possono fare il creatore e gli amministratori. */
+  async aggiungiMembro(
+    callerId: string,
+    conversazioneId: string,
+    chi: MembroGruppoInput,
+  ): Promise<{ conversazione: ConversazioneView }> {
+    this.#richiediMembro(conversazioneId, callerId);
+
+    const bersaglio = this.#idDelMembro(chi);
+    await this.#chiedi(callerId, conversazioneId, { azione: "aggiungi", bersaglio });
+
+    return { conversazione: this.#vista(callerId, conversazioneId) };
+  }
+
+  /** Toglie qualcuno. Lo possono fare il creatore e gli amministratori. */
+  async togliMembro(
+    callerId: string,
+    conversazioneId: string,
+    membroId: string,
+  ): Promise<{ conversazione: ConversazioneView }> {
+    this.#richiediMembro(conversazioneId, callerId);
+    await this.#chiedi(callerId, conversazioneId, { azione: "togli", bersaglio: membroId });
+
+    return { conversazione: this.#vista(callerId, conversazioneId) };
+  }
+
+  /**
+   * Uscire: è un'operazione **di chi esce**, non di chi resta. Non serve il
+   * permesso di nessuno, e nessun altro la può fare al posto suo — quella è
+   * una rimozione, e ha un altro nome e altri diritti.
+   */
+  async esci(callerId: string, conversazioneId: string): Promise<void> {
+    this.#richiediMembro(conversazioneId, callerId);
+    await this.#chiedi(callerId, conversazioneId, { azione: "esci" });
+  }
+
+  /** Nomina un amministratore, o gli toglie l'incarico. Lo fa il creatore. */
+  async cambiaRuolo(
+    callerId: string,
+    conversazioneId: string,
+    membroId: string,
+    ruolo: "amministratore" | "membro",
+  ): Promise<{ conversazione: ConversazioneView }> {
+    this.#richiediMembro(conversazioneId, callerId);
+    await this.#chiedi(callerId, conversazioneId, { azione: "nomina", bersaglio: membroId, ruolo });
+
+    return { conversazione: this.#vista(callerId, conversazioneId) };
+  }
+
+  /** L'id, in questa casa, di una persona nominata per nome e casa. */
+  #idDelMembro(chi: MembroGruppoInput): string {
+    if (chi.casa !== undefined && chi.casa !== this.rete?.casa) {
+      // Una persona di un'altra casa in un gruppo che questa casa non può
+      // annunciare sarebbe un invito che non parte mai.
+      if (this.rete === undefined) {
+        throw new DomainError("rete_non_attiva", 503);
+      }
+
+      // La forma che le altre case pretendono (`forma.ts`): un nome o una
+      // chiave scritti male renderebbero malformata la composizione intera, e
+      // nessuna casa la accetterebbe più.
+      if (!nomeValido(chi.username) || !casaValida(chi.casa)) {
+        throw new DomainError("invalid_request", 400);
+      }
+
+      return `remote:${chi.casa}:${chi.username}`;
+    }
+
+    const utente = this.users.findByUsername(chi.username);
+    if (utente === undefined) {
+      throw new DomainError("user_not_found", 404);
+    }
+
+    return utente.id;
+  }
+
+  /**
+   * Un cambio di composizione, chiesto da un membro di questa casa.
+   *
+   * Se ordina questa casa lo si applica qui. Se ordina un'altra **lo si chiede
+   * a lei**, e qui si scrive soltanto quello che lei risponde: due case che
+   * cambiassero la composizione ognuna per conto suo sarebbero la stessa
+   * divergenza silenziosa che §3 esiste per impedire sui commit. Se non
+   * risponde, vale il costo dichiarato di §3 — niente ingressi, niente uscite.
+   */
+  async #chiedi(callerId: string, conversazioneId: string, cambio: Cambio): Promise<void> {
+    const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
+
+    if (altrove === undefined) {
+      this.#cambia(conversazioneId, callerId, cambio);
+      void this.#annunciaComposizione(conversazioneId).catch(() => undefined);
+      return;
+    }
+
+    const attore = this.users.findById(callerId);
+    const chi = "bersaglio" in cambio ? this.#indirizzoDi(cambio.bersaglio) : undefined;
+    if (attore === undefined || ("bersaglio" in cambio && chi === undefined)) {
+      throw new DomainError("user_not_found", 404);
+    }
+
+    const richiesta: { da: string } & CambioMembri =
+      cambio.azione === "esci"
+        ? { azione: "esci", da: attore.username }
+        : cambio.azione === "nomina"
+          ? { azione: "nomina", chi: chi ?? "", da: attore.username, ruolo: cambio.ruolo }
+          : { azione: cambio.azione, chi: chi ?? "", da: attore.username };
+
+    const esito = await this.#rete().cambiaMembri(altrove, conversazioneId, richiesta);
+
+    if (esito.esito === "irraggiungibile") {
+      throw casaCheOrdinaSpenta();
+    }
+
+    if (esito.esito === "rifiutato") {
+      throw new DomainError("forbidden", 403);
+    }
+
+    if (esito.esito === "negato") {
+      throw new DomainError(esito.motivo, STATO_DEL_RIFIUTO[esito.motivo]);
+    }
+
+    this.riceviComposizione(conversazioneId, altrove, esito.composizione);
+  }
+
+  /**
+   * Applica un cambio, **presso la casa che ordina**. I diritti si guardano
+   * qui e soltanto qui (risposta del proprietario, 2026-09-17): aggiungono e
+   * tolgono il creatore e gli amministratori che nomina; chiunque esce da solo.
+   */
+  #cambia(conversazioneId: string, attore: string, cambio: Cambio): void {
+    const conv = this.repo.getConversazioneById(conversazioneId);
+    if (conv?.tipo !== "gruppo") {
+      throw new DomainError("non_un_gruppo", 400);
+    }
+
+    const ruolo = this.repo.ruoloDi(conversazioneId, attore);
+    if (ruolo === undefined) {
+      throw new DomainError("non_membro", 403);
+    }
+
+    const gestisce = ruolo === "creatore" || ruolo === "amministratore";
+    const adesso = this.now();
+
+    if (cambio.azione === "esci" || (cambio.azione === "togli" && cambio.bersaglio === attore)) {
+      this.repo.togliMembro(conversazioneId, attore, { da: attore, il: adesso });
+      this.#lasciaQualcunoAGestire(conversazioneId);
+    } else if (cambio.azione === "aggiungi") {
+      if (!gestisce) {
+        throw new DomainError("solo_amministratori", 403);
+      }
+
+      if (this.repo.isMember(conversazioneId, cambio.bersaglio)) {
+        throw new DomainError("gia_nel_gruppo", 409);
+      }
+
+      if (this.repo.contaMembri(conversazioneId) >= MAX_FOGLIE_GRUPPO) {
+        throw new DomainError("gruppo_pieno", 409);
+      }
+
+      this.repo.aggiungiMembro(conversazioneId, cambio.bersaglio, "membro", adesso);
+    } else if (cambio.azione === "togli") {
+      if (!gestisce) {
+        throw new DomainError("solo_amministratori", 403);
+      }
+
+      const suo = this.repo.ruoloDi(conversazioneId, cambio.bersaglio);
+      if (suo === undefined) {
+        throw new DomainError("non_nel_gruppo", 404);
+      }
+
+      if (suo === "creatore") {
+        throw new DomainError("creatore_non_si_toglie", 403);
+      }
+
+      this.repo.togliMembro(conversazioneId, cambio.bersaglio, { da: attore, il: adesso });
+    } else {
+      // Gli amministratori li nomina il creatore. Se il creatore è uscito,
+      // resta a chi amministra: un gruppo in cui nessuno può più nominare
+      // nessuno sarebbe un vicolo cieco.
+      const cEUnCreatore = this.repo
+        .membriConRuolo(conversazioneId)
+        .some((m) => m.ruolo === "creatore");
+      if (ruolo !== "creatore" && (cEUnCreatore || ruolo !== "amministratore")) {
+        throw new DomainError("solo_il_creatore", 403);
+      }
+
+      const suo = this.repo.ruoloDi(conversazioneId, cambio.bersaglio);
+      if (suo === undefined) {
+        throw new DomainError("non_nel_gruppo", 404);
+      }
+
+      if (suo === "creatore") {
+        throw new DomainError("creatore_non_si_toglie", 403);
+      }
+
+      this.repo.impostaRuolo(conversazioneId, cambio.bersaglio, cambio.ruolo);
+    }
+
+    this.repo.avanzaVersioneComposizione(conversazioneId);
+  }
+
+  /**
+   * Se chi esce era l'ultimo a poter aggiungere e togliere, il membro entrato
+   * da più tempo diventa amministratore. «Chiunque può uscire da solo» vale
+   * anche per il creatore, e un gruppo che nessuno amministra non potrebbe più
+   * far entrare né togliere nessuno.
+   */
+  #lasciaQualcunoAGestire(conversazioneId: string): void {
+    const restano = this.repo.membriConRuolo(conversazioneId);
+    const primo = restano[0];
+    if (primo === undefined || restano.some((m) => m.ruolo !== "membro")) {
+      return;
+    }
+
+    this.repo.impostaRuolo(conversazioneId, primo.userId, "amministratore");
+  }
+
+  /** `username@casa` di un id di questa casa; `undefined` se non si sa dire. */
+  #indirizzoDi(userId: string): string | undefined {
+    if (userId.startsWith("remote:")) {
+      const [, casa, ...nome] = userId.split(":");
+      return casa === undefined || nome.length === 0 ? undefined : `${nome.join(":")}@${casa}`;
+    }
+
+    const utente = this.users.findById(userId);
+    return utente === undefined || this.rete === undefined
+      ? undefined
+      : `${utente.username}@${this.rete.casa}`;
+  }
+
+  /** L'id, in questa casa, di un indirizzo `username@casa`; `undefined` se non c'è. */
+  #idDi(indirizzo: string): string | undefined {
+    const taglio = indirizzo.lastIndexOf("@");
+    if (taglio <= 0 || taglio === indirizzo.length - 1) {
+      return undefined;
+    }
+
+    const username = indirizzo.slice(0, taglio);
+    const casa = indirizzo.slice(taglio + 1);
+
+    return casa === this.rete?.casa
+      ? this.users.findByUsername(username)?.id
+      : `remote:${casa}:${username}`;
+  }
+
+  /** La composizione di una conversazione che questa casa ordina. */
+  #composizione(conversazioneId: string): Composizione | undefined {
+    const conv = this.repo.getConversazioneById(conversazioneId);
+    if (conv === undefined) {
+      return undefined;
+    }
+
+    const membri: Composizione["membri"] = [];
+    for (const m of this.repo.membriConRuolo(conversazioneId)) {
+      const chi = this.#indirizzoDi(m.userId);
+      if (chi !== undefined) {
+        membri.push({ chi, dal: m.joinedAt, ruolo: m.ruolo });
+      }
+    }
+
+    const rimossi: Composizione["rimossi"] = [];
+    for (const r of this.repo.rimossi(conversazioneId).slice(-MAX_RIMOSSI_IN_COMPOSIZIONE)) {
+      const chi = this.#indirizzoDi(r.userId);
+      if (chi !== undefined) {
+        rimossi.push({ chi, da: this.#indirizzoDi(r.da) ?? chi, il: r.rimossoIl });
+      }
+    }
+
+    return {
+      membri,
+      nome: this.repo.nomeDi(conversazioneId),
+      rimossi,
+      tipo: conv.tipo,
+      versione: this.repo.versioneComposizione(conversazioneId),
+    };
+  }
+
+  /**
+   * Dice la composizione a ogni casa che custodisce qualcosa di questa
+   * conversazione: quelle dei membri, e quelle di chi è stato tolto — che
+   * devono saperlo per smettere di servirlo, e sapere chi c'è per continuare a
+   * servire agli altri quello che lui aveva scritto (ADR 0043).
+   *
+   * Best effort, come la spinta dei segnaposto: chi non la riceve la chiede.
+   */
+  async #annunciaComposizione(conversazioneId: string): Promise<void> {
+    const rete = this.rete;
+    if (rete === undefined || !this.#ordinaQui(conversazioneId)) {
+      return;
+    }
+
+    const composizione = this.#composizione(conversazioneId);
+    if (composizione === undefined) {
+      return;
+    }
+
+    await Promise.all(
+      this.repo
+        .caseCustodi(conversazioneId)
+        .filter((casa) => casa !== rete.casa)
+        .map((casa) =>
+          rete.annunciaComposizione(casa, conversazioneId, composizione).catch(() => undefined),
+        ),
+    );
+  }
+
+  /**
+   * La composizione per una casa che la chiede (`composizione`, ADR 0042 §2).
+   *
+   * Le stesse due porte della coda, con una differenza dichiarata: risponde
+   * anche a una casa che dentro **aveva** qualcuno e non ce l'ha più. È una
+   * casa custode — serve ancora le parole dei suoi — e deve sapere a chi.
+   */
+  composizionePerCasa(conversazioneId: string, remoteKey: string): Composizione | "rifiutato" {
+    if (
+      !this.#ordinaQui(conversazioneId) ||
+      !(
+        this.repo.haMembroDiCasa(conversazioneId, remoteKey) ||
+        this.repo.haRimossoDiCasa(conversazioneId, remoteKey)
+      )
+    ) {
+      return "rifiutato";
+    }
+
+    return this.#composizione(conversazioneId) ?? "rifiutato";
+  }
+
+  /**
+   * La composizione detta da un'altra casa: spinta, chiesta, o tornata da un
+   * cambio.
+   *
+   * Si accetta **solo dalla casa che ordina quella conversazione** — la chiave
+   * è quella della connessione, mai un campo del messaggio. Se la conversazione
+   * qui non esiste nasce adesso, ordinata da chi la annuncia: come per
+   * l'annuncio di §4.1, una casa può dichiarare di ordinare soltanto una
+   * conversazione sua, e deve averci messo dentro almeno uno di qui.
+   *
+   * **Chi di qui entra adesso passa dalla stessa porta dell'annuncio**
+   * ([ADR 0030](../../../../docs/adr/0030-chi-puo-scrivere-a-chi.md) §1): la
+   * casa che ordina deve poterlo raggiungere — per un follow accettato con uno
+   * dei suoi che sta nel gruppo, o perché è collegata e lui è presente in
+   * rete. Chi non passa **non entra nello specchio**, senza che la risposta lo
+   * dica: per il gruppo è un invito a cui nessuno risponde. Chi c'era già
+   * resta: il permesso si chiede per entrare, non per restare.
+   */
+  riceviComposizione(
+    conversazioneId: string,
+    remoteKey: string,
+    composizione: Composizione,
+  ): boolean {
+    const ordina = this.repo.casaCheOrdina(conversazioneId);
+    if (ordina !== undefined && ordina !== remoteKey) {
+      return false;
+    }
+
+    // I nomi che la casa che ordina dichiara suoi, nel gruppo: sono i soli
+    // per cui può valere un follow, perché sono i soli di cui risponde lei.
+    const suoi = composizione.membri
+      .filter((m) => mittenteDiCasa(m.chi, remoteKey))
+      .map((m) => m.chi.slice(0, m.chi.lastIndexOf("@")));
+
+    const membri: { userId: string; ruolo: RuoloGruppo; joinedAt: string }[] = [];
+    const nuoviDiQui: string[] = [];
+    const visti = new Set<string>();
+    for (const m of composizione.membri) {
+      const userId = this.#idDi(m.chi);
+      // Uno di qui che qui non esiste non entra: un nome inventato non diventa
+      // un membro perché un'altra casa lo ha scritto.
+      if (userId === undefined || visti.has(userId)) {
+        continue;
+      }
+
+      const diQui = !userId.startsWith("remote:");
+      const cEra = ordina !== undefined && this.repo.isMember(conversazioneId, userId);
+      if (diQui && !cEra) {
+        if (!this.#raggiungibileDa(remoteKey, suoi, userId)) {
+          continue;
+        }
+        nuoviDiQui.push(userId);
+      }
+
+      visti.add(userId);
+      membri.push({ joinedAt: m.dal, ruolo: m.ruolo, userId });
+    }
+
+    if (membri.length > MAX_FOGLIE_GRUPPO) {
+      return false;
+    }
+
+    const rimossi: { userId: string; rimossoIl: string; da: string }[] = [];
+    for (const r of composizione.rimossi) {
+      const userId = this.#idDi(r.chi);
+      if (userId !== undefined && !visti.has(userId)) {
+        visti.add(userId);
+        rimossi.push({ da: this.#idDi(r.da) ?? r.da, rimossoIl: r.il, userId });
+      }
+    }
+
+    if (ordina === undefined) {
+      // Le stesse quote dell'annuncio: una conversazione che nasce qui per
+      // volere di un'altra casa è una riga che lei fa scrivere a noi.
+      const dal = new Date(Date.parse(this.now()) - QUOTE.finestraMs).toISOString();
+      if (
+        nuoviDiQui.length === 0 ||
+        this.repo.contaNateDa(remoteKey, dal) >= QUOTE.annunciPerCasa ||
+        nuoviDiQui.some(
+          (id) => this.repo.contaNateDa(remoteKey, dal, id) >= QUOTE.annunciPerPersona,
+        )
+      ) {
+        return false;
+      }
+
+      this.repo.createConversazione({
+        casaCheOrdina: remoteKey,
+        createdAt: this.now(),
+        id: conversazioneId,
+        membri: [],
+        tipo: composizione.tipo,
+      });
+    }
+
+    // Una versione che non avanza non è un errore: è una spinta arrivata
+    // tardi, o due volte. Chi l'ha mandata non deve riprovare.
+    this.repo.sostituisciComposizione(conversazioneId, {
+      membri,
+      nome: composizione.nome,
+      rimossi,
+      tipo: composizione.tipo,
+      versione: composizione.versione,
+    });
+
+    return true;
+  }
+
+  /**
+   * Un cambio chiesto da un'altra casa a nome di un suo membro (`membri`).
+   *
+   * `K` è la chiave della connessione, e `da` dev'essere un membro **di quella
+   * casa**: una casa parla per i suoi e per nessun altro. Che cosa quel membro
+   * possa fare lo decide il suo ruolo, guardato qui.
+   */
+  cambiaMembriRemoto(richiesta: {
+    conversazioneId: string;
+    remoteKey: string;
+    da: string;
+    cambio: CambioMembri;
+  }): { composizione: Composizione } | { negato: MotivoDiRifiuto } | "rifiutato" {
+    const attore = `remote:${richiesta.remoteKey}:${richiesta.da}`;
+    if (
+      !this.#ordinaQui(richiesta.conversazioneId) ||
+      !this.repo.isMember(richiesta.conversazioneId, attore)
+    ) {
+      return "rifiutato";
+    }
+
+    const { cambio } = richiesta;
+    let interno: Cambio;
+    if (cambio.azione === "esci") {
+      interno = { azione: "esci" };
+    } else {
+      const bersaglio = this.#idDi(cambio.chi);
+      // Chi non esiste e chi non si può raggiungere danno **la stessa
+      // risposta**: un'altra casa non impara da qui chi abita qua (ADR 0020
+      // §1). E aggiungere qualcuno di questa casa è scrivergli: vale ADR 0030.
+      if (
+        bersaglio === undefined ||
+        (cambio.azione === "aggiungi" &&
+          !bersaglio.startsWith("remote:") &&
+          !this.#raggiungibileDa(richiesta.remoteKey, [richiesta.da], bersaglio))
+      ) {
+        return { negato: "user_not_found" };
+      }
+
+      interno =
+        cambio.azione === "nomina"
+          ? { azione: "nomina", bersaglio, ruolo: cambio.ruolo }
+          : { azione: cambio.azione, bersaglio };
+    }
+
+    try {
+      this.#cambia(richiesta.conversazioneId, attore, interno);
+    } catch (causa) {
+      if (causa instanceof DomainError && eMotivoDiRifiuto(causa.code)) {
+        return { negato: causa.code };
+      }
+      throw causa;
+    }
+
+    const composizione = this.#composizione(richiesta.conversazioneId);
+    if (composizione === undefined) {
+      return "rifiutato";
+    }
+
+    void this.#annunciaComposizione(richiesta.conversazioneId).catch(() => undefined);
+    return { composizione };
+  }
+
+  /**
+   * Richiede la composizione a chi ordina, se non è questa casa.
+   *
+   * Non più di una volta al minuto per conversazione: i cambi arrivano già con
+   * la spinta, e questa domanda serve a chi la spinta l'ha persa.
+   */
+  async #aggiornaComposizione(conversazioneId: string): Promise<void> {
+    const rete = this.rete;
+    const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
+    if (rete === undefined || altrove === undefined) {
+      return;
+    }
+
+    // Una conversazione fra due persone non cambia chi c'è: non c'è niente da
+    // chiedere, e una domanda in meno a ogni lettura verso l'altra casa.
+    if (this.repo.getConversazioneById(conversazioneId)?.tipo !== "gruppo") {
+      return;
+    }
+
+    const adesso = Date.parse(this.now());
+    const ultima = this.#ultimeComposizioni.get(conversazioneId);
+    if (ultima !== undefined && adesso - ultima < COMPOSIZIONE_MINIMA_MS) {
+      return;
+    }
+    this.#ultimeComposizioni.set(conversazioneId, adesso);
+
+    const esito = await rete.composizione(altrove, conversazioneId).catch(() => undefined);
+    if (esito?.esito === "composizione") {
+      this.riceviComposizione(conversazioneId, altrove, esito.composizione);
+    }
   }
 
   /**
@@ -379,9 +1111,7 @@ export class MessaggiService {
    * dell'albero, che e' cio' che si sta ricostruendo.
    */
   async getGroupInfo(callerId: string, conversazioneId: string): Promise<GroupInfoView> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const altrove = await this.#statoAltrove(conversazioneId, "group-info");
     if (altrove !== undefined) {
@@ -411,9 +1141,7 @@ export class MessaggiService {
     conversazioneId: string,
     input: { groupInfo: string; epoch: number },
   ): Promise<GroupInfoView> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const depositato = await this.#depositaStatoAltrove(conversazioneId, "group-info", {
       blob: input.groupInfo,
@@ -446,9 +1174,7 @@ export class MessaggiService {
    * deriva dall'epoch del gruppo, e quella l'istanza non ce l'ha.
    */
   async getMazzoArchivio(callerId: string, conversazioneId: string): Promise<MazzoArchivioView> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const altrove = await this.#statoAltrove(conversazioneId, "mazzo");
     if (altrove !== undefined) {
@@ -473,9 +1199,7 @@ export class MessaggiService {
     conversazioneId: string,
     input: { mazzo: string; epoch: number },
   ): Promise<MazzoArchivioView> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const depositato = await this.#depositaStatoAltrove(conversazioneId, "mazzo", {
       blob: input.mazzo,
@@ -511,9 +1235,7 @@ export class MessaggiService {
     conversazioneId: string,
     voci: readonly VoceArchivioInput[],
   ): { scritte: number } {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     if (!this.users.findById(callerId)) {
       throw new DomainError("forbidden", 403);
@@ -582,7 +1304,13 @@ export class MessaggiService {
         .map((id) => id.slice(`remote:${casa}:`.length));
 
       await rete
-        .spingiSegnaposti(casa, { conversazioneId, da, destinatari, voci })
+        .spingiSegnaposti(casa, {
+          conversazioneId,
+          da,
+          destinatari,
+          ordina: this.#ordinaQui(conversazioneId),
+          voci,
+        })
         .catch(() => undefined);
     }
   }
@@ -595,9 +1323,7 @@ export class MessaggiService {
    * non saprebbe che c'è una coda da cui prendere il proprio Welcome.
    */
   async annunciaConversazione(callerId: string, conversazioneId: string): Promise<void> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const autore = this.users.findById(callerId);
     if (autore === undefined) {
@@ -666,13 +1392,18 @@ export class MessaggiService {
     da: string;
     destinatari: readonly string[];
     voci: readonly SegnapostoInput[];
+    /** `false` quando chi spinge dichiara di **non** ordinare la conversazione. */
+    ordina?: boolean | undefined;
   }): boolean {
     if (!spinta.voci.every((v) => mittenteDiCasa(v.mittente, spinta.remoteKey))) {
       return false;
     }
 
     if (this.repo.casaCheOrdina(spinta.conversazioneId) === undefined) {
-      if (!this.#creaDaAnnuncio(spinta)) {
+      // Chi non ordina non fa nascere niente: la conversazione arriverà da chi
+      // ordina, con la sua composizione, e questi segnaposto si recuperano
+      // dopo con `segnaposto-da`.
+      if (spinta.ordina === false || !this.#creaDaAnnuncio(spinta)) {
         return false;
       }
     } else if (!this.repo.haMembroDiCasa(spinta.conversazioneId, spinta.remoteKey)) {
@@ -850,9 +1581,7 @@ export class MessaggiService {
    * cinque minuti della decisione 8.
    */
   ritiraVoce(callerId: string, conversazioneId: string, voceId: string): void {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     if (!this.repo.ritiraVoce(conversazioneId, callerId, voceId)) {
       throw new DomainError("messaggio_inesistente", 404);
@@ -874,9 +1603,11 @@ export class MessaggiService {
     conversazioneId: string,
     options: { prima?: string | undefined; limite?: number | undefined } = {},
   ): Promise<CronologiaPage> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
+    // Chi è stato tolto mentre la sua casa non ascoltava lo scopre qui, prima
+    // che gli si serva una riga: è il criterio 3 di M8 anche fra case.
+    await this.#aggiornaComposizione(conversazioneId);
+    this.#richiediMembro(conversazioneId, callerId);
 
     const { irraggiungibili } = await this.sincronizzaSegnaposti(conversazioneId);
     const casaMia = this.rete?.casa ?? "";
@@ -1000,9 +1731,7 @@ export class MessaggiService {
 
   /** I segnaposto di una conversazione, per un membro di questa casa. */
   segnaposti(callerId: string, conversazioneId: string): SegnapostoRecord[] {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     return this.repo.listSegnaposti(conversazioneId);
   }
@@ -1017,9 +1746,7 @@ export class MessaggiService {
     conversazioneId: string,
     options: { limit?: number | undefined; dopo?: string | undefined } = {},
   ): ArchivioPage {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const limit = Math.min(options.limit ?? 100, 200);
     const voci = this.repo.listVociArchivio(conversazioneId, {
@@ -1050,9 +1777,7 @@ export class MessaggiService {
     conversazioneId: string,
     input: DepositaHandshakeRequest,
   ): Promise<{ id: string }> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     if (input.tipo === "welcome" && input.destinatario === undefined) {
       throw new DomainError("invalid_request", 400);
@@ -1082,13 +1807,20 @@ export class MessaggiService {
     // casa, il commit si deposita **là**: una copia qui sarebbe la seconda coda
     // che quell'ADR esiste per non avere.
     if (altrove !== undefined) {
+      // Chi entra viaggia **per indirizzo**, `username@casa`: l'id con cui
+      // questa casa lo nomina, là non vuol dire niente — e un Welcome
+      // depositato con un nome che nessuno riconosce non arriva a nessuno.
+      const perChi =
+        input.destinatario === undefined
+          ? undefined
+          : (this.#indirizzoDi(input.destinatario) ?? input.destinatario);
       const esito = await this.#rete().deposita(altrove, conversazioneId, {
         busta: input.busta,
         createdAt,
         epoch: input.epoch,
         id,
         tipo: input.tipo,
-        ...(input.destinatario !== undefined ? { destinatario: input.destinatario } : {}),
+        ...(perChi !== undefined ? { destinatario: perChi } : {}),
       });
 
       if (esito.esito === "irraggiungibile") {
@@ -1133,10 +1865,7 @@ export class MessaggiService {
     // dichiarare di ordinare.
     const invitato = input.tipo === "welcome" ? input.destinatario : undefined;
     if (invitato?.startsWith("remote:") === true) {
-      const autore = this.users.findById(callerId);
-      if (autore !== undefined) {
-        void this.#spingiA(conversazioneId, autore.username, []).catch(() => undefined);
-      }
+      this.#annunciaA(conversazioneId, callerId);
     }
 
     return { id };
@@ -1148,9 +1877,7 @@ export class MessaggiService {
     conversazioneId: string,
     options: { limit?: number | undefined; dopo?: string | undefined } = {},
   ): Promise<HandshakePage> {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
 
     const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
 
@@ -1381,13 +2108,23 @@ export class MessaggiService {
       return undefined;
     }
 
-    if (record.destinatario !== undefined) {
+    // Un Welcome arriva **per indirizzo** (`username@casa`) e qui diventa
+    // l'id con cui questa casa nomina quella persona — il solo con cui la
+    // coda glielo consegna. Dev'essere già dentro: prima la composizione, poi
+    // il Welcome, e un invito a chi non è membro non si mette in fila.
+    let destinatario = record.destinatario;
+    if (destinatario?.includes("@") === true) {
+      destinatario = this.#idDi(destinatario);
+    }
+
+    if (record.tipo === "welcome") {
       // Per un membro, e dentro le quote: per casa, per conversazione, per
       // destinatario. Il rifiuto è lo stesso di ogni altro (§2), così chi
       // deposita non impara da qui chi c'è in una conversazione.
       if (
-        !this.repo.isMember(record.conversazioneId, record.destinatario) ||
-        this.#troppiWelcome(record.conversazioneId, record.destinatario) ||
+        destinatario === undefined ||
+        !this.repo.isMember(record.conversazioneId, destinatario) ||
+        this.#troppiWelcome(record.conversazioneId, destinatario) ||
         !this.#contaWelcomeDi(record.remoteKey)
       ) {
         return undefined;
@@ -1405,10 +2142,32 @@ export class MessaggiService {
       epoch: record.epoch,
       id,
       tipo: record.tipo,
-      ...(record.destinatario !== undefined ? { destinatario: record.destinatario } : {}),
+      ...(destinatario !== undefined ? { destinatario } : {}),
     });
 
+    if (accettato && destinatario?.startsWith("remote:") === true) {
+      // Chi entra abita in una terza casa: deve saperlo da chi ordina.
+      void this.#annunciaComposizione(record.conversazioneId).catch(() => undefined);
+    }
+
     return accettato ? { id } : "indietro";
+  }
+
+  /**
+   * Questa persona di qui si può raggiungere da `casa`, per uno dei nomi che
+   * quella casa dichiara suoi? Senza nomi resta la strada delle case collegate.
+   */
+  #raggiungibileDa(casa: string, nomi: readonly string[], userId: string): boolean {
+    const regola = this.#chiPuoScrivere;
+    const persona = this.users.findById(userId);
+    if (regola === undefined || persona === undefined) {
+      return false;
+    }
+
+    const destinatario = { id: persona.id, username: persona.username };
+    return (nomi.length === 0 ? [""] : nomi).some((nome) =>
+      regola.puoAprire(casa, nome, destinatario),
+    );
   }
 
   /** La fila ha già troppi Welcome, in questa conversazione o per questo destinatario? */
@@ -1436,6 +2195,23 @@ export class MessaggiService {
     recenti.push(adesso);
     this.#welcomeDiCasa.set(casa, recenti);
     return true;
+  }
+
+  /**
+   * Dice alle altre case che la conversazione esiste. Un gruppo si annuncia
+   * con la sua composizione intera; una conversazione diretta con l'annuncio
+   * di §4.1, che per due persone dice già tutto.
+   */
+  #annunciaA(conversazioneId: string, callerId: string): void {
+    if (this.repo.getConversazioneById(conversazioneId)?.tipo === "gruppo") {
+      void this.#annunciaComposizione(conversazioneId).catch(() => undefined);
+      return;
+    }
+
+    const autore = this.users.findById(callerId);
+    if (autore !== undefined) {
+      void this.#spingiA(conversazioneId, autore.username, []).catch(() => undefined);
+    }
   }
 
   /**
@@ -1488,16 +2264,18 @@ export class MessaggiService {
   }
 
   markRead(callerId: string, conversazioneId: string, finoA: string): void {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
-    }
+    this.#richiediMembro(conversazioneId, callerId);
     this.repo.markRead(conversazioneId, callerId, finoA);
   }
 
   deleteConversazione(callerId: string, conversazioneId: string): void {
-    if (!this.repo.isMember(conversazioneId, callerId)) {
-      throw new DomainError("non_membro", 403);
+    this.#richiediMembro(conversazioneId, callerId);
+    // Un gruppo non è di chi lo cancella: da un gruppo si esce, e gli altri
+    // restano con quello che c'è.
+    if (this.repo.getConversazioneById(conversazioneId)?.tipo === "gruppo") {
+      throw new DomainError("gruppo_non_si_elimina", 400);
     }
+
     this.repo.deleteConversazione(conversazioneId);
   }
 }

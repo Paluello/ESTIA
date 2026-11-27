@@ -41,6 +41,12 @@ import {
   type SegnapostoResponse,
   type SegnapostoSulFilo,
   leggiSegnaposto,
+  type ComposizioneRequest,
+  type ComposizioneResponse,
+  type ComposizioneSulFilo,
+  type MembriRequest,
+  type MembriResponse,
+  leggiComposizione,
   type StatoRequest,
   type StatoResponse,
   type TipoStato,
@@ -277,7 +283,36 @@ export interface MessaggiDirectory {
     da: string;
     destinatari: readonly string[];
     voci: readonly SegnapostoSulFilo[];
+    ordina?: boolean | undefined;
   }): boolean;
+  /**
+   * La composizione di una conversazione che questa casa ordina, per una casa
+   * che ci custodisce qualcosa (M8, ADR 0042 §3). `"rifiutato"` per ogni
+   * rifiuto di §2, senza dire quale.
+   */
+  composizionePerCasa?(
+    conversazioneId: string,
+    remoteKey: string,
+  ): ComposizioneSulFilo | "rifiutato";
+  /** La composizione detta da chi ordina. `false` = non è lei a ordinarla, o non ci riguarda. */
+  riceviComposizione?(
+    conversazioneId: string,
+    remoteKey: string,
+    composizione: ComposizioneSulFilo,
+  ): boolean;
+  /**
+   * Un cambio di composizione chiesto da un'altra casa a nome di un suo
+   * membro. `negato` è un no delle regole del gruppo, con il suo motivo.
+   */
+  cambiaMembri?(richiesta: {
+    conversazioneId: string;
+    remoteKey: string;
+    da: string;
+    cambio:
+      | { azione: "aggiungi" | "togli"; chi: string }
+      | { azione: "esci" }
+      | { azione: "nomina"; chi: string; ruolo: "amministratore" | "membro" };
+  }): { composizione: ComposizioneSulFilo } | { negato: string } | "rifiutato";
   /**
    * `GroupInfo` o mazzo per una casa che partecipa (ADR 0042 §4).
    *
@@ -729,6 +764,16 @@ export class FederationService implements AlpnService {
 
     if (request.tipo === "archivio") {
       return this.#serveArchivio(remoteKey, request);
+    }
+
+    // La composizione e i suoi cambi stanno con la coda: il permesso è
+    // partecipare a quella conversazione, e lo si guarda in locale.
+    if (request.tipo === "composizione") {
+      return this.#serveComposizione(remoteKey, request);
+    }
+
+    if (request.tipo === "membri") {
+      return this.#serveMembri(remoteKey, request);
     }
 
     // Da qui in giù serve almeno un contatto. Il livello viene dalla chiave
@@ -1195,6 +1240,86 @@ export class FederationService implements AlpnService {
       : { assenti: esito.assenti, ok: true, voci: esito.voci };
   }
 
+  /**
+   * La composizione: letta presso chi ordina, o annunciata da chi ordina (M8).
+   *
+   * Chi parla è la chiave della connessione. Per `leggi` questa casa deve
+   * ordinare la conversazione e chi chiede deve custodirne qualcosa; per
+   * `annuncia` è il contrario — chi annuncia dev'essere la casa che la ordina.
+   * In tutti e due i versi il rifiuto è uno solo.
+   */
+  #serveComposizione(
+    remoteKey: string,
+    request: ComposizioneRequest,
+  ): ComposizioneResponse | ReturnType<typeof errorResponse> {
+    if (
+      this.#messaggi?.composizionePerCasa === undefined ||
+      this.#messaggi.riceviComposizione === undefined
+    ) {
+      return errorResponse("richiesta_sconosciuta", "I gruppi non sono attivi.");
+    }
+
+    if (!this.#budgets.allowDelivery(remoteKey)) {
+      return errorResponse("troppe_richieste", "Troppe richieste in poco tempo.");
+    }
+
+    if (request.azione === "leggi") {
+      const esito = this.#messaggi.composizionePerCasa(request.conversazione, remoteKey);
+
+      return esito === "rifiutato"
+        ? errorResponse("non_trovato", "Nessuna conversazione da ordinare con questo nome.")
+        : { composizione: esito, ok: true };
+    }
+
+    const accettata =
+      request.composizione !== undefined &&
+      this.#messaggi.riceviComposizione(request.conversazione, remoteKey, request.composizione);
+
+    return accettata
+      ? { ok: true }
+      : errorResponse("non_trovato", "Nessuna conversazione per questa composizione.");
+  }
+
+  /** Un cambio di composizione, chiesto a questa casa perché la ordina (M8). */
+  #serveMembri(
+    remoteKey: string,
+    request: MembriRequest,
+  ): MembriResponse | ReturnType<typeof errorResponse> {
+    if (this.#messaggi?.cambiaMembri === undefined) {
+      return errorResponse("richiesta_sconosciuta", "I gruppi non sono attivi.");
+    }
+
+    if (!this.#budgets.allowDelivery(remoteKey)) {
+      return errorResponse("troppe_richieste", "Troppe richieste in poco tempo.");
+    }
+
+    const cambio =
+      request.azione === "esci"
+        ? ({ azione: "esci" } as const)
+        : request.azione === "nomina"
+          ? ({
+              azione: "nomina",
+              chi: request.chi ?? "",
+              ruolo: request.ruolo ?? "membro",
+            } as const)
+          : ({ azione: request.azione, chi: request.chi ?? "" } as const);
+
+    const esito = this.#messaggi.cambiaMembri({
+      cambio,
+      conversazioneId: request.conversazione,
+      da: request.da,
+      remoteKey,
+    });
+
+    if (esito === "rifiutato") {
+      return errorResponse("non_trovato", "Nessuna conversazione da ordinare con questo nome.");
+    }
+
+    return "negato" in esito
+      ? { fatto: false, motivo: esito.negato, ok: true }
+      : { composizione: esito.composizione, fatto: true, ok: true };
+  }
+
   /** Una spinta di segnaposto, o l'annuncio di una conversazione (ADR 0042 §4.1). */
   #serveSegnaposto(
     remoteKey: string,
@@ -1214,6 +1339,7 @@ export class FederationService implements AlpnService {
       destinatari: request.destinatari,
       remoteKey,
       voci: request.segnaposti,
+      ...(request.ordina === undefined ? {} : { ordina: request.ordina }),
     });
 
     return accettata
@@ -2082,6 +2208,7 @@ export class FederationService implements AlpnService {
       da: string;
       destinatari: string[];
       voci: SegnapostoSulFilo[];
+      ordina?: boolean;
     },
   ): Promise<void> {
     await this.#ask(instanceKey, {
@@ -2091,7 +2218,100 @@ export class FederationService implements AlpnService {
       nome: this.#instanceName(),
       segnaposti: spinta.voci,
       tipo: "segnaposto",
+      ...(spinta.ordina === undefined ? {} : { ordina: spinta.ordina }),
     }).catch(() => undefined);
+  }
+
+  /** La composizione di una conversazione, chiesta alla casa che la ordina (M8). */
+  public async composizionePresso(
+    instanceKey: string,
+    conversazioneId: string,
+  ): Promise<
+    | { esito: "composizione"; composizione: ComposizioneSulFilo }
+    | { esito: "rifiutato" }
+    | { esito: "irraggiungibile" }
+  > {
+    try {
+      const { response } = await this.#ask(
+        instanceKey,
+        {
+          azione: "leggi",
+          conversazione: conversazioneId,
+          nome: this.#instanceName(),
+          tipo: "composizione",
+        },
+        MAX_REQUEST_BYTES_CON_BUSTA,
+      );
+
+      // Si rilegge come se arrivasse da un'estranea: una composizione
+      // malformata non si applica a metà.
+      const composizione = isOk(response) ? leggiComposizione(response.composizione) : undefined;
+
+      return composizione === undefined
+        ? { esito: "rifiutato" }
+        : { composizione, esito: "composizione" };
+    } catch {
+      return { esito: "irraggiungibile" };
+    }
+  }
+
+  /** La composizione, detta a una casa che custodisce. Best effort: chi non la riceve la chiede. */
+  public async annunciaComposizioneA(
+    instanceKey: string,
+    conversazioneId: string,
+    composizione: ComposizioneSulFilo,
+  ): Promise<void> {
+    await this.#ask(instanceKey, {
+      azione: "annuncia",
+      composizione,
+      conversazione: conversazioneId,
+      nome: this.#instanceName(),
+      tipo: "composizione",
+    }).catch(() => undefined);
+  }
+
+  /** Un cambio di composizione, chiesto alla casa che ordina a nome di un membro di qui. */
+  public async cambiaMembriPresso(
+    instanceKey: string,
+    conversazioneId: string,
+    richiesta: { da: string } & (
+      | { azione: "aggiungi" | "togli"; chi: string }
+      | { azione: "esci" }
+      | { azione: "nomina"; chi: string; ruolo: "amministratore" | "membro" }
+    ),
+  ): Promise<
+    | { esito: "fatto"; composizione: ComposizioneSulFilo }
+    | { esito: "negato"; motivo: string }
+    | { esito: "rifiutato" }
+    | { esito: "irraggiungibile" }
+  > {
+    try {
+      const { response } = await this.#ask(
+        instanceKey,
+        {
+          ...richiesta,
+          conversazione: conversazioneId,
+          nome: this.#instanceName(),
+          tipo: "membri",
+        },
+        MAX_REQUEST_BYTES_CON_BUSTA,
+      );
+
+      if (!isOk(response)) {
+        return { esito: "rifiutato" };
+      }
+
+      if (response.fatto !== true) {
+        return typeof response.motivo === "string" && response.motivo.length <= MAX_NAME_LENGTH
+          ? { esito: "negato", motivo: response.motivo }
+          : { esito: "rifiutato" };
+      }
+
+      const composizione = leggiComposizione(response.composizione);
+      return composizione === undefined ? { esito: "rifiutato" } : { composizione, esito: "fatto" };
+    } catch {
+      return { esito: "irraggiungibile" };
+    }
   }
 
   /** La coda ordinata, chiesta a chi ordina (ADR 0042 §3). */

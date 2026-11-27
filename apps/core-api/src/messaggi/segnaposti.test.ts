@@ -62,8 +62,12 @@ function casa(dataDir: string, chiave: string): Casa {
   // La rete, in processo: ogni domanda arriva all'altra casa come se venisse
   // dal filo, con la chiave di chi chiede al posto della connessione.
   const rete: ReteFraCase = {
+    // I gruppi hanno le loro prove in `gruppi.test.ts`: qui nessuno li usa.
+    annunciaComposizione: () => Promise.resolve(),
+    cambiaMembri: () => Promise.resolve({ esito: "irraggiungibile" }),
     casa: chiave,
     coda: () => Promise.resolve({ esito: "irraggiungibile" }),
+    composizione: () => Promise.resolve({ esito: "irraggiungibile" }),
     deposita: () => Promise.resolve({ esito: "irraggiungibile" }),
     depositaStato: () => Promise.resolve({ esito: "irraggiungibile" }),
     leggiStato: () => Promise.resolve({ esito: "irraggiungibile" }),

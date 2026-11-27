@@ -12,6 +12,7 @@ import {
   MAX_BACHECA_POSTS,
   MAX_NAME_LENGTH,
   MAX_PROOF_LENGTH,
+  leggiComposizione,
   leggiSegnaposto,
   parseRequest,
 } from "./protocol.js";
@@ -1194,6 +1195,100 @@ describe("la forma di un segnaposto", () => {
     expect(spinta(buono, "matteo", ["marco", "non un nome"])).toMatchObject({
       error: { codice: "malformata" },
     });
+  });
+});
+
+/** Le due operazioni dei gruppi (M8): la composizione, e il cambio chiesto a chi ordina. */
+describe("la forma di una composizione e di un cambio di membri", () => {
+  const AIA = "a1".repeat(32);
+  const BORGO = "b0".repeat(32);
+  const QUANDO = "2026-11-27T10:00:00.000Z";
+  const buona = {
+    membri: [
+      { chi: `anna@${AIA}`, dal: QUANDO, ruolo: "creatore" },
+      { chi: `bruno@${BORGO}`, dal: QUANDO, ruolo: "membro" },
+    ],
+    nome: "Cena di quartiere",
+    rimossi: [{ chi: `carla@${BORGO}`, da: `anna@${AIA}`, il: QUANDO }],
+    tipo: "gruppo",
+    versione: 3,
+  };
+
+  it("una fatta bene si legge com'è, e attraversa", () => {
+    expect(leggiComposizione(buona)).toEqual(buona);
+    expect(
+      parseRequest({
+        azione: "annuncia",
+        composizione: buona,
+        conversazione: "conv-1",
+        nome: "Aia",
+        tipo: "composizione",
+      }),
+    ).toMatchObject({ request: { azione: "annuncia", composizione: buona } });
+    expect(
+      parseRequest({ azione: "leggi", conversazione: "conv-1", nome: "Aia", tipo: "composizione" }),
+    ).toMatchObject({ request: { azione: "leggi" } });
+  });
+
+  it.each([
+    ["una versione che non è un intero positivo", { versione: 0 }],
+    ["un tipo che non esiste", { tipo: "canale" }],
+    ["un membro senza casa", { membri: [{ chi: "anna", dal: QUANDO, ruolo: "membro" }] }],
+    [
+      "un membro con una casa che non è una chiave",
+      { membri: [{ chi: "anna@casa-mia", dal: QUANDO, ruolo: "membro" }] },
+    ],
+    ["un ruolo inventato", { membri: [{ chi: `anna@${AIA}`, dal: QUANDO, ruolo: "padrone" }] }],
+    [
+      "una data che non è una data",
+      { membri: [{ chi: `anna@${AIA}`, dal: "ieri", ruolo: "membro" }] },
+    ],
+    [
+      "un rimosso tolto da qualcuno che non è un indirizzo",
+      { rimossi: [{ chi: `carla@${BORGO}`, da: "anna", il: QUANDO }] },
+    ],
+    ["troppi membri", { membri: Array.from({ length: 300 }, () => buona.membri[0]) }],
+  ])("%s rende malformata la composizione intera", (_che, campo) => {
+    expect(leggiComposizione({ ...buona, ...campo })).toBeUndefined();
+    expect(
+      parseRequest({
+        azione: "annuncia",
+        composizione: { ...buona, ...campo },
+        conversazione: "conv-1",
+        nome: "Aia",
+        tipo: "composizione",
+      }),
+    ).toMatchObject({ error: { codice: "malformata" } });
+  });
+
+  it("un cambio dice chi lo chiede, che cosa, e su chi", () => {
+    const cambio = (campi: Record<string, unknown>): unknown =>
+      parseRequest({
+        conversazione: "conv-1",
+        da: "bruno",
+        nome: "Borgo",
+        tipo: "membri",
+        ...campi,
+      });
+
+    expect(cambio({ azione: "esci" })).toMatchObject({ request: { azione: "esci", da: "bruno" } });
+    expect(cambio({ azione: "aggiungi", chi: `dino@${BORGO}` })).toMatchObject({
+      request: { azione: "aggiungi", chi: `dino@${BORGO}` },
+    });
+    expect(
+      cambio({ azione: "nomina", chi: `dino@${BORGO}`, ruolo: "amministratore" }),
+    ).toMatchObject({ request: { azione: "nomina", ruolo: "amministratore" } });
+
+    for (const sbagliato of [
+      { azione: "aggiungi" },
+      { azione: "aggiungi", chi: "dino" },
+      { azione: "togli", chi: "dino@altrove" },
+      { azione: "nomina", chi: `dino@${BORGO}`, ruolo: "creatore" },
+      { azione: "promuovi", chi: `dino@${BORGO}` },
+      { azione: "esci", da: "Non Un Nome" },
+    ]) {
+      expect(cambio(sbagliato)).toMatchObject({ error: { codice: "malformata" } });
+    }
   });
 });
 

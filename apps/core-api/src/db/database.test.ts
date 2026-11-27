@@ -51,6 +51,7 @@ describe("instance database", () => {
           { name: "lingua-della-persona", version: 32 },
           { name: "segnalazioni", version: 33 },
           { name: "accesso-del-dispositivo", version: 34 },
+          { name: "gruppi", version: 35 },
         ]);
 
         // Re-running must be a no-op rather than an error.

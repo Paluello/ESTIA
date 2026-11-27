@@ -139,6 +139,8 @@ export type RequestType =
   | "segnaposto"
   | "segnaposto-da"
   | "archivio"
+  | "composizione"
+  | "membri"
   | "bacheca"
   | "immagine"
   | "cuore"
@@ -390,6 +392,12 @@ export interface SegnapostoRequest {
   /** I membri che abitano sulla casa che riceve. */
   destinatari: string[];
   segnaposti: SegnapostoSulFilo[];
+  /**
+   * `false` quando chi spinge dichiara di **non** ordinare la conversazione:
+   * allora la spinta non la fa nascere presso chi la riceve. Assente vuol dire
+   * «la ordino io», che era l'unico caso prima dei gruppi fra tre case.
+   */
+  ordina?: boolean;
 }
 
 export interface SegnapostoResponse {
@@ -432,6 +440,85 @@ export interface ArchivioResponse {
   voci: Array<{ id: string; chiaveN: number; busta: string; createdAt: string }>;
   /** Ritirate, o mai esistite: chi riceve cancella il segnaposto. */
   assenti: string[];
+}
+
+/**
+ * La composizione di una conversazione sul filo (M8, [ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3).
+ *
+ * La dichiara **la casa che ordina**, e nessun'altra: è la stessa casa che
+ * mette in fila i commit, e chi c'è in un gruppo è la cosa che quei commit
+ * cambiano. Le persone sono nominate come nella credenziale MLS,
+ * `username@casa` (§0).
+ */
+export interface ComposizioneSulFilo {
+  /** Cresce a ogni cambio: chi riceve tiene solo la più alta. */
+  versione: number;
+  tipo: "diretta" | "gruppo";
+  nome: string | null;
+  membri: Array<{ chi: string; ruolo: "creatore" | "amministratore" | "membro"; dal: string }>;
+  /** Chi è stato tolto o è uscito. `da` è chi l'ha tolto: lui stesso, se è uscito. */
+  rimossi: Array<{ chi: string; il: string; da: string }>;
+}
+
+/** Quanti rimossi in una composizione: i più recenti. */
+export const MAX_RIMOSSI = 256;
+
+/**
+ * `composizione`: la nona operazione.
+ *
+ * `leggi` la chiede una casa che custodisce qualcosa della conversazione — ha
+ * dentro un membro, o ce l'aveva — alla casa che ordina. `annuncia` è la casa
+ * che ordina a dirla, senza aspettare che qualcuno la chieda: alla nascita del
+ * gruppo e a ogni cambio. Un'operazione e due azioni dichiarate, come
+ * `group-info` e `mazzo`.
+ */
+export interface ComposizioneRequest {
+  tipo: "composizione";
+  nome: string;
+  conversazione: string;
+  azione: "leggi" | "annuncia";
+  /** Solo per `annuncia`. */
+  composizione?: ComposizioneSulFilo;
+}
+
+export interface ComposizioneResponse {
+  ok: true;
+  /** Solo in risposta a `leggi`. */
+  composizione?: ComposizioneSulFilo;
+}
+
+/**
+ * `membri`: la decima operazione. Un cambio di composizione chiesto alla casa
+ * che ordina **a nome di un proprio membro**.
+ *
+ * Chi chiede è la chiave della connessione, e `da` è un nome **su quella
+ * casa**: una casa parla per i suoi e per nessun altro (ADR 0021 §1). Che cosa
+ * quel membro possa fare lo decide chi ordina, guardando il suo ruolo.
+ */
+export interface MembriRequest {
+  tipo: "membri";
+  nome: string;
+  conversazione: string;
+  azione: "aggiungi" | "togli" | "esci" | "nomina";
+  /** Chi lo chiede, sulla casa che manda la richiesta. */
+  da: string;
+  /** `username@casa` di chi entra, esce di forza o cambia ruolo. Non per `esci`. */
+  chi?: string;
+  /** Solo per `nomina`. */
+  ruolo?: "amministratore" | "membro";
+}
+
+/**
+ * `fatto: false` è un no che viene **dalle regole del gruppo** — non sei
+ * amministratore, il gruppo è pieno — e porta il suo motivo: lo sente soltanto
+ * una casa che ha già passato §2, e le serve per dirlo a chi ha chiesto. Il
+ * rifiuto di §2 resta un errore, uno solo per i tre casi.
+ */
+export interface MembriResponse {
+  ok: true;
+  fatto: boolean;
+  motivo?: string;
+  composizione?: ComposizioneSulFilo;
 }
 
 /** Quante voci in una visita: una pagina di chat, e la risposta sta nel tetto. */
@@ -700,6 +787,8 @@ export type ProtocolRequest =
   | SegnapostoRequest
   | SegnapostoDaRequest
   | ArchivioRequest
+  | ComposizioneRequest
+  | MembriRequest
   | BachecaRequest
   | ImmagineRequest
   | CuoreRequest
@@ -815,6 +904,8 @@ export type ProtocolResponse =
   | SegnapostoResponse
   | SegnapostoDaResponse
   | ArchivioResponse
+  | ComposizioneResponse
+  | MembriResponse
   | BachecaResponse
   | ImmagineResponse
   | CuoreResponse
@@ -1244,6 +1335,10 @@ function parseSegnaposto(
     return { error: errorResponse("malformata", "Destinatari o segnaposto non validi.") };
   }
 
+  if (value.ordina !== undefined && typeof value.ordina !== "boolean") {
+    return { error: errorResponse("malformata", "Chi ordina si dice con sì o no.") };
+  }
+
   return {
     request: {
       conversazione,
@@ -1252,8 +1347,155 @@ function parseSegnaposto(
       nome,
       segnaposti: segnaposti as SegnapostoSulFilo[],
       tipo: "segnaposto",
+      ...(value.ordina === undefined ? {} : { ordina: value.ordina }),
     },
   };
+}
+
+/** Un indirizzo `username@casa` — un nome utente e una chiave — o niente. */
+function leggiIndirizzo(value: unknown): string | undefined {
+  const testo = readShortText(value, MAX_NAME_LENGTH * 4);
+
+  return testo === undefined || !indirizzoValido(testo) ? undefined : testo;
+}
+
+/** Un istante UTC che esiste, o niente. */
+function leggiIstante(value: unknown): string | undefined {
+  const testo = readShortText(value, MAX_NAME_LENGTH);
+
+  return testo === undefined || !istanteValido(testo) ? undefined : testo;
+}
+
+const RUOLI_SUL_FILO = ["creatore", "amministratore", "membro"] as const;
+
+/**
+ * Una composizione sul filo, o niente. Pubblica perché la rilegge anche chi la
+ * riceve in una risposta: quello che torna da un'altra casa si controlla come
+ * quello che arriva.
+ *
+ * Tutta o niente: un membro malformato rende malformata la composizione, che
+ * non si applica a metà — applicarla a metà vorrebbe dire togliere qualcuno
+ * perché il suo nome era scritto male.
+ */
+export function leggiComposizione(value: unknown): ComposizioneSulFilo | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (
+    typeof value.versione !== "number" ||
+    !Number.isInteger(value.versione) ||
+    value.versione < 1
+  ) {
+    return undefined;
+  }
+
+  if (value.tipo !== "diretta" && value.tipo !== "gruppo") {
+    return undefined;
+  }
+
+  const nome = value.nome === null ? null : readShortText(value.nome, MAX_NAME_LENGTH);
+  if (nome === undefined) {
+    return undefined;
+  }
+
+  if (
+    !Array.isArray(value.membri) ||
+    value.membri.length > MAX_DESTINATARI ||
+    !Array.isArray(value.rimossi) ||
+    value.rimossi.length > MAX_RIMOSSI
+  ) {
+    return undefined;
+  }
+
+  const membri: ComposizioneSulFilo["membri"] = [];
+  for (const voce of value.membri as unknown[]) {
+    if (!isRecord(voce)) {
+      return undefined;
+    }
+
+    const chi = leggiIndirizzo(voce.chi);
+    const dal = leggiIstante(voce.dal);
+    const ruolo = RUOLI_SUL_FILO.find((r) => r === voce.ruolo);
+    if (chi === undefined || dal === undefined || ruolo === undefined) {
+      return undefined;
+    }
+
+    membri.push({ chi, dal, ruolo });
+  }
+
+  const rimossi: ComposizioneSulFilo["rimossi"] = [];
+  for (const voce of value.rimossi as unknown[]) {
+    if (!isRecord(voce)) {
+      return undefined;
+    }
+
+    const chi = leggiIndirizzo(voce.chi);
+    const da = leggiIndirizzo(voce.da);
+    const il = leggiIstante(voce.il);
+    if (chi === undefined || da === undefined || il === undefined) {
+      return undefined;
+    }
+
+    rimossi.push({ chi, da, il });
+  }
+
+  return { membri, nome, rimossi, tipo: value.tipo, versione: value.versione };
+}
+
+function parseComposizione(
+  value: Record<string, unknown>,
+  nome: string,
+): { request?: ComposizioneRequest; error?: ErrorResponse } {
+  const conversazione = readShortText(value.conversazione, MAX_NAME_LENGTH);
+  if (conversazione === undefined) {
+    return { error: errorResponse("malformata", "Manca la conversazione.") };
+  }
+
+  if (value.azione === "leggi") {
+    return { request: { azione: "leggi", conversazione, nome, tipo: "composizione" } };
+  }
+
+  if (value.azione !== "annuncia") {
+    return { error: errorResponse("malformata", "Una composizione si legge o si annuncia.") };
+  }
+
+  const composizione = leggiComposizione(value.composizione);
+  return composizione === undefined
+    ? { error: errorResponse("malformata", "Composizione non valida.") }
+    : { request: { azione: "annuncia", composizione, conversazione, nome, tipo: "composizione" } };
+}
+
+function parseMembri(
+  value: Record<string, unknown>,
+  nome: string,
+): { request?: MembriRequest; error?: ErrorResponse } {
+  const conversazione = readShortText(value.conversazione, MAX_NAME_LENGTH);
+  const da = readShortText(value.da, MAX_NAME_LENGTH);
+  if (conversazione === undefined || da === undefined || !nomeValido(da)) {
+    return { error: errorResponse("malformata", "Mancano la conversazione o chi chiede.") };
+  }
+
+  const base = { conversazione, da, nome, tipo: "membri" as const };
+
+  if (value.azione === "esci") {
+    return { request: { ...base, azione: "esci" } };
+  }
+
+  const chi = leggiIndirizzo(value.chi);
+  if (chi === undefined) {
+    return { error: errorResponse("malformata", "Manca la persona di cui si chiede il cambio.") };
+  }
+
+  if (value.azione === "aggiungi" || value.azione === "togli") {
+    return { request: { ...base, azione: value.azione, chi } };
+  }
+
+  if (value.azione === "nomina" && (value.ruolo === "amministratore" || value.ruolo === "membro")) {
+    return { request: { ...base, azione: "nomina", chi, ruolo: value.ruolo } };
+  }
+
+  return { error: errorResponse("malformata", "Cambio di composizione non valido.") };
 }
 
 function parseStato(
@@ -1446,6 +1688,14 @@ export function parseRequest(value: unknown): { request?: ProtocolRequest; error
 
   if (value.tipo === "segnaposto") {
     return parseSegnaposto(value, nome);
+  }
+
+  if (value.tipo === "composizione") {
+    return parseComposizione(value, nome);
+  }
+
+  if (value.tipo === "membri") {
+    return parseMembri(value, nome);
   }
 
   if (value.tipo === "archivio") {

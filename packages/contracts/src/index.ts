@@ -2895,7 +2895,96 @@ export interface ConversazioneView {
    * attraversa.
    */
   peerVistoFinoA?: string | null;
+  /** Il nome del gruppo. Assente in una conversazione diretta. */
+  nome?: string;
+  /**
+   * Chi fa che cosa in un gruppo, per id del membro. Assente in una
+   * conversazione diretta, dove non c'è niente da amministrare.
+   */
+  ruoli?: Record<string, RuoloGruppo>;
 }
+
+/**
+ * I gruppi (M8). Le risposte del proprietario del 2026-09-17:
+ *
+ * - **aggiungono e tolgono membri il creatore e gli amministratori che
+ *   nomina**; chiunque può uscire da solo;
+ * - il tetto è **50 foglie**, e ogni dispositivo è una foglia
+ *   ([S5](../../../docs/spike/S5-quanto-pesa-un-albero.md)).
+ *
+ * La composizione la sa **la casa che ordina**
+ * ([ADR 0042](../../../docs/adr/0042-come-mls-attraversa.md) §3): le altre
+ * case la chiedono a lei.
+ */
+export const RUOLI_GRUPPO = ["creatore", "amministratore", "membro"] as const;
+export type RuoloGruppo = (typeof RUOLI_GRUPPO)[number];
+
+/**
+ * Il tetto di un gruppo per la 1.0, in **foglie**.
+ *
+ * L'istanza non vede l'albero — le buste sono opache — quindi conta i membri:
+ * ogni membro ha almeno una foglia, e più di 50 membri sono di sicuro più di
+ * 50 foglie. Il conto esatto, dispositivo per dispositivo, lo fa il client
+ * prima di un commit.
+ */
+export const MAX_FOGLIE_GRUPPO = 50;
+
+/** Sotto tre persone non è un gruppo: è la conversazione diretta, che c'è già. */
+export const MIN_MEMBRI_GRUPPO = 3;
+
+export const MAX_NOME_GRUPPO = 80;
+
+/** Una persona da mettere in un gruppo: il nome, e la casa se non è questa. */
+export interface MembroGruppoInput {
+  username: string;
+  /** La chiave della sua casa. Assente = questa casa. */
+  casa?: string;
+}
+
+export const membroGruppoInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["username"],
+  properties: {
+    username: { type: "string", minLength: 1, maxLength: 120 },
+    casa: { type: "string", minLength: 1, maxLength: 120 },
+  },
+} as const;
+
+export interface CreaGruppoRequest {
+  nome: string;
+  /** Gli altri: chi crea c'è già, ed è il creatore. */
+  membri: MembroGruppoInput[];
+}
+
+export const creaGruppoRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["nome", "membri"],
+  properties: {
+    nome: { type: "string", minLength: 1, maxLength: MAX_NOME_GRUPPO },
+    membri: {
+      type: "array",
+      minItems: MIN_MEMBRI_GRUPPO - 1,
+      maxItems: MAX_FOGLIE_GRUPPO - 1,
+      items: membroGruppoInputSchema,
+    },
+  },
+} as const;
+
+/** Si nomina un amministratore, o gli si toglie l'incarico. Il creatore non si nomina. */
+export interface CambiaRuoloRequest {
+  ruolo: Exclude<RuoloGruppo, "creatore">;
+}
+
+export const cambiaRuoloRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ruolo"],
+  properties: {
+    ruolo: { type: "string", enum: ["amministratore", "membro"] },
+  },
+} as const;
 
 export const conversazioneViewSchema = {
   type: "object",
@@ -2919,6 +3008,11 @@ export const conversazioneViewSchema = {
     createdAt: { type: "string" },
     ordinataQui: { type: "boolean" },
     peerVistoFinoA: { type: ["string", "null"] },
+    nome: { type: "string" },
+    ruoli: {
+      type: "object",
+      additionalProperties: { type: "string", enum: [...RUOLI_GRUPPO] },
+    },
   },
 } as const;
 

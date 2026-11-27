@@ -1,5 +1,11 @@
 import {
+  cambiaRuoloRequestSchema,
   conversazioneViewSchema,
+  creaGruppoRequestSchema,
+  membroGruppoInputSchema,
+  type CambiaRuoloRequest,
+  type CreaGruppoRequest,
+  type MembroGruppoInput,
   archivioPageSchema,
   cronologiaPageSchema,
   createConversazioneRequestSchema,
@@ -113,8 +119,109 @@ export function registerMessaggiRoutes(
     },
     async (request) => {
       const caller = request.caller!;
-      const conversazione = services.messaggi.getConversazione(caller.user.id, request.params.id);
+      const conversazione = await services.messaggi.getConversazione(
+        caller.user.id,
+        request.params.id,
+      );
       return { conversazione };
+    },
+  );
+
+  /* ---------- i gruppi (M8) ---------- */
+
+  const unaConversazione = {
+    200: {
+      type: "object",
+      required: ["conversazione"],
+      properties: { conversazione: conversazioneViewSchema },
+    },
+  } as const;
+
+  const conMembro = {
+    type: "object",
+    required: ["id", "membro"],
+    properties: { id: { type: "string" }, membro: { type: "string", minLength: 1 } },
+  } as const;
+
+  /**
+   * Crea un gruppo: un nome, e almeno altre due persone — di questa casa o di
+   * altre. Chi crea è il creatore, e la sua casa è quella che ordina.
+   */
+  app.post<{ Body: CreaGruppoRequest; Reply: { conversazione: ConversazioneView } }>(
+    "/api/v1/gruppi",
+    { preHandler: asMember, schema: { body: creaGruppoRequestSchema, response: unaConversazione } },
+    async (request) => services.messaggi.creaGruppo(request.caller!.user.id, request.body),
+  );
+
+  /** Fa entrare qualcuno: il creatore e gli amministratori. */
+  app.post<{
+    Params: { id: string };
+    Body: MembroGruppoInput;
+    Reply: { conversazione: ConversazioneView };
+  }>(
+    "/api/v1/conversazioni/:id/membri",
+    {
+      preHandler: asMember,
+      schema: {
+        params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+        body: membroGruppoInputSchema,
+        response: unaConversazione,
+      },
+    },
+    async (request) =>
+      services.messaggi.aggiungiMembro(request.caller!.user.id, request.params.id, request.body),
+  );
+
+  /**
+   * Toglie qualcuno: il creatore e gli amministratori. `:membro` è l'id con
+   * cui la conversazione lo nomina, come arriva in `membri`.
+   */
+  app.delete<{
+    Params: { id: string; membro: string };
+    Reply: { conversazione: ConversazioneView };
+  }>(
+    "/api/v1/conversazioni/:id/membri/:membro",
+    { preHandler: asMember, schema: { params: conMembro, response: unaConversazione } },
+    async (request) =>
+      services.messaggi.togliMembro(
+        request.caller!.user.id,
+        request.params.id,
+        request.params.membro,
+      ),
+  );
+
+  /** Nomina un amministratore, o gli toglie l'incarico: il creatore. */
+  app.put<{
+    Params: { id: string; membro: string };
+    Body: CambiaRuoloRequest;
+    Reply: { conversazione: ConversazioneView };
+  }>(
+    "/api/v1/conversazioni/:id/membri/:membro/ruolo",
+    {
+      preHandler: asMember,
+      schema: { params: conMembro, body: cambiaRuoloRequestSchema, response: unaConversazione },
+    },
+    async (request) =>
+      services.messaggi.cambiaRuolo(
+        request.caller!.user.id,
+        request.params.id,
+        request.params.membro,
+        request.body.ruolo,
+      ),
+  );
+
+  /** Uscire da un gruppo: è un'operazione di chi esce, e non chiede permesso. */
+  app.post<{ Params: { id: string } }>(
+    "/api/v1/conversazioni/:id/uscita",
+    {
+      preHandler: asMember,
+      schema: {
+        params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+      },
+    },
+    async (request, reply) => {
+      await services.messaggi.esci(request.caller!.user.id, request.params.id);
+      return reply.status(204).send();
     },
   );
 
