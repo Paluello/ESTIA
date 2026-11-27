@@ -62,10 +62,27 @@ echo "Simulatore: $(echo "$riga" | sed -E 's/ \(.*//; s/^ +//') ($udid)"
 progetto="$(ls -d src-tauri/gen/apple/*.xcodeproj | head -1)"
 schema="$(basename "$progetto" .xcodeproj)_iOS"
 
+# La libreria Rust la costruisce cargo, non Xcode. La fase «Build Rust Code»
+# del progetto generato chiama `tauri ios xcode-script`, che funziona solo con
+# `tauri ios dev` o `tauri ios build` accesi, cioè con la CLI che non parte con
+# Xcode 27.2. Si costruisce qui, la si mette dove Xcode la cerca, e la fase
+# diventa un'eco. `custom-protocol` è quello che la CLI accende nelle build:
+# l'interfaccia viaggia dentro l'app invece di venire dal server di sviluppo.
+(cd src-tauri && cargo build --lib --target aarch64-apple-ios-sim --features tauri/custom-protocol)
+# Dove la cerca: lo dice il progetto generato (Externals/<arch>/<configurazione>).
+grep -rn "libapp.a" src-tauri/gen/apple/project.yml "$progetto/project.pbxproj" | head -5 || true
+for configurazione in debug Debug; do
+  esterni="src-tauri/gen/apple/Externals/arm64/$configurazione"
+  mkdir -p "$esterni"
+  cp "src-tauri/target/aarch64-apple-ios-sim/debug/libestia_app_lib.a" "$esterni/libapp.a"
+done
+perl -0pi -e 's/shellScript = "[^"]*tauri ios xcode-script[^"]*";/shellScript = "echo libreria Rust gia costruita da ios-simulatore.sh";/g' \
+  "$progetto/project.pbxproj"
+
 xcodebuild \
   -project "$progetto" \
   -scheme "$schema" \
-  -configuration Debug \
+  -configuration debug \
   -sdk iphonesimulator \
   -destination "id=$udid" \
   -derivedDataPath src-tauri/gen/apple/build \
