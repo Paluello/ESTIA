@@ -34,25 +34,32 @@
 import { decodeGroupState, encodeGroupState, type GroupState } from "ts-mls/clientState.js";
 
 import {
-  archivia,
+  archiviaLegata,
   avvolgi,
   catenaNuova,
   catenaRuotata,
-  rileggi,
+  rileggiLegata,
   svolgi,
   type Catena,
-  type VoceCifrata,
 } from "./archivio.js";
 import {
-  aggiungi,
   applicaHandshake,
+  cambiaFoglie,
+  chiaveDiRotazione,
   configurazione,
   creaConversazione,
+  diChiE,
   entraDaWelcome,
   epochDi,
+  foglieDi,
+  ioIn,
   puntoDiRientro,
+  qualcunoTolto,
   rientra,
+  scriviIdentita,
   serraturaArchivio,
+  toltoDalGruppo,
+  type Membro,
   type Porta,
   type Portachiavi,
 } from "./gruppo.js";
@@ -148,7 +155,24 @@ export interface Sessione {
    * resta così non si scrive, e il mazzo non si tocca.
    */
   catena: Catena | undefined;
+  /**
+   * Questo dispositivo è stato tolto dal gruppo: un commit applicato ha tolto
+   * la sua foglia. Da qui non si legge il seguito e non si scrive, e lo stato
+   * non si porta più avanti.
+   */
+  tolto?: true;
 }
+
+/**
+ * Un deposito che la fila rifiuta perché **qualcuno è arrivato prima** sulla
+ * stessa epoch ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3).
+ * Non è un guasto: ci si rimette in pari e si riprova.
+ */
+const superata = (causa: unknown): boolean =>
+  causa instanceof Error && "status" in causa && causa.status === 409;
+
+/** Quante volte si riprova un commit che un altro ha preceduto. */
+const TENTATIVI = 3;
 
 const b64 = (b: Uint8Array): string => btoa(String.fromCharCode(...b));
 
@@ -198,9 +222,15 @@ async function ripristina(
  * il resto del gruppo ha già superato — e da lì non si torna indietro.
  */
 export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Sessione> {
+  if (sessione.tolto === true) {
+    return sessione;
+  }
+
   let stato = sessione.stato;
+  let catena = sessione.catena;
   let cursore = await ctx.deposito.leggiCursore(sessione.conversazioneId);
   let mutato = false;
+  let tolto = false;
 
   for (;;) {
     const pagina = await ctx.istanza.handshakeDopo(sessione.conversazioneId, cursore);
@@ -215,9 +245,18 @@ export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Se
       // caso non si passa di qui.
       // Un commit di un'epoch già superata è nostro, o è vecchio: in entrambi i
       // casi non si riapplica.
-      if (voce.tipo !== "welcome" && voce.epoch > epochDi(stato)) {
+      if (voce.tipo !== "welcome" && voce.epoch > epochDi(stato) && !tolto) {
+        const prima = stato;
         stato = await applicaHandshake(stato, daB64(voce.busta), ctx.istanza);
         mutato = true;
+        tolto = toltoDalGruppo(stato);
+        // Qualcuno è stato tolto: la catena guadagna la chiave di quest'epoch,
+        // la stessa per tutti quelli che restano (ADR 0052 §2). Si fa **qui**,
+        // commit per commit, perché la chiave è di questa epoch e non della
+        // prossima.
+        if (!tolto && catena !== undefined && qualcunoTolto(prima, stato)) {
+          catena = catenaRuotata(catena, await chiaveDiRotazione(stato));
+        }
       }
 
       ultimoApplicato = voce.id;
@@ -234,7 +273,16 @@ export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Se
     cursore = pagina.prossimo;
   }
 
-  const aggiornata = { ...sessione, stato };
+  if (tolto) {
+    // Chi è stato tolto non ha più niente da riavvolgere né da pubblicare: lo
+    // stato resta com'è, a dire che cosa è successo.
+    const fuori: Sessione = { ...sessione, catena: undefined, stato, tolto: true };
+    await salva(ctx, fuori);
+    return fuori;
+  }
+
+  const aggiornata = { ...sessione, catena, stato };
+
   if (mutato) {
     await salva(ctx, aggiornata);
     await dopoIlCambioDiEpoch(ctx, aggiornata);
@@ -314,10 +362,14 @@ export async function riprendi(
   // proprio stato: è così che chi resta indietro lo porta avanti riavvolgendolo
   // sotto l'epoch nuova. Se non si apre adesso, si riprova dopo, all'epoch
   // raggiunta — che è il caso di chi ritrova il mazzo già riavvolto da altri.
+  if (toltoDalGruppo(stato)) {
+    return { catena: undefined, conversazioneId, stato, tolto: true };
+  }
+
   const prima = await catenaDi(ctx, stato, conversazioneId);
   const sincronizzata = await sincronizza(ctx, { catena: prima, conversazioneId, stato });
 
-  return sincronizzata.catena !== undefined
+  return sincronizzata.catena !== undefined || sincronizzata.tolto === true
     ? sincronizzata
     : {
         ...sincronizzata,
@@ -325,26 +377,65 @@ export async function riprendi(
       };
 }
 
-/**
- * Crea la conversazione e ci fa entrare qualcuno.
- *
- * `idDiChiEntra` è l'**id** del membro, non il suo nome: il canale di handshake
- * consegna un Welcome confrontando il destinatario con l'id di chi legge
- * ([`repository.ts`](../../../core-api/src/messaggi/repository.ts), `listHandshakePer`).
- * Con il nome il Welcome si deposita senza errori e non arriva a nessuno.
- */
-export async function apri(
+/** Chi entra: la sua chiave d'ingresso, e l'id con cui la conversazione lo nomina. */
+export interface Ingresso {
+  keyPackage: KeyPackage;
+  /**
+   * L'**id** del membro nella conversazione, non il suo nome: il canale di
+   * handshake consegna un Welcome confrontando il destinatario con l'id di chi
+   * legge ([`repository.ts`](../../../core-api/src/messaggi/repository.ts),
+   * `listHandshakePer`). Con il nome il Welcome si deposita senza errori e non
+   * arriva a nessuno.
+   */
+  destinatario: string;
+}
+
+/** Un Welcome solo chiama tutti quelli che entrano: va a ciascuno di loro. */
+async function consegnaWelcome(
   ctx: Contesto,
   conversazioneId: string,
-  chiEntra: KeyPackage,
-  idDiChiEntra: string,
+  welcome: Uint8Array | undefined,
+  epoch: number,
+  ingressi: readonly Ingresso[],
+): Promise<void> {
+  if (welcome === undefined) {
+    return;
+  }
+
+  const busta = b64(welcome);
+  for (const destinatario of new Set(ingressi.map((i) => i.destinatario))) {
+    await ctx.istanza.depositaHandshake(conversazioneId, {
+      busta,
+      destinatario,
+      epoch,
+      tipo: "welcome",
+    });
+  }
+}
+
+/**
+ * Crea la conversazione e ci fa entrare chi c'è: uno in una chat a due, tutti
+ * quelli che hanno un dispositivo in un gruppo.
+ */
+export async function apriCon(
+  ctx: Contesto,
+  conversazioneId: string,
+  ingressi: readonly Ingresso[],
 ): Promise<Sessione> {
+  if (ingressi.length === 0) {
+    throw new Error("Una conversazione non si apre da soli.");
+  }
+
   const creato = await creaConversazione(
     conversazioneId,
     await ctx.io.perNuovaFoglia(),
     ctx.istanza,
   );
-  const aggiunta = await aggiungi(creato, chiEntra, ctx.istanza);
+  const aggiunta = await cambiaFoglie(
+    creato,
+    { entrano: ingressi.map((i) => i.keyPackage), escono: [] },
+    ctx.istanza,
+  );
 
   // Il mazzo nasce qui, e soltanto qui: chi crea il gruppo è l'unico che non
   // trova una cronologia da rispettare.
@@ -363,23 +454,206 @@ export async function apri(
     tipo: "commit",
   });
   await salva(ctx, sessione);
-  await ctx.istanza.depositaHandshake(conversazioneId, {
-    busta: b64(aggiunta.welcome),
-    destinatario: idDiChiEntra,
-    epoch: aggiunta.epoch,
-    tipo: "welcome",
-  });
+  // Prima il mazzo, poi gli inviti: chi entra lo trova già avvolto sotto
+  // l'epoch del suo Welcome, e legge subito.
   await dopoIlCambioDiEpoch(ctx, sessione);
+  await consegnaWelcome(ctx, conversazioneId, aggiunta.welcome, aggiunta.epoch, ingressi);
 
   return sessione;
 }
 
+/** Crea la conversazione e ci fa entrare una persona: la chat a due. */
+export async function apri(
+  ctx: Contesto,
+  conversazioneId: string,
+  chiEntra: KeyPackage,
+  idDiChiEntra: string,
+): Promise<Sessione> {
+  return apriCon(ctx, conversazioneId, [{ destinatario: idDiChiEntra, keyPackage: chiEntra }]);
+}
+
+/** Una chiave d'ingresso che dice di essere di qualcun altro. */
+export class ChiaveDiUnAltro extends Error {
+  public readonly code = "chiave_di_un_altro";
+
+  public constructor() {
+    // Il messaggio è il codice: la frase la sceglie chi lo mostra (ADR 0046).
+    super("chiave_di_un_altro");
+  }
+}
+
 /**
- * Fa entrare qualcuno in una conversazione che esiste già.
+ * Un commit che cambia le foglie, portato fino in fondo: in fila, salvato, con
+ * il mazzo riavvolto e gli inviti consegnati.
  *
- * È l'operazione dei gruppi, e anche quella con cui un secondo dispositivo
- * della stessa persona entra — con una chiave sua, perché MLS rifiuta una
- * chiave di firma che nell'albero c'è già.
+ * `calcola` riceve lo stato **su cui il commit verrà costruito** e dice che
+ * cosa cambiare: si richiama a ogni tentativo, perché se un altro è arrivato
+ * prima (409) ci si rimette in pari e il cambio va ricalcolato — la foglia da
+ * togliere può non esserci già più, o avere cambiato posto.
+ */
+async function commitDiFoglie(
+  ctx: Contesto,
+  sessione: Sessione,
+  calcola: (stato: ClientState) => { entrano: readonly Ingresso[]; escono: readonly number[] },
+): Promise<Sessione> {
+  let attuale = await sincronizza(ctx, sessione);
+
+  for (let tentativo = 1; ; tentativo++) {
+    if (attuale.tolto === true) {
+      throw new Error("Questo dispositivo non è più nel gruppo.");
+    }
+
+    const cambio = calcola(attuale.stato);
+    if (cambio.entrano.length === 0 && cambio.escono.length === 0) {
+      return attuale;
+    }
+
+    const esito = await cambiaFoglie(
+      attuale.stato,
+      { entrano: cambio.entrano.map((i) => i.keyPackage), escono: cambio.escono },
+      ctx.istanza,
+    );
+
+    try {
+      // In fila **prima** di salvare: uno stato che la fila ha rifiutato è un
+      // gruppo che nessun altro conosce.
+      await ctx.istanza.depositaHandshake(attuale.conversazioneId, {
+        busta: b64(esito.commit),
+        epoch: esito.epoch,
+        tipo: "commit",
+      });
+    } catch (causa) {
+      if (!superata(causa) || tentativo >= TENTATIVI) {
+        throw causa;
+      }
+      attuale = await sincronizza(ctx, attuale);
+      continue;
+    }
+
+    // A ogni rimozione la catena guadagna una chiave (ADR 0052 §2): chi è
+    // stato tolto tiene quelle che aveva, e non ottiene questa.
+    const catena =
+      attuale.catena !== undefined && qualcunoTolto(attuale.stato, esito.stato)
+        ? catenaRuotata(attuale.catena, await chiaveDiRotazione(esito.stato))
+        : attuale.catena;
+    const aggiornata: Sessione = { ...attuale, catena, stato: esito.stato };
+
+    await salva(ctx, aggiornata);
+    await dopoIlCambioDiEpoch(ctx, aggiornata);
+    await consegnaWelcome(
+      ctx,
+      aggiornata.conversazioneId,
+      esito.welcome,
+      esito.epoch,
+      cambio.entrano,
+    );
+
+    return aggiornata;
+  }
+}
+
+/**
+ * **Aggiunge le foglie di un membro** a una conversazione: una per ogni chiave
+ * d'ingresso, cioè una per dispositivo.
+ *
+ * È l'operazione dei gruppi — una persona entra — e quella dei dispositivi —
+ * un secondo dispositivo della stessa persona entra
+ * ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+ *
+ * Con `alPostoDelleVecchie`, le foglie che quella persona ha già escono **nello
+ * stesso commit**: è la riammissione di chi era stato tolto ed è rimasto
+ * nell'albero, e il modo in cui non esiste un'epoch con le vecchie e le nuove
+ * insieme. Le foglie che firmano con una delle chiavi che stanno entrando
+ * escono comunque, perché MLS non accetta due volte la stessa chiave.
+ *
+ * Ogni chiave d'ingresso dev'essere **di quella persona**: una che ne nomina
+ * un'altra si rifiuta, invece di far entrare qualcuno sotto il nome sbagliato.
+ */
+export async function aggiungiFoglie(
+  ctx: Contesto,
+  sessione: Sessione,
+  membro: Membro,
+  ingressi: readonly Ingresso[],
+  opzioni: { alPostoDelleVecchie?: boolean } = {},
+): Promise<Sessione> {
+  const chi = scriviIdentita(membro);
+  for (const ingresso of ingressi) {
+    const suo = diChiE(ingresso.keyPackage);
+    if (suo === undefined || scriviIdentita(suo) !== chi) {
+      throw new ChiaveDiUnAltro();
+    }
+  }
+
+  const stesseChiavi = ingressi.map((i) => i.keyPackage.leafNode.signaturePublicKey);
+
+  return commitDiFoglie(ctx, sessione, (stato) => ({
+    entrano: ingressi,
+    escono: foglieDi(stato, membro)
+      .filter(
+        (f) =>
+          opzioni.alPostoDelleVecchie === true ||
+          stesseChiavi.some((k) => stessiByte(k, f.chiaveDiFirma)),
+      )
+      .map((f) => f.indice),
+  }));
+}
+
+/**
+ * **Toglie le foglie di un membro** da una conversazione: tutte, o soltanto
+ * quelle dei dispositivi che firmano con `soloChiavi`.
+ *
+ * Tutte è togliere una persona dal gruppo; alcune è togliere un dispositivo
+ * perduto o revocato a una persona che resta. In entrambi i casi la catena
+ * d'archivio guadagna una chiave che chi è uscito non ottiene: **non riceverà
+ * più i messaggi nuovi**. Quelli che ha già letto li ha letti, e le chiavi con
+ * cui li ha letti le ha avute — qui la crittografia non può niente, e nessuna
+ * frase deve dire il contrario.
+ *
+ * Se non c'è niente da togliere non parte nessun commit.
+ */
+export async function togliFoglie(
+  ctx: Contesto,
+  sessione: Sessione,
+  membro: Membro,
+  opzioni: { soloChiavi?: readonly Uint8Array[] } = {},
+): Promise<Sessione> {
+  const { soloChiavi } = opzioni;
+
+  return commitDiFoglie(ctx, sessione, (stato) => ({
+    entrano: [],
+    escono: foglieDi(stato, membro)
+      .filter(
+        (f) => soloChiavi === undefined || soloChiavi.some((k) => stessiByte(k, f.chiaveDiFirma)),
+      )
+      .map((f) => f.indice),
+  }));
+}
+
+/**
+ * Più persone in un commit solo: entrano le une, escono le altre.
+ *
+ * È ciò che serve quando l'albero va rimesso d'accordo con chi è nel gruppo —
+ * due persone uscite mentre nessuno guardava sono un commit, non due.
+ */
+export async function cambiaMembri(
+  ctx: Contesto,
+  sessione: Sessione,
+  cambio: { entrano?: readonly Ingresso[]; escono?: readonly Membro[] },
+): Promise<Sessione> {
+  return commitDiFoglie(ctx, sessione, (stato) => ({
+    entrano: cambio.entrano ?? [],
+    escono: (cambio.escono ?? []).flatMap((m) => foglieDi(stato, m).map((f) => f.indice)),
+  }));
+}
+
+const stessiByte = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, i) => byte === b[i]);
+
+/**
+ * Fa entrare una foglia in una conversazione che esiste già.
+ *
+ * Resta per la chat a due; i gruppi e i dispositivi usano
+ * [`aggiungiFoglie`](#aggiungiFoglie), che controlla anche di chi è la chiave.
  */
 export async function aggiungiMembro(
   ctx: Contesto,
@@ -387,26 +661,10 @@ export async function aggiungiMembro(
   chiEntra: KeyPackage,
   idDiChiEntra: string,
 ): Promise<Sessione> {
-  const esito = await aggiungi(sessione.stato, chiEntra, ctx.istanza);
-  const aggiornata = { ...sessione, stato: esito.stato };
-
-  await salva(ctx, aggiornata);
-  await ctx.istanza.depositaHandshake(sessione.conversazioneId, {
-    busta: b64(esito.commit),
-    epoch: esito.epoch,
-    tipo: "commit",
-  });
-  await ctx.istanza.depositaHandshake(sessione.conversazioneId, {
-    busta: b64(esito.welcome),
-    destinatario: idDiChiEntra,
-    epoch: esito.epoch,
-    tipo: "welcome",
-  });
-  // La serratura è cambiata con l'epoch: il mazzo va riavvolto, o chi entra non
-  // lo apre e la cronologia gli resta chiusa.
-  await dopoIlCambioDiEpoch(ctx, aggiornata);
-
-  return aggiornata;
+  return commitDiFoglie(ctx, sessione, () => ({
+    entrano: [{ destinatario: idDiChiEntra, keyPackage: chiEntra }],
+    escono: [],
+  }));
 }
 
 /**
@@ -461,7 +719,21 @@ export async function invia(
     );
   }
 
-  const voce = archivia(sessione.catena, testo);
+  // Chi scrive lo dice la propria foglia, non un parametro: è la stessa
+  // identità che il gruppo ha autenticato, ed è quella che la casa dichiarerà
+  // accanto alla voce.
+  const io = ioIn(sessione.stato);
+  if (io === undefined || sessione.tolto === true) {
+    throw new Error("Questo dispositivo non è nel gruppo di questa conversazione.");
+  }
+
+  const voce = archiviaLegata(sessione.catena, testo, {
+    conversazioneId: sessione.conversazioneId,
+    createdAt: quando,
+    id: idMessaggio,
+    mittente: scriviIdentita(io),
+  });
+
   await ctx.istanza.depositaArchivio(sessione.conversazioneId, [
     { busta: voce.busta, chiaveN: voce.chiaveN, createdAt: quando, id: idMessaggio },
   ]);
@@ -479,6 +751,13 @@ export interface RigaCronologia {
    */
   stato: "letta" | "non-si-apre" | "non-disponibile";
   testo?: string;
+  /**
+   * Solo per una riga `letta`: `true` se mittente, data e conversazione sono
+   * quelli che chi ha scritto ha sigillato con il testo
+   * ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §1);
+   * `false` per una voce di prima, dove restano la parola dell'istanza.
+   */
+  attestata?: boolean;
 }
 
 export interface PaginaCronologia {
@@ -507,17 +786,25 @@ export async function cronologia(
       return { ...base, stato: "non-disponibile" };
     }
 
-    const testo =
+    const riletta =
       sessione.catena === undefined
         ? undefined
-        : rileggi(sessione.catena, {
-            busta: riga.voce.busta,
-            chiaveN: riga.voce.chiaveN,
-          } as VoceCifrata);
+        : rileggiLegata(
+            sessione.catena,
+            { busta: riga.voce.busta, chiaveN: riga.voce.chiaveN },
+            riga.mittente === null
+              ? undefined
+              : {
+                  conversazioneId: sessione.conversazioneId,
+                  createdAt: riga.createdAt,
+                  id: riga.id,
+                  mittente: riga.mittente,
+                },
+          );
 
-    return testo === undefined
+    return riletta === undefined
       ? { ...base, stato: "non-si-apre" }
-      : { ...base, stato: "letta", testo };
+      : { ...base, attestata: riletta.legata, stato: "letta", testo: riletta.testo };
   });
 
   return {
@@ -563,9 +850,15 @@ export async function rientraIn(
 }
 
 /**
- * Ruota la catena d'archivio. **Si fa quando qualcuno esce dal gruppo**: chi è
- * uscito conserva le chiavi che aveva — lì la crittografia non può niente — ma
- * non ottiene questa, quindi non legge il seguito.
+ * Ruota la catena d'archivio **a mano**, con una chiave casuale.
+ *
+ * Non è la rotazione delle rimozioni: quella la fanno da sole
+ * [`togliFoglie`](#togliFoglie) e [`sincronizza`](#sincronizza), con una chiave
+ * derivata dall'epoch che tutti quelli che restano ottengono uguale
+ * ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §2). Questa
+ * resta per chi vuole una chiave nuova senza togliere nessuno, e ha il limite
+ * di una chiave casuale: gli altri la ricevono soltanto dal mazzo, quindi vale
+ * finché nessuno lo riavvolge con la catena di prima.
  */
 export async function ruotaArchivio(ctx: Contesto, sessione: Sessione): Promise<Sessione> {
   if (sessione.catena === undefined) {

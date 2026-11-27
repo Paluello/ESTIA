@@ -29,6 +29,8 @@ Oggi l'istanza conserva **tutte le buste per sempre** (si cancellano solo elimin
 
 La scelta non è tecnica. È: **che cosa deve poter leggere un telefono nuovo?**
 
+> **Aggiornamento del 2026-11-27.** Con i gruppi, la chiave che la catena guadagna a una rimozione (punto 3) **non è più casuale**: si deriva dall'epoch che la rimozione crea, così che chi resta la ottenga uguale senza doversela passare ([ADR 0052](0052-l-archivio-dei-gruppi.md) §2, Proposed). Lo stesso ADR lega ogni voce a conversazione, id, mittente e data. La prima chiave della catena resta casuale, e tutto il resto di questa decisione vale com'è.
+
 ## Decisione
 
 **Il trasporto e la cronologia diventano due cose separate, con due garanzie diverse, entrambe dichiarate.**

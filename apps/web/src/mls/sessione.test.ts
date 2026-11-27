@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
+import { CASA, depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
 import { epochDi, membri, rientra } from "./gruppo.js";
 import {
   aggiungiMembro,
@@ -174,8 +174,10 @@ describe("scrivere e leggere (ADR 0043)", () => {
     expect(pagina.righe).toEqual([
       {
         createdAt: "2026-08-26T10:00:00.000Z",
+        attestata: true,
         id: "m1",
-        mittente: ID_ANNA,
+        // `username@casa`, come lo dichiara la rotta vera: è ciò a cui la voce è legata.
+        mittente: `anna@${CASA}`,
         stato: "letta",
         testo: "ci vediamo alle 8",
       },

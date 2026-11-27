@@ -2902,6 +2902,16 @@ export interface ConversazioneView {
    * conversazione diretta, dove non c'è niente da amministrare.
    */
   ruoli?: Record<string, RuoloGruppo>;
+  /**
+   * Chi è stato tolto dal gruppo o ne è uscito, come `username@casa`. Assente
+   * in una conversazione diretta.
+   *
+   * Serve al client per una cosa sola: la foglia MLS di chi esce non può
+   * toglierla lui, la toglie il primo dispositivo che se ne accorge — e per
+   * farlo deve **sapere** che è uscito, non dedurlo dal fatto che non lo vede
+   * fra i membri ([ADR 0052](../../../docs/adr/0052-l-archivio-dei-gruppi.md) §3).
+   */
+  rimossi?: string[];
 }
 
 /**
@@ -3013,6 +3023,7 @@ export const conversazioneViewSchema = {
       type: "object",
       additionalProperties: { type: "string", enum: [...RUOLI_GRUPPO] },
     },
+    rimossi: { type: "array", items: { type: "string" } },
   },
 } as const;
 

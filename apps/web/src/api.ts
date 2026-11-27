@@ -63,7 +63,10 @@ import type {
   ArchivioPage,
   ChiaviDiFirmaView,
   ConversazioneView,
+  CreaGruppoRequest,
   CreateConversazioneRequest,
+  MembroGruppoInput,
+  RuoloGruppo,
   DepositaArchivioRequest,
   DepositaHandshakeRequest,
   GroupInfoView,
@@ -734,6 +737,54 @@ export const api = {
       method: "DELETE",
       token,
     }),
+
+  // --- Gruppi (M8) --------------------------------------------------------
+  //
+  // Queste rotte cambiano **chi è nel gruppo per la casa che ordina**. Chi è
+  // nel gruppo cifrato lo cambia il client, con un commit MLS: le due cose si
+  // fanno una dopo l'altra, e [`conversazione.ts`](./mls/conversazione.ts)
+  // rimette d'accordo la seconda con la prima se la scheda si chiude in mezzo.
+
+  creaGruppo: (
+    token: string,
+    body: CreaGruppoRequest,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request("/api/v1/gruppi", { body, method: "POST", token }),
+
+  aggiungiAlGruppo: (
+    token: string,
+    id: string,
+    body: MembroGruppoInput,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(`/api/v1/conversazioni/${encodeURIComponent(id)}/membri`, {
+      body,
+      method: "POST",
+      token,
+    }),
+
+  togliDalGruppo: (
+    token: string,
+    id: string,
+    membroId: string,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(
+      `/api/v1/conversazioni/${encodeURIComponent(id)}/membri/${encodeURIComponent(membroId)}`,
+      { method: "DELETE", token },
+    ),
+
+  cambiaRuoloNelGruppo: (
+    token: string,
+    id: string,
+    membroId: string,
+    ruolo: Exclude<RuoloGruppo, "creatore">,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(
+      `/api/v1/conversazioni/${encodeURIComponent(id)}/membri/${encodeURIComponent(membroId)}/ruolo`,
+      { body: { ruolo }, method: "PUT", token },
+    ),
+
+  esciDalGruppo: (token: string, id: string): Promise<void> =>
+    request(`/api/v1/conversazioni/${encodeURIComponent(id)}/uscita`, { method: "POST", token }),
 
   // --- Segnalazioni (ADR 0047, ADR 0049) ---------------------------------
 

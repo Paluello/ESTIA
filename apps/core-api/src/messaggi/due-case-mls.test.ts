@@ -36,16 +36,22 @@ import { withTempDataDir } from "@estia/testing";
 import type { FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 
+import { rileggiLegata } from "../../../web/src/mls/archivio.js";
 import {
   apriConversazione,
+  faiEntrare,
+  faiUscire,
   leggi,
   manda,
+  type Invitato,
   type Invito,
 } from "../../../web/src/mls/conversazione.js";
 import { ALGORITMO, preparaDispositivo, type Anagrafe } from "../../../web/src/mls/dispositivo.js";
 import { cassettoFinto, depositoFinto } from "../../../web/src/mls/finte.js";
-import { leggiKeyPackage } from "../../../web/src/mls/gruppo.js";
+import { foglie, leggiKeyPackage } from "../../../web/src/mls/gruppo.js";
 import type { Contesto, Istanza, Sessione } from "../../../web/src/mls/sessione.js";
+import { composizioneDi } from "../../../web/src/screens/gruppi/logica.js";
+import { membroDi } from "../../../web/src/screens/sicurezza/membri.js";
 import { buildApp } from "../app.js";
 import { FiloFinto } from "../federation/filo-finto.js";
 
@@ -661,4 +667,213 @@ describe("una chat fra due case, dall'installazione alla risposta", () => {
       expect(borgo.app.messaggiService.casaPartecipa(aia.casa)).toBe(false);
     });
   }, 60_000);
+});
+
+/* ------------------------------ i gruppi (M8) ------------------------------ */
+
+interface VistaGruppo extends VistaConversazione {
+  tipo: "gruppo" | "diretta";
+  membri: { id: string; username: string; displayName: string }[];
+  ruoli?: Record<string, "creatore" | "amministratore" | "membro">;
+  rimossi?: string[];
+}
+
+async function treCase(use: (aia: Casa, borgo: Casa, colle: Casa) => Promise<void>): Promise<void> {
+  await withTempDataDir(async (primo) => {
+    await withTempDataDir(async (secondo) => {
+      await withTempDataDir(async (terzo) => {
+        const filo = new FiloFinto();
+        const aia = await casaNuova(primo, "Aia", "anna", filo);
+        const borgo = await casaNuova(secondo, "Borgo", "bruno", filo);
+        const colle = await casaNuova(terzo, "Colle", "carla", filo);
+
+        try {
+          await collega(aia, borgo);
+          await collega(aia, colle);
+          await collega(borgo, colle);
+          await use(aia, borgo, colle);
+        } finally {
+          await aia.app.close();
+          await borgo.app.close();
+          await colle.app.close();
+        }
+      });
+    });
+  });
+}
+
+/** Il gruppo come lo vede una casa, chiesto come lo chiede la schermata a ogni giro. */
+const vistaDi = async (c: Casa, conv: string): Promise<VistaGruppo> =>
+  (
+    (await chiama(c.app, c.token, "GET", `/api/v1/conversazioni/${conv}`)) as {
+      conversazione: VistaGruppo;
+    }
+  ).conversazione;
+
+/** Una chiave d'ingresso di qualcuno, chiesta alla sua casa attraverso la propria. */
+async function chiaveDi(chi: Casa, altro: { id: string; username: string }) {
+  const { casa } = membroDi(altro, chi.casa);
+  const preso = (await chiama(
+    chi.app,
+    chi.token,
+    "GET",
+    `/api/v1/mls/key-package/${casa}/${altro.username}`,
+  )) as { keyPackage: string };
+  const keyPackage = leggiKeyPackage(daB64(preso.keyPackage));
+  if (keyPackage === undefined) {
+    throw new Error("KeyPackage illeggibile");
+  }
+  return keyPackage;
+}
+
+/** Un giro di lettura, come lo fa la schermata: con le persone accanto all'albero. */
+async function giro(c: Casa, sessione: Sessione, conv: string) {
+  const vista = await vistaDi(c, conv);
+  return leggi(c.ctx, sessione, undefined, composizioneDi(vista as never, c.casa));
+}
+
+const nomiNellAlbero = (sessione: Sessione): string[] =>
+  foglie(sessione.stato)
+    .map((f) => f.membro.username)
+    .sort();
+
+describe("un gruppo fra tre case, con MLS vero (M8)", () => {
+  it("nasce, si scrive, si toglie, si esce e si riammette — e chi è fuori non legge il seguito", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      /* --- nasce --- */
+      const { conversazione: creato } = (await chiama(
+        aia.app,
+        aia.token,
+        "POST",
+        "/api/v1/gruppi",
+        {
+          membri: [
+            { casa: borgo.casa, username: "bruno" },
+            { casa: colle.casa, username: "carla" },
+          ],
+          nome: "Orto",
+        },
+      )) as { conversazione: VistaGruppo };
+      const conv = creato.id;
+      const idAnna = Object.keys(creato.ruoli ?? {}).find(
+        (id) => creato.ruoli?.[id] === "creatore",
+      );
+      const altri = creato.membri.filter((m) => m.id !== idAnna);
+      expect(altri.map((m) => m.username).sort()).toEqual(["bruno", "carla"]);
+
+      // Il browser di Anna crea il gruppo cifrato con tutti e due, in un commit.
+      const invito: Invito = async () => {
+        const invitati: Invitato[] = [];
+        for (const altro of altri) {
+          invitati.push({ idDiChiEntra: altro.id, keyPackage: await chiaveDi(aia, altro) });
+        }
+        return invitati;
+      };
+      const aperturaAnna = await apriConversazione(aia.ctx, { ...creato, creaQui: true }, invito);
+      if (aperturaAnna.kind !== "pronta") {
+        throw new Error("Il gruppo di Anna doveva aprirsi");
+      }
+      let sAnna = aperturaAnna.sessione;
+
+      const entra = async (c: Casa): Promise<Sessione> => {
+        const vista = await vistaDi(c, conv);
+        expect(vista.ordinataQui).toBe(false);
+        const apertura = await apriConversazione(c.ctx, vista, nessunInvito);
+        if (apertura.kind !== "pronta") {
+          throw new Error(`${c.username} doveva entrare dal Welcome`);
+        }
+        return apertura.sessione;
+      };
+      let sBruno = await entra(borgo);
+      const sCarla = await entra(colle);
+
+      await manda(aia.ctx, sAnna, { testo: "si semina sabato" }, "m1", "2026-11-27T10:00:00.000Z");
+      const primaDiBruno = await giro(borgo, sBruno, conv);
+      expect(primaDiBruno.righe.map((r) => [r.mittente, r.testo, r.attestata])).toEqual([
+        [`anna@${aia.casa}`, "si semina sabato", true],
+      ]);
+      // L'albero e le persone dicono la stessa cosa, anche visti da un'altra casa.
+      expect(primaDiBruno.confronto).toEqual({ assenti: [], estranei: [] });
+      // Carla ha la catena: potrebbe leggere. Non lo fa qui per una ragione
+      // dell'istanza, non del gruppo: una casa chiede i segnaposto a un'altra
+      // al più ogni dieci secondi, e questa prova non li aspetta.
+      expect(sCarla.catena).toHaveLength(1);
+      const catenaDiCarla = sCarla.catena ?? [];
+
+      /* --- Anna toglie Carla --- */
+      const carla = altri.find((m) => m.username === "carla")!;
+      await chiama(
+        aia.app,
+        aia.token,
+        "DELETE",
+        `/api/v1/conversazioni/${conv}/membri/${carla.id}`,
+      );
+      sAnna = await faiUscire(aia.ctx, sAnna, membroDi(carla, aia.casa));
+      expect(nomiNellAlbero(sAnna)).toEqual(["anna", "bruno"]);
+      expect(sAnna.catena).toHaveLength(2);
+
+      await manda(aia.ctx, sAnna, { testo: "senza Carla" }, "m2", "2026-11-27T11:00:00.000Z");
+
+      // Bruno, da un'altra casa, applica il commit, deriva la stessa chiave e legge.
+      const diBruno = await giro(borgo, sBruno, conv);
+      sBruno = diBruno.sessione;
+      expect(diBruno.righe.map((r) => r.testo)).toEqual(["si semina sabato", "senza Carla"]);
+      expect(sBruno.catena).toEqual(sAnna.catena);
+      expect(diBruno.confronto).toEqual({ assenti: [], estranei: [] });
+
+      // Criterio 3: la casa di Carla non le serve più niente di questo gruppo.
+      await expect(giro(colle, sCarla, conv)).rejects.toMatchObject({
+        code: "rimosso_dal_gruppo",
+        status: 403,
+      });
+      // E se anche avesse in mano la voce nuova, con le chiavi che ha non la apre.
+      const [, nuova] = (await aia.ctx.istanza.cronologia(conv)).righe;
+      expect(nuova?.voce?.chiaveN).toBe(2);
+      expect(
+        rileggiLegata(catenaDiCarla, nuova!.voce!, {
+          conversazioneId: conv,
+          createdAt: nuova!.createdAt,
+          id: nuova!.id,
+          mittente: nuova!.mittente!,
+        }),
+      ).toBeUndefined();
+
+      /* --- Bruno esce: la sua foglia la toglie chi resta --- */
+      await chiama(borgo.app, borgo.token, "POST", `/api/v1/conversazioni/${conv}/uscita`);
+      expect((await vistaDi(aia, conv)).rimossi?.sort()).toEqual(
+        [`bruno@${borgo.casa}`, `carla@${colle.casa}`].sort(),
+      );
+
+      const dopoLUscita = await giro(aia, sAnna, conv);
+      sAnna = dopoLUscita.sessione;
+      expect(nomiNellAlbero(sAnna)).toEqual(["anna"]);
+      expect(sAnna.catena).toHaveLength(3);
+      expect(dopoLUscita.confronto).toEqual({ assenti: [], estranei: [] });
+
+      /* --- Anna riammette Carla --- */
+      const { conversazione: conCarla } = (await chiama(
+        aia.app,
+        aia.token,
+        "POST",
+        `/api/v1/conversazioni/${conv}/membri`,
+        { casa: colle.casa, username: "carla" },
+      )) as { conversazione: VistaGruppo };
+      const dinuovo = conCarla.membri.find((m) => m.username === "carla")!;
+      sAnna = await faiEntrare(
+        aia.ctx,
+        sAnna,
+        { id: dinuovo.id, membro: membroDi(dinuovo, aia.casa) },
+        [await chiaveDi(aia, dinuovo)],
+      );
+      expect(nomiNellAlbero(sAnna)).toEqual(["anna", "carla"]);
+
+      // Carla rientra dal Welcome nuovo, e da qui legge tutto: anche quello che
+      // è stato scritto mentre era fuori. È ciò che l'ingresso dichiara.
+      colle.ctx.deposito = depositoFinto();
+      const tornata = await entra(colle);
+      const diCarla = await giro(colle, tornata, conv);
+      expect(diCarla.righe.map((r) => r.testo)).toEqual(["si semina sabato", "senza Carla"]);
+      expect(diCarla.confronto).toEqual({ assenti: [], estranei: [] });
+    });
+  }, 120_000);
 });

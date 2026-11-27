@@ -501,6 +501,7 @@ export class MessaggiService {
   #datiDelGruppo(conv: { id: string; tipo: ConversazioneTipo }): {
     nome?: string;
     ruoli?: Record<string, RuoloGruppo>;
+    rimossi?: string[];
   } {
     if (conv.tipo !== "gruppo") {
       return {};
@@ -508,6 +509,10 @@ export class MessaggiService {
 
     return {
       nome: this.repo.nomeDi(conv.id) ?? "",
+      rimossi: this.repo
+        .rimossi(conv.id)
+        .map((r) => this.#indirizzoDi(r.userId))
+        .filter((chi): chi is string => chi !== undefined),
       ruoli: Object.fromEntries(this.repo.membriConRuolo(conv.id).map((m) => [m.userId, m.ruolo])),
     };
   }

@@ -197,3 +197,71 @@ describe("le parole che si leggono", () => {
     }
   });
 });
+
+describe("i gruppi", () => {
+  const tolto = new ApiError("rimosso_dal_gruppo", "Removed.", 403);
+
+  it("chi è stato tolto lo legge, da qualunque parte arrivi la notizia", () => {
+    const dallIstanza = impedimentoDi({
+      crittografiaDisponibile: true,
+      erroreChiave: tolto,
+      nomeDestinatario: "Lucia",
+    });
+    const dalGruppoCifrato = impedimentoDi({
+      crittografiaDisponibile: true,
+      nomeDestinatario: "Lucia",
+      tolto: true,
+    });
+
+    expect(dallIstanza).toEqual({ kind: "tolto-dal-gruppo" });
+    expect(dalGruppoCifrato).toEqual({ kind: "tolto-dal-gruppo" });
+    expect(siPuoScrivere(dallIstanza)).toBe(false);
+
+    const spiegazione = spiegazioneDi(dallIstanza)!;
+    expect(spiegazione.testo).toContain("Non ricevi più i suoi messaggi nuovi");
+    // Una prossima mossa c'è sempre (euristica 3).
+    expect(spiegazione.cosaFare).toContain("chi amministra il gruppo");
+  });
+
+  it("un dispositivo di qualcuno che non è fra le persone spegne la scrittura, e dice di chi è", () => {
+    const impedimento = impedimentoDi({
+      crittografiaDisponibile: true,
+      estranei: ["@dario"],
+      gruppo: true,
+      nomeDestinatario: "Lucia",
+    });
+
+    expect(impedimento).toEqual({ kind: "presenza-estranea", nomi: "@dario" });
+    expect(siPuoScrivere(impedimento)).toBe(false);
+
+    const spiegazione = spiegazioneDi(impedimento)!;
+    expect(spiegazione.testo).toContain("@dario");
+    expect(spiegazione.testo).toContain("può leggere");
+    expect(spiegazione.cosaFare.length).toBeGreaterThan(0);
+  });
+
+  it("nessun estraneo, nessun impedimento", () => {
+    expect(
+      impedimentoDi({
+        crittografiaDisponibile: true,
+        estranei: [],
+        gruppo: true,
+        nomeDestinatario: "Lucia",
+      }).kind,
+    ).toBe("nessuno");
+  });
+
+  it("l'attesa di un gruppo nomina chi l'ha creato, e non dice «dalla sua casa»", () => {
+    const impedimento = impedimentoDi({
+      crittografiaDisponibile: true,
+      gruppo: true,
+      inAttesa: true,
+      nomeDestinatario: "Anna",
+    });
+
+    expect(impedimento).toEqual({ kind: "gruppo-in-attesa", nome: "Anna" });
+    const spiegazione = spiegazioneDi(impedimento)!;
+    expect(spiegazione.testo).toContain("Anna");
+    expect(spiegazione.testo).not.toContain("dalla sua casa");
+  });
+});

@@ -28,7 +28,7 @@ import type { BustaHandshake, Deposito, Istanza, VoceArchivio } from "./sessione
 import type { KeyPackage } from "ts-mls";
 
 /** Una busta sul canale, destinatario compreso: la rotta vera non lo restituisce. */
-export type BustaDepositata = BustaHandshake & { destinatario?: string };
+export type BustaDepositata = BustaHandshake & { destinatario?: string; conversazioneId: string };
 
 /**
  * La casa dei doppi.
@@ -45,6 +45,22 @@ export interface IstanzaFinta {
   /** Ciò che è stato depositato, per guardarlo dai test. */
   depositati: () => readonly BustaDepositata[];
   chiamate: { salvaMazzo: number; depositaArchivio: number };
+  /**
+   * Dice chi è, per MLS, la persona con quell'id. Senza, un id `u-anna` è
+   * `anna` della casa dei doppi: è la convenzione dei test di una casa sola.
+   */
+  abita: (id: string, membro: Membro) => void;
+  /** Il mazzo depositato, per guardarlo dai test. */
+  mazzo: (conversazioneId: string) => { mazzo: string; epoch: number } | undefined;
+  /**
+   * Riscrive ciò che l'istanza dichiara accanto a una voce, come farebbe una
+   * casa che mente: il testo cifrato resta quello.
+   */
+  falsifica: (
+    conversazioneId: string,
+    id: string,
+    campi: { mittente?: string; createdAt?: string },
+  ) => void;
   /** Il punto di rientro depositato, per guardarlo dai test. */
   puntoDiRientro: (conversazioneId: string) => { groupInfo: string; epoch: number } | undefined;
   /**
@@ -64,15 +80,33 @@ export function istanzaFinta(): IstanzaFinta {
   const rientri = new Map<string, { groupInfo: string; epoch: number }>();
   const archivio = new Map<string, (VoceArchivio & { autoreId: string })[]>();
   const chiamate = { depositaArchivio: 0, salvaMazzo: 0 };
+  const indirizzi = new Map<string, string>();
+  const falsi = new Map<string, { mittente?: string; createdAt?: string }>();
   let seq = 0;
+
+  /** `username@casa` di chi ha quell'id: è ciò che la rotta vera mette in `mittente`. */
+  const indirizzoDi = (id: string): string =>
+    indirizzi.get(id) ?? (id.startsWith("u-") ? `${id.slice(2)}@${CASA}` : id);
+  /** L'ultima epoch in fila: un commit entra solo se è la successiva (ADR 0042 §3). */
+  const ultimaEpoch = (conversazioneId: string): number =>
+    handshake
+      .filter((h) => h.conversazioneId === conversazioneId && h.tipo === "commit")
+      .reduce((max, h) => Math.max(max, h.epoch), 0);
 
   return {
     ammetti(username, chiaveDiFirma, casa = CASA) {
       const chi = scriviIdentita({ casa, username });
       chiavi.set(chi, [...(chiavi.get(chi) ?? []), chiaveDiFirma]);
     },
+    abita(id, membro) {
+      indirizzi.set(id, scriviIdentita(membro));
+    },
     chiamate,
     depositati: () => handshake,
+    falsifica(conversazioneId, id, campi) {
+      falsi.set(`${conversazioneId}/${id}`, campi);
+    },
+    mazzo: (conversazioneId) => mazzi.get(conversazioneId),
     puntoDiRientro: (conversazioneId) => rientri.get(conversazioneId),
 
     per: (idDiChiLegge) => ({
@@ -90,9 +124,10 @@ export function istanzaFinta(): IstanzaFinta {
             )
             .map((v) => ({
               casa: CASA,
-              createdAt: v.createdAt,
+              createdAt: falsi.get(`${conversazioneId}/${v.id}`)?.createdAt ?? v.createdAt,
               id: v.id,
-              mittente: v.autoreId,
+              mittente:
+                falsi.get(`${conversazioneId}/${v.id}`)?.mittente ?? indirizzoDi(v.autoreId),
               stato: "disponibile" as const,
               voce: { busta: v.busta, chiaveN: v.chiaveN },
             })),
@@ -128,19 +163,27 @@ export function istanzaFinta(): IstanzaFinta {
         return Promise.resolve();
       },
 
-      depositaHandshake(_conversazioneId, busta) {
+      depositaHandshake(conversazioneId, busta) {
+        // Come la fila vera: un commit entra solo all'epoch successiva
+        // all'ultima, e chi arriva secondo riceve un 409.
+        if (busta.tipo === "commit" && busta.epoch !== ultimaEpoch(conversazioneId) + 1) {
+          return Promise.reject(
+            Object.assign(new Error("epoch_superata"), { code: "epoch_superata", status: 409 }),
+          );
+        }
+
         seq += 1;
-        handshake.push({ ...busta, id: String(seq) });
+        handshake.push({ ...busta, conversazioneId, id: String(seq) });
         return Promise.resolve();
       },
-
-      handshakeDopo(_conversazioneId, dopo) {
+      handshakeDopo(conversazioneId, dopo) {
         // Ordine di ARRIVO, come `seq` lato istanza. E un Welcome lo vede solo
         // il suo destinatario: un commit non ne ha, e va a tutti.
         const da = dopo === undefined ? 0 : Number(dopo);
         return Promise.resolve({
           handshake: handshake.filter(
             (h) =>
+              h.conversazioneId === conversazioneId &&
               Number(h.id) > da &&
               (h.destinatario === undefined || h.destinatario === idDiChiLegge),
           ),
