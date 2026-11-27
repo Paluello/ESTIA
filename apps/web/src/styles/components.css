@@ -2474,6 +2474,39 @@ a.post__author:hover {
 }
 
 /**
+ * Il numero di sicurezza (ADR 0050): sessanta cifre in dodici gruppi da cinque,
+ * quattro per riga. Si legge a voce a un'altra persona, un gruppo alla volta:
+ * per questo i gruppi stanno in una griglia e non vanno a capo dove capita.
+ */
+.numero-sicurezza {
+  margin: 0;
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  justify-content: space-evenly;
+  gap: var(--s-3) var(--s-4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1rem, 4.4vw, 1.375rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le azioni del pannello stanno a destra, la principale per ultima. */
+.sicurezza-azioni {
+  justify-content: flex-end;
+}
+
+.sicurezza-pannello {
+  padding-block: var(--s-4);
+}
+
+.avviso-sicurezza__azioni {
+  margin-block-start: var(--s-3);
+}
+
+/**
  * Le spiegazioni delle chiavi: righe che si leggono, non paragrafi da manuale.
  * `text-wrap: pretty` evita la parola sola sull'ultima riga, che su un testo
  * che qualcuno deve davvero leggere si nota.
@@ -3066,4 +3099,53 @@ a.post__author:hover {
 .chiave-propria {
   align-items: center;
   margin-block: var(--s-2);
+}
+
+/* ============================ L'avviso su un'istanza (ADR 0047) ============================ */
+
+/*
+ * Una nota, non un allarme: niente rosso, niente icone di pericolo. Le due
+ * categorie si distinguono per il segno sul bordo — pieno per un fatto,
+ * tratteggiato per un'opinione — e non condividono mai lo stesso segno.
+ */
+.avviso-istanza {
+  display: grid;
+  gap: var(--s-3);
+  margin-block: var(--s-3);
+}
+
+.avviso-istanza__blocco {
+  display: grid;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.avviso-istanza__categoria {
+  padding-inline-start: var(--s-3);
+  border-inline-start: 3px solid var(--border-strong);
+}
+
+.avviso-istanza__categoria--non_gradita {
+  border-inline-start-style: dashed;
+  border-inline-start-color: var(--text-soft);
+}
+
+.avviso-istanza__titolo {
+  margin: 0 0 var(--s-1);
+  font-size: var(--t-md);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.avviso-istanza__motivi {
+  margin: var(--s-2) 0 0;
+  padding-inline-start: var(--s-4);
+}
+
+.avviso-istanza__replica {
+  padding-block-start: var(--s-3);
+  border-block-start: 1px solid var(--border);
 }

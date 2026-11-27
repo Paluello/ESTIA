@@ -187,7 +187,7 @@ async function main(): Promise<void> {
 
     const key = await resolveKey();
 
-    const written = await restoreBackup({
+    const restored = await restoreBackup({
       archive: first,
       destination: second,
       key,
@@ -201,7 +201,11 @@ async function main(): Promise<void> {
     process.stdout.write(
       `\x1b[32m●\x1b[0m \x1b[1mRipristino completato con successo!\x1b[0m\n` +
         `   \x1b[36m├──\x1b[0m Destinazione: \x1b[1m${second}\x1b[0m\n` +
-        `   \x1b[36m└──\x1b[0m File estratti: \x1b[36m${String(written.length)}\x1b[0m file ripristinati\n\n`,
+        `   \x1b[36m${restored.previous === undefined ? "└──" : "├──"}\x1b[0m File estratti: \x1b[36m${String(restored.files.length)}\x1b[0m file ripristinati\n` +
+        (restored.previous === undefined
+          ? "\n"
+          : `   \x1b[36m└──\x1b[0m Dati di prima: \x1b[1m${restored.previous}\x1b[0m\n` +
+            `       \x1b[2mspostati, non cancellati: eliminali quando hai controllato che l'istanza ripristinata funziona.\x1b[0m\n\n`),
     );
     return;
   }

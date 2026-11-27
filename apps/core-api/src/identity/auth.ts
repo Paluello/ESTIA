@@ -1,6 +1,7 @@
 import type { UserRole } from "@estia/contracts";
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
 
+import { contrassegnoDi } from "../dispositivi/canale.js";
 import { DomainError } from "../errors.js";
 import type { AuthenticatedCaller, IdentityService } from "./service.js";
 
@@ -31,8 +32,16 @@ function extractToken(request: FastifyRequest): string | undefined {
  */
 export function requireAuth(service: IdentityService): preHandlerHookHandler {
   return function authenticate(request: FastifyRequest, _reply: FastifyReply, done): void {
+    // Un Dispositivo che arriva dallo stream iroh porta la sessione che la sua
+    // chiave ha aperto (ADR 0044 §4); tutti gli altri, un token.
+    const canale = contrassegnoDi(request);
     const token = extractToken(request);
-    const caller = token === undefined ? undefined : service.authenticate(token);
+    const caller =
+      canale !== undefined
+        ? service.authenticateSession(canale.sessionId)
+        : token === undefined
+          ? undefined
+          : service.authenticate(token);
 
     if (caller === undefined) {
       done(new DomainError("unauthenticated", 401));

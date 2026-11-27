@@ -362,7 +362,7 @@ estia ripristino-backup
 Or with Docker directly (the key is asked on screen, so it does not end up in your shell history):
 
 ```sh
-docker run --rm -it --user 0:0 -v /folder/of/the/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVE.tar.age /restore
+docker run --rm -it --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --network none -v /folder/of/the/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVE.tar.age /restore
 ```
 
 And worth knowing: **an archive opens without ESTIA**, with standard tools ([ADR 0013](../adr/0013-backup-cifrati-in-formato-age.md)):

@@ -4,6 +4,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 
 import { api } from "../api.js";
 import { ScreenHead } from "../app/ScreenHead.js";
+import { AvvisoIstanza } from "../components/AvvisoIstanza.js";
 import { PersonLink } from "../components/PersonLink.js";
 import { PostCard } from "../components/PostCard.js";
 import { spiega } from "../errori.js";
@@ -354,6 +355,14 @@ export function Profilo(): React.ReactElement {
               </div>
             )}
           </div>
+        )}
+
+        {/* Che cosa dicono le istanze collegate di quella casa (ADR 0047). */}
+        {persona?.remoto !== undefined && (
+          <AvvisoIstanza
+            instanceKey={persona.remoto.instanceKey}
+            nomeIstanza={persona.remoto.istanza}
+          />
         )}
 
         {nota !== undefined && (

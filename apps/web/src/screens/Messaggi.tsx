@@ -25,6 +25,8 @@ import {
 } from "../ui/index.js";
 import { PersonLink } from "../components/PersonLink.js";
 import { impedimentoDi, siPuoScrivere, spiegazioneDi } from "./chat-impedimento.js";
+import { apriNumeroDiSicurezza } from "./sicurezza/apri.js";
+import { SicurezzaConversazione } from "./sicurezza/SicurezzaConversazione.js";
 import { ora, quandoPreciso } from "../tempo.js";
 
 interface DecryptedMessage {
@@ -739,6 +741,13 @@ export function Messaggi(): React.ReactElement {
                         ]
                       : []),
                     {
+                      icon: "shield" as const,
+                      id: "sicurezza",
+                      note: t("sicurezza.voce.nota"),
+                      onClick: apriNumeroDiSicurezza,
+                      title: t("sicurezza.titolo"),
+                    },
+                    {
                       icon: "key" as const,
                       id: "chiavi",
                       note: t("messaggi.chiavi.nota"),
@@ -769,6 +778,8 @@ export function Messaggi(): React.ReactElement {
                 />
               </div>
             </header>
+
+            {selezionata && <SicurezzaConversazione conversazione={selezionata} />}
 
             {messaggi.some((m) => m.nonDisponibile) && (
               <div className="chat-detail-alert">

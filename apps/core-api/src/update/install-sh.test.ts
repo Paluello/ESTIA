@@ -423,3 +423,105 @@ exit 0
     },
   );
 });
+
+/**
+ * Revisione interna 2026-11-27: ricreare il container (con `estia aggiorna` o
+ * rilanciando l'installatore) teneva solo i dati, la prima porta e la lingua.
+ * Una porta legata a 127.0.0.1 tornava aperta su tutte le interfacce, le
+ * variabili dei backup sparivano e la cartella dei backup su un altro disco si
+ * staccava. Il docker finto descrive un container così configurato.
+ */
+describe("ricreare il container conserva la sua configurazione", () => {
+  const DOCKER_CONFIGURATO = `#!/bin/sh
+printf '%s\\n' "$*" >>"$FINTO_LOG"
+case "$1" in
+container | inspect)
+  case "$*" in
+  *compose.project*) ;;
+  *Config.Env*) printf '%s\\n' PATH=/usr/bin ESTIA_DATA_DIR=/data ESTIA_HOST=0.0.0.0 ESTIA_LINGUA=it ESTIA_BACKUP_DIR=/data/backup 'ESTIA_BACKUP_PUBLIC_KEY=age1 xyz' ESTIA_AT_REST_ENCRYPTION=1 ;;
+  *PortBindings*) printf '%s\\n' '127.0.0.1|8080|3000/tcp' ;;
+  *'ne .Destination'*) printf '%s\\n' '/mnt/disco2/estia-backup|/data/backup|true' '/etc/estia-extra|/extra|false' ;;
+  *Mounts*) printf '%s\\n' estia-data ;;
+  *NetworkSettings*) printf '%s\\n' 8080 ;;
+  *NanoCpus*) printf '%s\\n' 1500000000 ;;
+  *Memory*) printf '%s\\n' 536870912 ;;
+  esac
+  ;;
+esac
+exit 0
+`;
+
+  function prepara(): { bin: string; log: string; root: string } {
+    const root = mkdtempSync(path.join(tmpdir(), "estia-conserva-"));
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, "docker"), DOCKER_CONFIGURATO);
+    chmodSync(path.join(bin, "docker"), 0o755);
+    const log = path.join(root, "docker.log");
+    writeFileSync(log, "");
+    return { bin, log, root };
+  }
+
+  function rigaRun(log: string): string {
+    return (
+      readFileSync(log, "utf8")
+        .split("\n")
+        .find((riga) => riga.startsWith("run ")) ?? ""
+    );
+  }
+
+  function controllaConservato(run: string): void {
+    expect(run).toContain("--publish 127.0.0.1:8080:3000/tcp");
+    expect(run).not.toMatch(/--publish (8080|3000):3000/);
+    expect(run).toContain("--env ESTIA_BACKUP_DIR=/data/backup");
+    expect(run).toContain("--env ESTIA_BACKUP_PUBLIC_KEY=age1 xyz");
+    expect(run).toContain("--env ESTIA_AT_REST_ENCRYPTION=1");
+    expect(run).toContain("--env ESTIA_LINGUA=it");
+    expect(run.match(/ESTIA_LINGUA=/g)).toHaveLength(1);
+    expect(run.match(/ESTIA_DATA_DIR=/g)).toHaveLength(1);
+    expect(run).toContain("--volume estia-data:/data");
+    expect(run).toContain("--volume /mnt/disco2/estia-backup:/data/backup");
+    expect(run).toContain("--volume /etc/estia-extra:/extra:ro");
+    expect(run).toContain("--memory 536870912");
+    expect(run).toContain("--cpus 1.5");
+    // La postura di sicurezza resta quella del Compose di riferimento.
+    expect(run).toContain("--cap-drop ALL");
+    expect(run).toContain("--read-only");
+    expect(run).toContain("--user 10001:10001");
+  }
+
+  it("estia aggiorna", () => {
+    const { bin, log } = prepara();
+    sh([CLI, "aggiorna"], { PATH: `${bin}:${process.env.PATH ?? ""}`, FINTO_LOG: log });
+    controllaConservato(rigaRun(log));
+  });
+
+  it("install.sh rilanciato sulla stessa macchina", () => {
+    const { bin, log, root } = prepara();
+    sh([INSTALL_SH], {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      ESTIA_TTY: path.join(root, "nessun-tty"),
+      ESTIA_CLI_SRC: CLI,
+      ESTIA_CLI_BINDIR: path.join(root, "cli"),
+      ESTIA_LINGUA: "",
+      FINTO_LOG: log,
+    });
+    controllaConservato(rigaRun(log));
+  });
+
+  it("una porta chiesta con ESTIA_PORT vince su quella di prima", () => {
+    const { bin, log, root } = prepara();
+    sh([INSTALL_SH], {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      ESTIA_TTY: path.join(root, "nessun-tty"),
+      ESTIA_CLI_SRC: CLI,
+      ESTIA_CLI_BINDIR: path.join(root, "cli"),
+      ESTIA_LINGUA: "",
+      ESTIA_PORT: "4000",
+      FINTO_LOG: log,
+    });
+    const run = rigaRun(log);
+    expect(run).toContain("--publish 4000:3000");
+    expect(run).not.toContain("8080");
+  });
+});

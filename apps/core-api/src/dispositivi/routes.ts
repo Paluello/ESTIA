@@ -3,6 +3,8 @@ import {
   chiaviDiFirmaViewSchema,
   keyPackageMlsViewSchema,
   dispositiviResponseSchema,
+  ingressoEmessoViewSchema,
+  type IngressoEmessoView,
   keyBackupViewSchema,
   publishKeyPackagesRequestSchema,
   registerDeviceKeyRequestSchema,
@@ -25,6 +27,7 @@ import { DomainError } from "../errors.js";
 import { requireAuth } from "../identity/auth.js";
 import type { IdentityService } from "../identity/service.js";
 import type { FederationService } from "../federation/service.js";
+import type { AccessoDispositivi } from "./accesso.js";
 import type { DispositiviService } from "./service.js";
 
 import { ALGORITMO_MLS } from "./service.js";
@@ -41,9 +44,46 @@ export function registerDispositiviRoutes(
     /** La chiave di questa casa (ADR 0042 §0), nota anche a rete spenta. */
     casa: string;
     federation?: FederationService | undefined;
+    /** L'accesso del Dispositivo (ADR 0044 §5). Assente, la rotta del QR non esiste. */
+    accesso?: AccessoDispositivi | undefined;
+    /** La chiave di rete della Casa adesso, e il ticket dove la scoperta non c'è. */
+    rete?: () => { chiave: string; ticket?: string } | undefined;
   },
 ): void {
   const asMember = requireAuth(services.identity);
+
+  /**
+   * Un codice d'ingresso per un'app nuova, e il QR che lo porta (ADR 0044 §5).
+   *
+   * Lo chiede un membro già dentro — dal browser in casa o da un'app già
+   * ammessa — e vale per lui: l'app che lo presenta diventa un suo
+   * dispositivo. Entrare nella Casa non è entrare nelle conversazioni: quello
+   * resta il sì di ADR 0040.
+   */
+  const accesso = services.accesso;
+  const rete = services.rete;
+
+  if (accesso !== undefined && rete !== undefined) {
+    app.post<{ Reply: IngressoEmessoView }>(
+      "/api/v1/dispositivi/ingressi",
+      {
+        preHandler: asMember,
+        // Un codice è 128 bit di caso e scade in dieci minuti: il limite serve
+        // a non riempire la tabella, non a difendere il codice.
+        config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+        schema: { response: { 200: ingressoEmessoViewSchema } },
+      },
+      async (request) => {
+        const casa = rete();
+
+        if (casa === undefined) {
+          throw new DomainError("rete_spenta", 409);
+        }
+
+        return accesso.emetti(request.caller!.user.id, casa);
+      },
+    );
+  }
 
   /** Registra la chiave pubblica del dispositivo per la sessione attiva. */
   app.post<{

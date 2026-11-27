@@ -89,7 +89,11 @@ export function registerMediaRoutes(
 
         return (
           reply
-            .header("cache-control", "private, max-age=31536000, immutable")
+            // Not in the browser's disk cache: it outlives the session, and
+            // whoever uses that browser next could read a known path with no
+            // session at all (ADR 0012). The client keeps its own blob cache
+            // for as long as the session lasts (revisione interna, 2026-11-27).
+            .header("cache-control", "private, no-store")
             .header("content-length", media.byteSize)
             // The bytes are shown, never interpreted: no sniffing, no scripts,
             // nothing that could turn a stored file into an executed one.

@@ -1,15 +1,9 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import {
-  clearDirectory,
-  collectFiles,
-  packFiles,
-  unpackInto,
-  type ArchiveEntry,
-} from "./archive.js";
+import { collectFiles, packFiles, unpackInto, type ArchiveEntry } from "./archive.js";
 import { decryptArchive, encryptArchive, type BackupRecipient } from "./crypto.js";
 
 /**
@@ -144,20 +138,52 @@ export interface RestoreOptions {
   destination: string;
   key: { kind: "privateKey" | "passphrase"; value: string };
   force?: boolean;
+  now?: () => Date;
 }
+
+export interface RestoreResult {
+  /** The files now in place, as paths inside the destination. */
+  files: string[];
+  /**
+   * Where the data that was there before went, when there was any. Moved, not
+   * deleted: whoever restores decides when it can go.
+   */
+  previous?: string;
+}
+
+/**
+ * What an archive brings back, and so the only names a restore may replace.
+ * The WAL and its index go with the database: left beside a restored
+ * `estia.db`, SQLite would replay the old instance's last writes onto it.
+ * Everything else in the destination (the backups folder above all) stays.
+ */
+const RESTORED = [
+  "estia.db",
+  "estia.db-wal",
+  "estia.db-shm",
+  "instance-identity.pem",
+  "media",
+] as const;
 
 /**
  * Restores an archive into a directory.
  *
- * By default, it refuses to write into a directory that already holds an instance: a
- * restore that silently merged into live data would be the worst possible way
- * to discover a mistake. With `force: true`, it verifies and decrypts the archive
- * first, and only upon successful decryption empties the destination and restores into it.
+ * By default, it refuses to write into a directory that already holds an
+ * instance: a restore that silently merged into live data would be the worst
+ * possible way to discover a mistake. With `force: true` it replaces it, but
+ * only after the archive has been decrypted, unpacked to the side and found to
+ * hold a database that opens. Until then the live data is not touched; then it
+ * is moved aside, never deleted, and `backup/` is never part of it (internal
+ * review, 2026-11-27: an empty but valid archive used to wipe the instance,
+ * backups included, and report success).
  */
-export async function restoreBackup(options: RestoreOptions): Promise<string[]> {
-  if (!options.force && existsSync(path.join(options.destination, "estia.db"))) {
+export async function restoreBackup(options: RestoreOptions): Promise<RestoreResult> {
+  const now = options.now ?? ((): Date => new Date());
+  const destination = path.resolve(options.destination);
+
+  if (!options.force && existsSync(path.join(destination, "estia.db"))) {
     throw new Error(
-      `In ${options.destination} c'è già un'istanza: scegli una directory vuota e sposta i file solo quando il ripristino è riuscito, oppure usa --sovrascrivi.`,
+      `In ${destination} c'è già un'istanza: scegli una directory vuota e sposta i file solo quando il ripristino è riuscito, oppure usa --sovrascrivi.`,
     );
   }
 
@@ -166,15 +192,96 @@ export async function restoreBackup(options: RestoreOptions): Promise<string[]> 
     options.key,
   );
 
-  await mkdir(options.destination, { mode: 0o700, recursive: true });
+  await mkdir(destination, { mode: 0o700, recursive: true });
 
-  if (options.force && existsSync(path.join(options.destination, "estia.db"))) {
-    await clearDirectory(options.destination);
+  // On the same filesystem as the destination, so that putting it in place is
+  // a rename. Made fresh, so nothing in it can be a link planted beforehand.
+  const staging = await mkdtemp(path.join(destination, ".ripristino-"));
+
+  try {
+    const { Readable } = await import("node:stream");
+
+    await unpackInto(Readable.from(Buffer.from(decrypted)), staging);
+    checkRestoredDatabase(path.join(staging, "estia.db"));
+
+    const present = RESTORED.filter((name) => existsSync(path.join(destination, name)));
+    let previous: string | undefined;
+
+    if (present.length > 0) {
+      previous = path.join(
+        destination,
+        `.prima-del-ripristino-${now().toISOString().replace(/[:.]/g, "-")}`,
+      );
+      await mkdir(previous, { mode: 0o700 });
+
+      const moved: string[] = [];
+
+      try {
+        for (const name of present) {
+          await rename(path.join(destination, name), path.join(previous, name));
+          moved.push(name);
+        }
+      } catch (error) {
+        await putBack(previous, destination, moved);
+        throw error;
+      }
+    }
+
+    const files: string[] = [];
+
+    for (const name of RESTORED) {
+      if (existsSync(path.join(staging, name))) {
+        await rename(path.join(staging, name), path.join(destination, name));
+      }
+    }
+
+    for (const file of await collectFiles(destination)) {
+      if (RESTORED.some((name) => file.name === name || file.name.startsWith(`${name}/`))) {
+        files.push(file.source);
+      }
+    }
+
+    return previous === undefined ? { files } : { files, previous };
+  } finally {
+    await rm(staging, { force: true, recursive: true });
+  }
+}
+
+/** Refuses an archive whose database is missing or does not open as one. */
+function checkRestoredDatabase(file: string): void {
+  if (!existsSync(file)) {
+    throw new Error(
+      "L'archivio non contiene estia.db: non è il backup di un'istanza. I dati attuali non sono stati toccati.",
+    );
   }
 
-  const { Readable } = await import("node:stream");
+  let database: DatabaseSync | undefined;
 
-  return unpackInto(Readable.from(Buffer.from(decrypted)), options.destination);
+  try {
+    database = new DatabaseSync(file, { readOnly: true });
+    const check = database.prepare("PRAGMA quick_check").get() as Record<string, unknown>;
+
+    if (Object.values(check)[0] !== "ok") {
+      throw new Error("quick_check");
+    }
+  } catch {
+    throw new Error(
+      "Il database nell'archivio è danneggiato. I dati attuali non sono stati toccati.",
+    );
+  } finally {
+    database?.close();
+  }
+}
+
+/** Best effort: the error that brought us here is the one worth reporting. */
+async function putBack(previous: string, destination: string, moved: string[]): Promise<void> {
+  for (const name of moved) {
+    try {
+      await rename(path.join(previous, name), path.join(destination, name));
+    } catch {
+      // Still in `previous`, which is not removed.
+    }
+  }
 }
 
 function snapshotDatabase(source: string, target: string): void {

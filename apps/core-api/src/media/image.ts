@@ -65,6 +65,25 @@ function readPngDimensions(bytes: Uint8Array): Dimensions | undefined {
 /** Markers that carry no length field, so the walk must not try to skip past one. */
 const JPEG_STANDALONE = new Set([0x01, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9]);
 
+/**
+ * Markers that carry a length field and may come before the frame header:
+ * frames and tables (`c0`–`cf`), quantisation and restart tables, APPn and
+ * comments. Anything else is refused instead of skipped by its "length".
+ *
+ * The walk used to skip every unknown marker, and that was an image bomb: the
+ * decoder reads `ff 00` as padding and keeps scanning inside what the walk
+ * took for a payload, so a real 12000×12000 frame hidden there passed the pixel
+ * limit behind a fake 1×1 one placed after it (revisione interna, 2026-11-27).
+ */
+function hasJpegLength(marker: number): boolean {
+  return (
+    (marker >= 0xc0 && marker <= 0xcf) ||
+    (marker >= 0xda && marker <= 0xdf) ||
+    (marker >= 0xe0 && marker <= 0xef) ||
+    marker === 0xfe
+  );
+}
+
 /** Frame headers. `c4`, `c8` and `cc` share the range but are tables, not frames. */
 function isJpegFrameHeader(marker: number): boolean {
   return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
@@ -90,6 +109,10 @@ function readJpegDimensions(bytes: Uint8Array): Dimensions | undefined {
     if (JPEG_STANDALONE.has(marker)) {
       offset += 2;
       continue;
+    }
+
+    if (!hasJpegLength(marker)) {
+      return undefined;
     }
 
     const length = data.getUint16(offset + 2);
