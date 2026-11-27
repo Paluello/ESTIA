@@ -2474,6 +2474,39 @@ a.post__author:hover {
 }
 
 /**
+ * Il numero di sicurezza (ADR 0050): sessanta cifre in dodici gruppi da cinque,
+ * quattro per riga. Si legge a voce a un'altra persona, un gruppo alla volta:
+ * per questo i gruppi stanno in una griglia e non vanno a capo dove capita.
+ */
+.numero-sicurezza {
+  margin: 0;
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  justify-content: space-evenly;
+  gap: var(--s-3) var(--s-4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1rem, 4.4vw, 1.375rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le azioni del pannello stanno a destra, la principale per ultima. */
+.sicurezza-azioni {
+  justify-content: flex-end;
+}
+
+.sicurezza-pannello {
+  padding-block: var(--s-4);
+}
+
+.avviso-sicurezza__azioni {
+  margin-block-start: var(--s-3);
+}
+
+/**
  * Le spiegazioni delle chiavi: righe che si leggono, non paragrafi da manuale.
  * `text-wrap: pretty` evita la parola sola sull'ultima riga, che su un testo
  * che qualcuno deve davvero leggere si nota.

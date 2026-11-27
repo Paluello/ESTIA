@@ -169,6 +169,18 @@ export async function esisteIdentita(cassetto: Cassetto): Promise<boolean> {
   return (await leggiMateriale(cassetto)) !== undefined;
 }
 
+/**
+ * La chiave pubblica di firma di questo dispositivo, se ne ha una.
+ *
+ * Serve al numero di sicurezza ([ADR 0050](../../../../docs/adr/0050-il-numero-di-sicurezza.md)):
+ * prima di mostrare un numero, il client guarda che **questa** chiave sia fra
+ * quelle che il registro dichiara per chi lo sta guardando. Se non c'è, il
+ * numero che gli altri calcolano non parla di questo dispositivo.
+ */
+export async function chiavePubblicaDiFirma(cassetto: Cassetto): Promise<Uint8Array | undefined> {
+  return (await leggiMateriale(cassetto))?.chiaviDiFirma.publicKey;
+}
+
 async function nuovoMateriale(membro: Membro): Promise<Materiale> {
   // La prima identità serve solo a farsi dare una chiave di firma: il suo
   // `KeyPackage` si butta, perché quella chiave di firma dura e i KeyPackage no.
