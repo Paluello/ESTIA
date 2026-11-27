@@ -136,7 +136,7 @@ export function Setup(): React.ReactElement {
 
           <ComandoCopiabile
             comando={
-              "docker run --rm -it --user 0:0 -v /volume1/docker/estia-backup:/backup:ro -v /volume1/docker/estia/data:/restore --entrypoint node ghcr.io/chrono-web/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVIO.tar.age /restore"
+              "docker run --rm -it --user 0:0 -v /volume1/docker/estia-backup:/backup:ro -v /volume1/docker/estia/data:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVIO.tar.age /restore"
             }
           />
 

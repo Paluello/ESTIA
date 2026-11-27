@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- ESTIA, modello per Unraid (Docker → Add Container → Template) e per le
+     Community Applications. Stessa postura del Compose di riferimento:
+     utente non root, filesystem in sola lettura, nessuna capability. -->
+<Container version="2">
+  <Name>estia</Name>
+  <Repository>ghcr.io/paluello/estia:latest</Repository>
+  <Registry>https://github.com/Paluello/ESTIA/pkgs/container/estia</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Paluello/ESTIA/issues</Support>
+  <Project>https://github.com/Paluello/ESTIA</Project>
+  <Overview>ESTIA is a real social network whose content stays on this machine: a local feed, profiles that reach other homes by public key, and end-to-end encrypted chats. No domain, no open ports, no developer servers. After the first start, read the setup code at the top of the container log and open the web UI to create the administrator.</Overview>
+  <Category>Social: Network:Other</Category>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <ExtraParams>--user 10001:10001 --init --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 256 --restart unless-stopped</ExtraParams>
+  <Config Name="Web port" Target="3000" Default="3000" Mode="tcp" Description="Web panel and local access" Type="Port" Display="always" Required="true">3000</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/estia" Mode="rw" Description="Database, photos and the home's private key. Do not delete. The folder must belong to user 10001: chown -R 10001:10001 /mnt/user/appdata/estia" Type="Path" Display="always" Required="true">/mnt/user/appdata/estia</Config>
+  <Config Name="Language" Target="ESTIA_LINGUA" Default="en|it" Description="Language of the home: en or it. Each member can choose their own." Type="Variable" Display="always" Required="true">en</Config>
+  <Config Name="Data directory" Target="ESTIA_DATA_DIR" Default="/data" Type="Variable" Display="advanced-hide" Required="true">/data</Config>
+  <Config Name="Host" Target="ESTIA_HOST" Default="0.0.0.0" Type="Variable" Display="advanced-hide" Required="true">0.0.0.0</Config>
+</Container>

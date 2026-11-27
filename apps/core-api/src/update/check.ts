@@ -17,7 +17,7 @@ import { detto, frase } from "../frasi.js";
  * dire come si aggiorna esattamente all'istanza più vecchia di tutte.
  */
 
-export const DEFAULT_UPDATE_CHANNEL = "ghcr.io/chrono-web/estia:latest";
+export const DEFAULT_UPDATE_CHANNEL = "ghcr.io/paluello/estia:latest";
 
 const REVISION_LABEL = "org.opencontainers.image.revision";
 

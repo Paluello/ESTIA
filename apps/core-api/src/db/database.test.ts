@@ -49,6 +49,7 @@ describe("instance database", () => {
           { name: "segnaposti", version: 30 },
           { name: "ritirata-estia-e2e-v1", version: 31 },
           { name: "lingua-della-persona", version: 32 },
+          { name: "segnalazioni", version: 33 },
         ]);
 
         // Re-running must be a no-op rather than an error.

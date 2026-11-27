@@ -65,7 +65,7 @@ describe("parseChannel", () => {
   it("splits registry, repository and tag", () => {
     expect(parseChannel(DEFAULT_UPDATE_CHANNEL)).toEqual({
       registry: "ghcr.io",
-      repository: "chrono-web/estia",
+      repository: "paluello/estia",
       tag: "latest",
     });
   });

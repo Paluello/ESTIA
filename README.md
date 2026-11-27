@@ -1,5 +1,7 @@
 # ESTIA
 
+_[Read in English](README.en.md)_
+
 Un social network vero, in cui **i tuoi contenuti stanno fisicamente in un posto che è tuo** — casa tua, o lo spazio comune della tua comunità — cifrato, senza algoritmo e senza pubblicità.
 
 L'unità di base è un'istanza ospitata su un NAS in un luogo reale: un appartamento, un condominio, una via, uno spazio sociale. Sopra questa base convivono tre superfici sociali con un'unica identità: il **feed locale** di chi condivide l'istanza, il **profilo** che raggiunge le altre istanze ESTIA — e il Fediverso, per chi sceglie di adottare un dominio — e i **gruppi** di messaggistica, che attraversano le istanze.
@@ -23,10 +25,10 @@ L'accesso da fuori dalla rete locale è una milestone additiva (M4): il prodotto
 
 ## Installare un'istanza
 
-Su una macchina che resta accesa — un NAS, un mini-PC, un vecchio portatile con Linux — e che abbia Docker:
+Su una macchina che resta accesa — un NAS, un mini-PC, un vecchio portatile con Linux. Su Linux, se Docker manca, lo script lo installa da sé dopo averti chiesto il permesso; su un NAS si installa prima dal centro applicazioni:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
 ```
 
 Non chiede scelte: prepara il posto dove staranno i dati, accende l'istanza, mette il comando `estia` sull'host e stampa l'indirizzo a cui aprirla dal telefono. Su un Linux da desktop può chiedere **una volta** la password di amministratore, solo per copiare quel comando in `/usr/local/bin` — non lanciare lo script con `sudo`. Lo stesso comando aggiorna, senza toccare quello che c'è dentro. Il resto — Docker, backup, cifratura, che cosa fare quando non va — è in [`docs/INSTALLAZIONE.md`](docs/INSTALLAZIONE.md).
