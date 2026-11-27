@@ -1,0 +1,14 @@
+# Lo stesso relay con i limiti di ADR 0045 §4, verifica 2. I nomi delle chiavi
+# sono quelli di `iroh-relay` 1.5.0 (`src/main.rs`, struct `Limits`).
+http_bind_addr = "0.0.0.0:3340"
+enable_metrics = false
+
+[limits]
+# Connessioni nuove accettate al secondo, e quante se ne accettano di fila.
+accept_conn_limit = 1.0
+accept_conn_burst = 2
+
+# Banda in ingresso per ogni client: 64 KiB/s, raffica di 128 KiB.
+[limits.client.rx]
+bytes_per_second = 65536
+max_burst_bytes = 131072

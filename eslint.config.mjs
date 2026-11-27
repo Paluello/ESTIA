@@ -21,6 +21,13 @@ export default tseslint.config(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
+    // Gli script del laboratorio dei relay girano in Node, fuori dal workspace.
+    files: ["infra/relay-lab/**/*.mjs"],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
     files: ["**/*.ts", "**/*.tsx"],
     languageOptions: {
       globals: globals.node,
