@@ -47,8 +47,9 @@ strip = true
 lto = true
 codegen-units = 1
 
-# iroh 1.4.1 non compila per iOS con libc >= 0.2.190 (richiesto da mio):
-# netdev usa `libc::in6_ifreq`, che libc dichiara solo per macOS.
-# La copia in ../patches/netdev la dichiara da sé. Vedi ../patches/README.md.
+# iroh 1.4.1 non compila per iOS con libc >= 0.2.190 (richiesto da mio),
+# che dichiara solo per macOS `in6_ifreq` (netdev) e le costanti di route.h (netwatch).
+# Le copie in ../patches le dichiarano da sé. Vedi ../patches/README.md.
 [patch.crates-io]
 netdev = { path = "../patches/netdev" }
+netwatch = { path = "../patches/netwatch" }

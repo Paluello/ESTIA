@@ -26,3 +26,20 @@ all'originale pubblicato su crates.io.
 copia**: quando `libc` dichiara `in6_ifreq` anche per iOS, o quando netdev
 smette di usarla. Si toglie la sezione `[patch.crates-io]`, si cancella la
 cartella e si rifà `cargo update -p netdev`.
+
+## `netwatch/` — netwatch 0.19.3 (MIT o Apache-2.0), per iOS
+
+**Il problema.** Lo stesso di netdev, un gradino sopra: `netwatch` legge la
+tabella di routing con le costanti di `<net/route.h>` (`RTM_ADD`, `RTM_GET2`,
+`RTAX_DST`, `RTF_IFSCOPE`…), e `libc` ≥ 0.2.190 le dichiara per macOS e non
+per iOS. Ventidue errori `cannot find value … in crate libc`, visti nella CI e
+riprodotti con `cargo check -p netwatch --target aarch64-apple-ios`.
+
+**La correzione.** `src/libc_ios.rs` riesporta `libc` e aggiunge quelle
+costanti, copiate da libc 0.2.191 (sono di XNU, uguali su macOS e iOS). I tre
+file che le usano (`interfaces/bsd.rs`, `interfaces/bsd/macos.rs`,
+`netmon/bsd.rs`) su iOS prendono `libc` da lì. Su ogni altra piattaforma il
+crate è identico all'originale.
+
+**Quando togliere la copia**: insieme a quella di netdev, quando `libc` torna a
+dichiarare le costanti di routing per iOS.
