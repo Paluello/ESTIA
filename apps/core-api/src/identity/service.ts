@@ -342,6 +342,19 @@ export class IdentityService {
     return { sessionId: session.id, user: this.toAuthenticatedUser(user) };
   }
 
+  /** Se la sessione vale adesso, senza toccarla. */
+  public isSessionLive(sessionId: string): boolean {
+    const session = this.sessions.findById(sessionId);
+
+    if (session === undefined || !this.isSessionUsable(session)) {
+      return false;
+    }
+
+    const user = this.users.findById(session.userId);
+
+    return user !== undefined && user.deletedAt === null;
+  }
+
   /** Chi sa dire quale chiave di rete sta dietro una sessione (l'accesso dei Dispositivi). */
   public useChiaviDiRete(lookup: (sessionId: string) => string | undefined): void {
     this.chiaveDiRete = lookup;

@@ -584,6 +584,7 @@ export async function buildApp(
   const accessoDispositivi = new AccessoDispositivi({
     identity: identityService,
     repository: new SqliteAccessoRepository(database),
+    transaction: createTransactor(database),
     ...clockOption,
   });
 
@@ -592,7 +593,14 @@ export async function buildApp(
   endpoint.register(networkProbe);
   endpoint.register(federation);
   endpoint.register(new ServizioIngresso(accessoDispositivi));
-  endpoint.register(new ServizioDispositivo(accessoDispositivi, app as unknown as Iniettore));
+  endpoint.register(
+    new ServizioDispositivo(
+      accessoDispositivi,
+      app as unknown as Iniettore,
+      // Il corpo più grande che una rotta accetta: quello dei media.
+      Math.max(config.media.maxBytes, 1024 * 1024),
+    ),
+  );
   const startingProbe = effectiveProbe({
     environment: config.network,
     stored: readStoredProbe(settingsRepository),

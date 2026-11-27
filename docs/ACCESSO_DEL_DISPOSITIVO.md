@@ -60,7 +60,17 @@ Regole che la Casa applica:
 
 ### Come entra nelle rotte
 
-La Casa fa `app.inject()` sulle rotte di oggi: cambia il trasporto, non il contratto ([ADR 0004](adr/0004-client-web-e-trasporto-sostituibile.md), seconda metà). Le rotte autenticano con un token di sessione, che un Dispositivo non ha; la richiesta iniettata porta quindi un contrassegno, `x-estia-canale-dispositivo`, con la sessione e la chiave **e un segreto che nasce all'avvio del processo e non esce mai dalla sua memoria**. `requireAuth` lo accetta solo con quel segreto: la stessa intestazione mandata via HTTP dalla rete non apre niente. È tolta dai log come `authorization`, e le richieste che la portano non si contano fra le provenienze di rete del pannello.
+La Casa fa `app.inject()` sulle rotte di oggi: cambia il trasporto, non il contratto ([ADR 0004](adr/0004-client-web-e-trasporto-sostituibile.md), seconda metà). Le rotte autenticano con un token di sessione, che un Dispositivo non ha; la richiesta iniettata porta quindi un contrassegno, `x-estia-canale-dispositivo`, che è un **nonce monouso** di 256 bit: vale soltanto mentre quella richiesta iniettata è in corso, punta a sessione e chiave in una tabella in memoria, e si cancella appena l'inject finisce. L'intestazione non contiene la sessione, e un nonce che trapelasse non varrebbe niente un istante dopo; la stessa intestazione mandata via HTTP dalla rete non apre niente. È tolta dai log come `authorization`, e le richieste che la portano non si contano fra le provenienze di rete del pannello.
+
+Il percorso si controlla **dopo** averlo normalizzato come lo normalizzerà `new URL()` dentro `app.inject()`, e si inietta solo se normalizzarlo non lo cambia: `/api/%2e%2e/health/live` diventerebbe `/health/live`, e si rifiuta. Sono rifiutati anche `%2e`, `%2f`, `%5c`, la barra rovescia e il frammento.
+
+### I tetti
+
+- Il corpo di una richiesta non supera quello che la rotta più larga accetta (quello dei media, `ESTIA_MEDIA_MAX_BYTES`, almeno 1 MiB), e mai i 32 MiB del contratto.
+- Una richiesta deve arrivare tutta entro due minuti; se no, la connessione si chiude.
+- Otto richieste insieme per connessione: le altre restano in coda nel QUIC, non in memoria.
+- Quattro connessioni insieme per chiave.
+- Dopo l'esito d'ingresso, se l'app non chiude entro cinque secondi chiude la Casa.
 
 ## Più dispositivi e revoca
 
@@ -73,16 +83,17 @@ Una sessione d'app si allunga a ogni uso: un'app che si fa vedere resta dentro, 
 - **La rimozione della foglia MLS da ogni conversazione** quando si revoca un dispositivo (ADR 0040, obbligo 3). È un commit per conversazione fatto da un altro dispositivo del membro: lo fa il client. La Casa smette di consegnare al dispositivo revocato, e la sua chiave di firma esce dal registro perché `getActiveDeviceKeysByUserId` legge la sessione.
 - **L'ingresso con un invito**, per chi non è ancora membro e non ha un browser in casa: oggi il QR lo emette solo chi è già dentro.
 - **Le prove sul campo**, nell'ordine di ADR 0044 e fatte dal proprietario: Milano–Campello su dati mobili, la misura dall'esterno che non c'è nessuna porta web, il tempo effettivo di perdita dell'accesso dopo una revoca.
+- **Due rotte che leggono l'indirizzo o l'host rispondono il falso via stream.** `GET /api/v1/connection` dice «loopback» a un'app che sta fuori casa, e un invito creato dall'app porta un indirizzo `localhost`. Nessuna delle due dà accesso a niente; vanno corrette quando l'app le userà.
 - **Il corpo come `number[]`.** Il binding Node di iroh legge e scrive array di numeri: per un'immagine da qualche MiB è memoria sprecata, non un errore. Se pesa, si spezza il corpo in più scritture.
 
 ## Le prove
 
-`apps/core-api/src/dispositivi/accesso.test.ts`, su iroh vero in `local`: la Casa è l'app intera, il Dispositivo un endpoint con una chiave sua.
+`apps/core-api/src/dispositivi/accesso.test.ts`, su iroh vero in `local`, nove prove: la Casa è l'app intera, il Dispositivo un endpoint con una chiave sua.
 
 1. Dal QR all'API: il QR si rilegge, la chiave entra, `GET /api/v1/auth/me` e `POST /api/v1/posts` passano dallo stream, la sessione compare con la sua chiave.
-2. Una chiave sconosciuta su `estia/dispositivo/1` non riceve niente.
-3. Codice inventato, domanda malformata, codice già usato: niente, e nessuna differenza fra i tre.
+2. Una chiave sconosciuta su `estia/dispositivo/1` non riceve niente, e la stessa chiave entra appena ha un codice.
+3. Codice inventato, domanda malformata, codice già usato, codice scaduto: niente, e nessuna differenza fra i casi. Tre chiavi con lo stesso codice nello stesso istante: ne entra una.
 4. Due dispositivi della stessa persona; la revoca di uno lo ferma sulla connessione già aperta e alla successiva, e l'altro continua.
-5. Il token di un'altra persona mandato dal Dispositivo non conta; il contrassegno falsificato via HTTP riceve 401.
-6. Fuori da `/api/` e con un frame malformato: 400 leggibile.
+5. Il token di un'altra persona, un cookie e un contrassegno inventato mandati dal Dispositivo non contano; il contrassegno falsificato via HTTP riceve 401.
+6. Fuori da `/api/`, anche con dot-segment codificati, e con un frame malformato: 400 leggibile.
 7. A rete spenta non si emette il QR.

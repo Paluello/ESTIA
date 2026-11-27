@@ -4,6 +4,7 @@ import { loadConfig, type AppConfig } from "@estia/config";
 import {
   ALPN_DISPOSITIVO,
   ALPN_INGRESSO,
+  INGRESSO_DURATA_MS,
   codificaFrame,
   decodificaFrame,
   leggiQrDiIngresso,
@@ -47,6 +48,8 @@ function bearer(token: string): Record<string, string> {
 
 interface Rig {
   app: FastifyInstance;
+  /** Sposta in avanti l'orologio della Casa. */
+  avanza: (ms: number) => void;
   alice: string;
   bob: string;
   dispositivo: () => Promise<InstanceEndpoint>;
@@ -57,7 +60,11 @@ async function conLaCasa(
   probe: "local" | "off" = "local",
 ): Promise<void> {
   await withTempDataDir(async (dataDir) => {
-    const app = await buildApp(configFor(dataDir, probe), { setupToken: SETUP_TOKEN });
+    let scarto = 0;
+    const app = await buildApp(configFor(dataDir, probe), {
+      now: () => new Date(Date.now() + scarto),
+      setupToken: SETUP_TOKEN,
+    });
     const dispositivi: InstanceEndpoint[] = [];
 
     try {
@@ -92,6 +99,9 @@ async function conLaCasa(
       await use({
         alice: alice.token,
         app,
+        avanza: (ms) => {
+          scarto += ms;
+        },
         bob: bob.token,
         dispositivo: async () => {
           const endpoint = new InstanceEndpoint(new Uint8Array(randomBytes(32)));
@@ -238,12 +248,23 @@ describe("l'accesso del Dispositivo (ADR 0044)", () => {
       const ingresso = await emetti(rig.app, rig.alice);
       const estraneo = await rig.dispositivo();
 
-      await expect(
-        (async () => {
-          const connessione = await estraneo.connect(ingresso.ticket ?? "", ALPN_DISPOSITIVO);
-          return chiedi(connessione, "GET", "/api/v1/auth/me");
-        })(),
-      ).rejects.toBeDefined();
+      expect(ingresso.ticket).toBeDefined();
+
+      // La connessione si apre — QUIC non sa ancora chi sei — e poi non porta
+      // niente: nessuno stato, nessun corpo, nessun errore leggibile.
+      const connessione = await estraneo.connect(ingresso.ticket ?? "", ALPN_DISPOSITIVO);
+
+      await expect(chiedi(connessione, "GET", "/api/v1/auth/me")).rejects.toBeDefined();
+
+      // Lo stesso endpoint, con lo stesso ticket, entra appena ha un codice:
+      // il rifiuto di prima era per la chiave, non per la strada.
+      const nuovo = await emetti(rig.app, rig.alice);
+      expect(
+        (await entra(estraneo, nuovo.ticket ?? "", { codice: nuovo.codice, etichetta: "PC" }))
+          ?.esito,
+      ).toBe("ammesso");
+      const dentro = await estraneo.connect(nuovo.ticket ?? "", ALPN_DISPOSITIVO);
+      expect((await chiedi(dentro, "GET", "/api/v1/auth/me")).stato).toBe(200);
     });
   });
 
@@ -266,6 +287,36 @@ describe("l'accesso del Dispositivo (ADR 0044)", () => {
       expect(
         await entra(secondo, ticket, { codice: ingresso.codice, etichetta: "Altro" }),
       ).toBeUndefined();
+    });
+  });
+
+  it("un codice scaduto non riceve niente", async () => {
+    await conLaCasa(async (rig) => {
+      const ingresso = await emetti(rig.app, rig.alice);
+      const dispositivo = await rig.dispositivo();
+
+      rig.avanza(INGRESSO_DURATA_MS + 1000);
+
+      expect(
+        await entra(dispositivo, ingresso.ticket ?? "", {
+          codice: ingresso.codice,
+          etichetta: "Tardi",
+        }),
+      ).toBeUndefined();
+    });
+  });
+
+  it("due chiavi con lo stesso codice nello stesso istante: ne entra una", async () => {
+    await conLaCasa(async (rig) => {
+      const ingresso = await emetti(rig.app, rig.alice);
+      const chiavi = await Promise.all([1, 2, 3].map(() => rig.dispositivo()));
+      const esiti = await Promise.all(
+        chiavi.map((chiave) =>
+          entra(chiave, ingresso.ticket ?? "", { codice: ingresso.codice, etichetta: "x" }),
+        ),
+      );
+
+      expect(esiti.filter((esito) => esito?.esito === "ammesso")).toHaveLength(1);
     });
   });
 
@@ -316,6 +367,18 @@ describe("l'accesso del Dispositivo (ADR 0044)", () => {
 
       expect(me.json()).toMatchObject({ username: "alice" });
 
+      // Nemmeno un cookie, né un contrassegno del canale inventato, mandati
+      // dallo stream: la Casa li scarta prima di iniettare.
+      const conAltro = await chiedi(connessione, "GET", "/api/v1/auth/me", {
+        intestazioni: {
+          Cookie: "sessione=qualcosa",
+          [INTESTAZIONE_CANALE.toUpperCase()]: "inventato",
+        },
+      });
+
+      expect(conAltro.stato).toBe(200);
+      expect(conAltro.json()).toMatchObject({ username: "alice" });
+
       // E il contrassegno del canale, falsificato via HTTP, non apre niente.
       const falso = await rig.app.inject({
         headers: { [INTESTAZIONE_CANALE]: `inventato.${"0".repeat(8)}.chiave` },
@@ -331,7 +394,17 @@ describe("l'accesso del Dispositivo (ADR 0044)", () => {
     await conLaCasa(async (rig) => {
       const { connessione } = await dispositivoDi(rig, rig.alice, "Telefono");
 
-      for (const percorso of ["/health/live", "/openapi.json", "/api/../health/live"]) {
+      for (const percorso of [
+        "/health/live",
+        "/openapi.json",
+        "/api/../health/live",
+        "/api/%2e%2e/health/live",
+        "/api/.%2E/openapi.json",
+        "/api/./v1/auth/me",
+        "/api\\..\\health/live",
+        "//api/v1/auth/me",
+        "/api/v1/auth/me#frammento",
+      ]) {
         const risposta = await chiedi(connessione, "GET", percorso);
         expect(risposta.stato).toBe(400);
         expect(risposta.json()).toMatchObject({ code: "richiesta_su_stream_non_valida" });

@@ -8,6 +8,7 @@ import {
   type IngressoEmessoView,
 } from "@estia/contracts";
 
+import type { Transactor } from "../db/database.js";
 import type { IdentityService } from "../identity/service.js";
 import { hashSessionToken } from "../identity/tokens.js";
 
@@ -122,15 +123,18 @@ export const ETICHETTA_MAX = 80;
 export class AccessoDispositivi {
   readonly #repository: SqliteAccessoRepository;
   readonly #identity: IdentityService;
+  readonly #transaction: Transactor;
   readonly #now: () => Date;
 
   public constructor(options: {
     repository: SqliteAccessoRepository;
     identity: IdentityService;
+    transaction: Transactor;
     now?: () => Date;
   }) {
     this.#repository = options.repository;
     this.#identity = options.identity;
+    this.#transaction = options.transaction;
     this.#now = options.now ?? ((): Date => new Date());
   }
 
@@ -170,6 +174,17 @@ export class AccessoDispositivi {
    * possiede la chiave privata è una sola, e ha appena dimostrato di averla.
    */
   public ammetti(chiave: string, codice: string, etichetta: string): EsitoDiIngresso | undefined {
+    // Tutto o niente: un codice consumato senza che la chiave sia legata
+    // brucerebbe il QR, e una sessione vecchia revocata senza la nuova
+    // lascerebbe l'app fuori.
+    try {
+      return this.#transaction(() => this.#ammetti(chiave, codice, etichetta));
+    } catch {
+      return undefined;
+    }
+  }
+
+  #ammetti(chiave: string, codice: string, etichetta: string): EsitoDiIngresso | undefined {
     const adesso = this.#now().toISOString();
     const userId = this.#repository.consumaIngresso(hashSessionToken(codice), adesso);
 
@@ -218,9 +233,9 @@ export class AccessoDispositivi {
       return undefined;
     }
 
-    return this.#identity.authenticateSession(legame.sessionId) === undefined
-      ? undefined
-      : legame.sessionId;
+    // Solo una lettura: la sessione la tocca e la allunga `requireAuth`, una
+    // volta per richiesta.
+    return this.#identity.isSessionLive(legame.sessionId) ? legame.sessionId : undefined;
   }
 
   public chiaveDellaSessione(sessionId: string): string | undefined {
