@@ -760,6 +760,13 @@ Questo paragrafo resta qui perché è la prova su cui poggiano regole che oggi s
 
 - [ ] Spike [S6](spike/S6-lo-stack-dell-app.md): le quattro prove sul dispositivo.
 
+**Aggiornamento del 2026-11-27: le app del telefono diventano native.** Il proprietario sceglie SwiftUI su iPhone e Compose su Android, sopra un nucleo Rust comune con iroh, la cassaforte e MLS con OpenMLS; il PC resta Tauri ([ADR 0051](adr/0051-le-app-del-telefono-sono-native.md), Proposed). [S7](spike/S7-openmls-e-ts-mls.md) prova che OpenMLS e `ts-mls` stanno nella stessa conversazione, e porta `apps/web` a `ts-mls` 1.6.4 con una patch per `external_pub`: 1.6.2 lasciava leggere chi era stato tolto da un commit con una sola uscita.
+
+- [x] Spike [S7](spike/S7-openmls-e-ts-mls.md): OpenMLS e `ts-mls` nella stessa conversazione, nei due sensi (2026-11-27).
+- [x] `ts-mls` 1.6.4 in `apps/web`, con `patches/ts-mls@1.6.4.patch` (2026-11-27).
+- [ ] Accettazione di ADR 0051.
+- [ ] Il test di S7 in CI.
+
 **Aggiornamento del 2026-10-14: le lingue.** [ADR 0046](adr/0046-le-lingue-di-estia.md), **Accepted** il 2026-10-15. ESTIA esce almeno in inglese e in italiano, e chiunque può aggiungere una lingua riempiendo una tabella. L'istanza manda codici d'errore, il client sceglie la frase, ogni membro sceglie la propria lingua, e `install.sh` chiede quella della Casa. Non è una precondizione delle app, ma va fatta **prima di scrivere l'app**: altrimenti le frasi si estraggono da due client invece che da uno.
 
 - [x] Accettazione di ADR 0046 (2026-10-15).
