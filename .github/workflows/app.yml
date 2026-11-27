@@ -1,0 +1,199 @@
+name: app
+
+# L'app ESTIA (apps/app, ADR 0044): si costruisce a ogni PR che la tocca, per
+# ogni piattaforma che un runner di GitHub sa costruire.
+#
+# - android: un APK firmato, installabile dal telefono senza cavo. Su main
+#   finisce anche nella pre-release «app-anteprima», da cui il telefono lo
+#   scarica con un link. La firma usa i segreti ANDROID_KEYSTORE_* se ci sono;
+#   senza, una chiave usa e getta, e per aggiornare bisogna disinstallare prima.
+# - linux: i test del lato Rust e il binario desktop.
+# - ios-simulatore: la build per il simulatore, senza firma. Per un iPhone vero
+#   serve l'account Apple Developer.
+#
+# Il codice in Rust non tocca l'istanza: questo flusso è separato da `verify`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/app/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "apps/app/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/app.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - run: corepack enable
+
+      - run: corepack pnpm install --frozen-lockfile
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/app/src-tauri
+          key: android
+
+      - name: Progetto Android
+        working-directory: apps/app
+        # ANDROID_NDK_LATEST_HOME è una variabile dell'immagine del runner, non
+        # del contesto `env` di GitHub: si legge dalla shell.
+        run: |
+          export NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          pnpm tauri android init --ci
+          node scripts/prepara-android.mjs
+
+      - name: Build dell'APK
+        working-directory: apps/app
+        run: |
+          export NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          pnpm tauri android build --apk --target aarch64 --ci
+
+      - name: Firma
+        working-directory: apps/app
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          strumenti="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          non_firmato="$(find src-tauri/gen/android -name '*-release-unsigned.apk' | head -1)"
+          test -n "$non_firmato"
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/estia.jks"
+            alias="$KEY_ALIAS"; password="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::Nessun segreto ANDROID_KEYSTORE_BASE64: firmo con una chiave usa e getta. Per aggiornare l'app bisogna disinstallarla prima."
+            password="$(openssl rand -hex 16)"; alias=estia
+            keytool -genkeypair -keystore "$RUNNER_TEMP/estia.jks" -alias "$alias" \
+              -keyalg RSA -keysize 3072 -validity 365 -storepass "$password" \
+              -dname "CN=ESTIA anteprima" -noprompt
+          fi
+          "$strumenti/zipalign" -f -p 4 "$non_firmato" "$RUNNER_TEMP/allineato.apk"
+          "$strumenti/apksigner" sign --ks "$RUNNER_TEMP/estia.jks" --ks-key-alias "$alias" \
+            --ks-pass "pass:$password" --out "$GITHUB_WORKSPACE/estia-android.apk" "$RUNNER_TEMP/allineato.apk"
+          "$strumenti/apksigner" verify "$GITHUB_WORKSPACE/estia-android.apk"
+          rm -f "$RUNNER_TEMP/estia.jks"
+          ls -l "$GITHUB_WORKSPACE/estia-android.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: estia-android-apk
+          path: estia-android.apk
+          retention-days: 14
+
+      - name: Pre-release «app-anteprima»
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          note="Anteprima dell'app ESTIA per Android, costruita da ${GITHUB_SHA::7}. Non è una release: si aggiorna a ogni modifica di main. Dal telefono: scarica estia-android.apk e aprilo (Android chiede di consentire l'installazione da questa fonte)."
+          gh release view app-anteprima >/dev/null 2>&1 || \
+            gh release create app-anteprima --prerelease --title "App ESTIA, anteprima" --notes "$note" --target "$GITHUB_SHA"
+          gh release edit app-anteprima --prerelease --notes "$note"
+          git tag -f app-anteprima "$GITHUB_SHA"
+          git push -f origin refs/tags/app-anteprima
+          gh release upload app-anteprima estia-android.apk --clobber
+
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - run: corepack enable
+
+      - run: corepack pnpm install --frozen-lockfile
+
+      - name: Librerie della WebView
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev librsvg2-dev libdbus-1-dev libayatana-appindicator3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/app/src-tauri
+          key: linux
+
+      - name: Client web per l'app
+        working-directory: apps/app
+        run: npm run web:build
+
+      - name: Test del lato Rust
+        working-directory: apps/app/src-tauri
+        run: cargo test --locked
+
+      - name: Binario desktop
+        working-directory: apps/app
+        run: pnpm tauri build --no-bundle --ci
+
+  ios-simulatore:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - run: corepack enable
+
+      - run: corepack pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/app/src-tauri
+          key: ios
+
+      - name: Build per il simulatore
+        working-directory: apps/app
+        run: ./scripts/ios-simulatore.sh --solo-build

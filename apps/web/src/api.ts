@@ -81,6 +81,7 @@ import { fraseDiErrore } from "@estia/lingue";
 
 import { linguaCorrente } from "./lingua.js";
 import { t } from "./lingua.js";
+import { chiedi } from "./piattaforma/app.js";
 
 /**
  * Carries the machine-readable code, so screens can react to the cause.
@@ -130,7 +131,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers.authorization = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(path, {
+  const response = await chiedi(path, {
     headers,
     method: options.method ?? "GET",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -193,7 +194,7 @@ export const api = {
    * instance builds the path from an identifier of its own.
    */
   uploadMedia: async (token: string, blob: Blob): Promise<MediaView> => {
-    const response = await fetch("/api/v1/media", {
+    const response = await chiedi("/api/v1/media", {
       body: blob,
       headers: { authorization: `Bearer ${token}`, "content-type": blob.type },
       method: "POST",

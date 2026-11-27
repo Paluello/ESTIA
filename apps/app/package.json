@@ -1,0 +1,15 @@
+{
+  "name": "@estia/app",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "web:dev": "node scripts/via-appledouble.mjs && cd ../.. && node node_modules/typescript/bin/tsc --build && cd apps/web && node node_modules/vite/bin/vite.js --mode app --port 5173 --strictPort",
+    "web:build": "node scripts/via-appledouble.mjs && cd ../.. && node node_modules/typescript/bin/tsc --build && cd apps/web && node node_modules/vite/bin/vite.js build --mode app"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

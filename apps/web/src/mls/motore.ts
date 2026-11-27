@@ -13,7 +13,13 @@
  * sovrascrive quella che c'era.
  */
 import { api } from "../api.js";
+import { inApp } from "../piattaforma/app.js";
 import { anagrafeSuApi, cassettoIndexedDb, depositoIndexedDb, istanzaSuApi } from "./adattatori.js";
+import { cassettoCassaforte, depositoCassaforte } from "./adattatori-app.js";
+
+/** Nel browser IndexedDB; nell'app la cassaforte del dispositivo (ADR 0044 §2). */
+const cassetto = inApp() ? cassettoCassaforte : cassettoIndexedDb;
+const deposito = inApp() ? depositoCassaforte : depositoIndexedDb;
 import {
   dimentica,
   esisteIdentita,
@@ -57,7 +63,7 @@ export function contestoChat(token: string, username: string): Promise<ContestoC
 
 async function contestoDispositivo(token: string): Promise<ContestoDispositivo> {
   const { casa } = await api.casa(token);
-  return { anagrafe: anagrafeSuApi(token), casa, cassetto: cassettoIndexedDb };
+  return { anagrafe: anagrafeSuApi(token), casa, cassetto };
 }
 
 async function prepara(token: string, username: string): Promise<ContestoChat> {
@@ -67,7 +73,7 @@ async function prepara(token: string, username: string): Promise<ContestoChat> {
   return {
     casa: dispositivo.casa,
     ctx: {
-      deposito: depositoIndexedDb,
+      deposito,
       io: pronto.portachiavi,
       istanza: istanzaSuApi(token, dispositivo.casa),
     },
@@ -88,7 +94,7 @@ export async function statoAllAccesso(
   token: string,
   username: string,
 ): Promise<"pronto" | "da-ripristinare"> {
-  if (await esisteIdentita(cassettoIndexedDb)) {
+  if (await esisteIdentita(cassetto)) {
     await contestoChat(token, username);
     return "pronto";
   }
@@ -125,7 +131,7 @@ export async function salvaCopia(token: string, passphrase: string): Promise<voi
 
 /** Questo browser ha un'identità MLS? */
 export function haIdentita(): Promise<boolean> {
-  return esisteIdentita(cassettoIndexedDb);
+  return esisteIdentita(cassetto);
 }
 
 /**
@@ -134,5 +140,5 @@ export function haIdentita(): Promise<boolean> {
  */
 export async function esci(): Promise<void> {
   preparato = undefined;
-  await dimentica(cassettoIndexedDb, depositoIndexedDb);
+  await dimentica(cassetto, deposito);
 }

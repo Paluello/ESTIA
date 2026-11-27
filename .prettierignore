@@ -9,3 +9,6 @@ apps/core-api/public
 coverage
 *.tsbuildinfo
 **/target
+# Generati da Tauri, e la copia di un crate di terzi (apps/app/patches/README.md).
+apps/app/src-tauri/gen
+apps/app/patches

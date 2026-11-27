@@ -29,6 +29,8 @@ import { Setup } from "./screens/Setup.js";
 import { RestoreIdentity } from "./screens/RestoreIdentity.js";
 import { esci, ricominciaDaCapo, ripristina, statoAllAccesso } from "./mls/motore.js";
 import { clearSession, loadSession, storeSession } from "./session.js";
+import { ambienteApp, dimenticaCasa, inApp, TOKEN_APP } from "./piattaforma/app.js";
+import { IngressoApp } from "./screens/IngressoApp.js";
 import { AppProvider } from "./state.js";
 import { AvvisiProvider } from "./avvisi.js";
 import { impostaLinguaDellaCasa, t, useT } from "./lingua.js";
@@ -44,6 +46,8 @@ export function App(): React.ReactElement {
   const [failure, setFailure] = useState<string | undefined>();
   const [ready, setReady] = useState(false);
   const [deviceIdentityState, setDeviceIdentityState] = useState<DeviceIdentityState>("ready");
+  /** Nell'app, un dispositivo senza Casa: prima di tutto si entra (ADR 0044). */
+  const [ingresso, setIngresso] = useState<{ erroreCassaforte: string | null } | undefined>();
 
   /**
    * Il dispositivo MLS di questo browser, all'accesso ([`motore`](./mls/motore.ts)).
@@ -90,6 +94,14 @@ export function App(): React.ReactElement {
 
     void (async () => {
       try {
+        if (inApp()) {
+          const ambiente = await ambienteApp();
+          if (ambiente.casa === null) {
+            setIngresso({ erroreCassaforte: ambiente.errore_cassaforte });
+            return;
+          }
+        }
+
         await refreshInstance();
 
         const stored = loadSession();
@@ -161,6 +173,12 @@ export function App(): React.ReactElement {
 
   const signOut = useCallback(() => {
     clearSession();
+    // Nell'app uscire vuol dire lasciare la Casa: la sessione legata a questa
+    // chiave è già chiusa dalla Casa, e si torna all'ingresso.
+    if (inApp()) {
+      void dimenticaCasa().catch(() => {});
+      setIngresso({ erroreCassaforte: null });
+    }
     // Via le chiavi MLS e lo stato dei gruppi: chi entra dopo su questo
     // browser non deve trovare niente.
     void esci().catch(() => {});
@@ -195,6 +213,22 @@ export function App(): React.ReactElement {
 
   if (!ready) {
     return <p className="center">{t("comune.un_momento")}</p>;
+  }
+
+  if (ingresso !== undefined) {
+    return (
+      <IngressoApp
+        erroreCassaforte={ingresso.erroreCassaforte}
+        onEntrato={(utente) => {
+          setIngresso(undefined);
+          setReady(false);
+          void refreshInstance()
+            .then(() => signIn(TOKEN_APP, utente))
+            .catch(() => setFailure(t("comune.istanza_irraggiungibile")))
+            .finally(() => setReady(true));
+        }}
+      />
+    );
   }
 
   if (failure !== undefined || instance === undefined) {

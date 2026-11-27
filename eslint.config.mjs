@@ -16,6 +16,10 @@ export default tseslint.config(
       "coverage/**",
       // Compilati di Rust (lo spike S6 in infra/spike-app).
       "**/target/**",
+      // Generati da `tauri android init` / `tauri ios init`, e la copia di un
+      // crate di terzi (apps/app/patches/README.md).
+      "apps/app/src-tauri/gen/**",
+      "apps/app/patches/**",
     ],
   },
   js.configs.recommended,
@@ -39,6 +43,13 @@ export default tseslint.config(
     rules: {
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
+    },
+  },
+  {
+    // Gli script di build dell'app girano in Node.
+    files: ["apps/app/scripts/**/*.mjs"],
+    languageOptions: {
+      globals: globals.node,
     },
   },
   {
