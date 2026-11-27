@@ -367,6 +367,107 @@ ${CCYAN}╔═══════════════════════
 	fi
 }
 
+# --- Quello che il container di prima aveva, e che si conserva ----------------
+#
+# Ricreare il container con le sole righe di questo script toglieva tutto il
+# resto: la porta legata a 127.0.0.1 tornava su 0.0.0.0, le variabili dei
+# backup e della cifratura sparivano, la cartella dei backup su un altro disco
+# si staccava (gli archivi finivano in silenzio accanto ai dati) e i limiti di
+# memoria si perdevano (revisione interna, 2026-11-27). Quindi prima di
+# toglierlo si legge che cosa aveva, e lo si rimette.
+
+CONSERVA_ENV=""
+CONSERVA_MOUNT=""
+CONSERVA_PORTE=""
+CONSERVA_MEMORIA=""
+CONSERVA_CPU=""
+
+leggi_container_esistente() {
+	CONSERVA_ENV="$(docker container inspect "$NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+		grep '^ESTIA_' | grep -v -e '^ESTIA_DATA_DIR=' -e '^ESTIA_HOST=' -e '^ESTIA_LINGUA=' || true)"
+	CONSERVA_MOUNT="$(docker container inspect "$NAME" --format '{{range .Mounts}}{{if ne .Destination "/data"}}{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}|{{.Destination}}|{{.RW}}{{println}}{{end}}{{end}}' 2>/dev/null || true)"
+	CONSERVA_PORTE="$(docker container inspect "$NAME" --format '{{range $p, $conf := .HostConfig.PortBindings}}{{range $conf}}{{.HostIp}}|{{.HostPort}}|{{$p}}{{println}}{{end}}{{end}}' 2>/dev/null || true)"
+	CONSERVA_MEMORIA="$(docker container inspect "$NAME" --format '{{.HostConfig.Memory}}' 2>/dev/null || true)"
+	CONSERVA_CPU="$(docker container inspect "$NAME" --format '{{.HostConfig.NanoCpus}}' 2>/dev/null || true)"
+}
+
+# avvia_estia DATI PORTA LINGUA — il docker run di ESTIA, con la postura del
+# Compose di riferimento e quello che il container di prima aveva in piu'.
+avvia_estia() {
+	dati="$1"
+	porta="$2"
+	lingua="$3"
+
+	set -- run -d \
+		--name "$NAME" \
+		--restart unless-stopped \
+		--volume "${dati}:/data" \
+		--env ESTIA_DATA_DIR=/data \
+		--env ESTIA_HOST=0.0.0.0 \
+		--user 10001:10001 \
+		--init \
+		--read-only \
+		--tmpfs /tmp \
+		--cap-drop ALL \
+		--security-opt no-new-privileges:true \
+		--pids-limit 256
+
+	if [ -n "$lingua" ]; then
+		set -- "$@" --env "ESTIA_LINGUA=$lingua"
+	fi
+
+	# Una riga per variabile: i valori possono contenere spazi, non a capo.
+	vecchio_ifs="$IFS"
+	IFS='
+'
+	for riga in $CONSERVA_ENV; do
+		set -- "$@" --env "$riga"
+	done
+
+	porte_messe=0
+	for riga in $CONSERVA_PORTE; do
+		IFS='|' read -r ip host interna <<FINE
+$riga
+FINE
+		[ -n "$host" ] || continue
+		if [ -n "$ip" ]; then
+			set -- "$@" --publish "${ip}:${host}:${interna}"
+		else
+			set -- "$@" --publish "${host}:${interna}"
+		fi
+		porte_messe=1
+	done
+
+	for riga in $CONSERVA_MOUNT; do
+		IFS='|' read -r sorgente destinazione scrivibile <<FINE
+$riga
+FINE
+		[ -n "$sorgente" ] && [ -n "$destinazione" ] || continue
+		if [ "$scrivibile" = "false" ]; then
+			set -- "$@" --volume "${sorgente}:${destinazione}:ro"
+		else
+			set -- "$@" --volume "${sorgente}:${destinazione}"
+		fi
+	done
+	IFS="$vecchio_ifs"
+
+	if [ "$porte_messe" = "0" ]; then
+		set -- "$@" --publish "${porta}:3000"
+	fi
+
+	case "$CONSERVA_MEMORIA" in
+	"" | 0) ;;
+	*) set -- "$@" --memory "$CONSERVA_MEMORIA" ;;
+	esac
+
+	case "$CONSERVA_CPU" in
+	"" | 0) ;;
+	*) set -- "$@" --cpus "$(awk "BEGIN { print $CONSERVA_CPU / 1000000000 }")" ;;
+	esac
+
+	docker "$@" "$IMAGE"
+}
+
 cmd_aggiorna() {
 	check_docker
 	sayb "
@@ -409,24 +510,10 @@ ${CCYAN}╔═══════════════════════
 		sayb "   ${CCYAN}├──${C0} Volume:     ${MOUNT_DATA} (${CGREEN}● dati preservati${C0})"
 		sayb "   ${CCYAN}└──${C0} Ricreo e avvio il container…"
 
+		leggi_container_esistente
 		docker rm -f "$NAME" >/dev/null
 
-		docker run -d \
-			--name "$NAME" \
-			--restart unless-stopped \
-			--publish "${DETECTED_PORT}:3000" \
-			--volume "${MOUNT_DATA}:/data" \
-			--env ESTIA_DATA_DIR=/data \
-			--env ESTIA_HOST=0.0.0.0 \
-			${DETECTED_LINGUA:+--env "ESTIA_LINGUA=$DETECTED_LINGUA"} \
-			--user 10001:10001 \
-			--init \
-			--read-only \
-			--tmpfs /tmp \
-			--cap-drop ALL \
-			--security-opt no-new-privileges:true \
-			--pids-limit 256 \
-			"$IMAGE" >/dev/null
+		avvia_estia "$MOUNT_DATA" "$DETECTED_PORT" "$DETECTED_LINGUA" >/dev/null
 
 		sayb ""
 		ok "${C1}Istanza aggiornata e riavviata con successo!${C0}"
