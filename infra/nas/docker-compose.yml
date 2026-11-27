@@ -1,0 +1,91 @@
+# ESTIA — un file solo per i pannelli dei NAS che sanno importare un Compose.
+#
+# Synology Container Manager → Progetto → Crea · QNAP Container Station →
+# Applicazioni → Crea · UGREEN Docker → Progetto · TrueNAS SCALE → App →
+# Installa tramite YAML · Portainer → Stack · CasaOS → Installa
+# personalizzata → Importa. Si incolla questo file così com'è: non chiede
+# variabili, non costruisce niente, scarica l'immagine pubblicata.
+#
+# One file for NAS panels that can import a Compose file. Paste it as it is:
+# no variables to fill in, nothing to build.
+#
+# Le due righe da conoscere / the two lines worth knowing:
+#   ESTIA_LINGUA  la lingua della Casa / the home's language: en, it
+#   ports         cambia solo il numero a sinistra se 3000 è occupata /
+#                 change only the left number if 3000 is taken
+name: estia
+
+services:
+  estia:
+    container_name: estia
+    image: ghcr.io/paluello/estia:latest
+    environment:
+      ESTIA_DATA_DIR: /data
+      ESTIA_HOST: 0.0.0.0
+      ESTIA_LOG_LEVEL: info
+      ESTIA_LINGUA: en
+    ports:
+      - "3000:3000"
+    volumes:
+      # Un volume con un nome: sopravvive al pulsante «aggiorna» del pannello
+      # (ADR 0019). Dentro ci sono database, foto e la chiave della Casa.
+      # A named volume: it survives the panel's "update" button. It holds the
+      # database, the photos and the home's key.
+      - estia-data:/data
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    x-casaos:
+      envs:
+        - container: ESTIA_LINGUA
+          description:
+            en_us: "Language of the home: en or it"
+      ports:
+        - container: "3000"
+          description:
+            en_us: "Web panel and local access"
+      volumes:
+        - container: /data
+          description:
+            en_us: "Database, photos and the home's private key. Do not delete."
+
+volumes:
+  estia-data:
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: estia
+  category: Social
+  author: ESTIA
+  developer: ESTIA
+  title:
+    en_us: ESTIA
+  tagline:
+    en_us: A social network that lives in your home
+  description:
+    en_us: "ESTIA is a real social network whose content stays on this machine: a local feed, profiles that reach other homes by public key, and end-to-end encrypted chats. No domain, no open ports, no developer servers. Open the web address, read the setup code in the container log, and create the administrator."
+  port_map: "3000"
+  scheme: http
+  index: /

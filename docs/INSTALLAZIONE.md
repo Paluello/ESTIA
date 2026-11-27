@@ -259,6 +259,8 @@ Salta questa sezione se hai appena acceso l'istanza da terminale: è l'altra str
 
 **Se il tuo NAS sa importare un file Compose, usa quello.** Su Synology è Container Manager → **Progetto** → Crea, e nel campo del file incolli il contenuto del passo 5 (le righe da `name: estia` a `estia-data:`). È la stessa identica installazione di questa guida, con un'interfaccia sopra: tutto il resto della guida continua a valere parola per parola.
 
+**Il file pronto da incollare** è [`infra/nas/docker-compose.yml`](../infra/nas/docker-compose.yml): non chiede variabili e non costruisce niente. Lo stesso file va bene per QNAP Container Station (Applicazioni → Crea), UGREEN (Docker → Progetto), TrueNAS SCALE (App → Installa tramite YAML), Portainer (Stack) e CasaOS (Installa personalizzata → Importa). L'unica riga che di solito si cambia è `ESTIA_LINGUA`, la lingua della Casa: `en` o `it`. Su **Unraid** c'è il modello [`infra/nas/estia-unraid.xml`](../infra/nas/estia-unraid.xml), da caricare in Docker → Aggiungi container.
+
 **Se il tuo pannello non sa importare un Compose, non costruire il container a mano nel modulo**: è lì che si dimentica la riga dei volumi, ed è così che sono andate perse due istanze. Apri un terminale SSH e dai un comando solo, che porta con sé tutto quello che serve:
 
 ```sh
