@@ -1,6 +1,7 @@
 import type { FederatedInstanceView } from "@estia/contracts";
 
 import type { IconName } from "../../../ui/index.js";
+import { t } from "../../../lingua.js";
 
 /**
  * In che punto della sua storia sta una casa, e come si riconosce a colpo
@@ -30,10 +31,34 @@ export interface AspettoGruppo {
 export const GRUPPI: readonly Gruppo[] = ["in-arrivo", "in-attesa", "collegata", "bloccata"];
 
 export const ASPETTO: Readonly<Record<Gruppo, AspettoGruppo>> = {
-  bloccata: { icona: "shield", tinta: "no", titolo: "Bloccate" },
-  collegata: { icona: "link", tinta: "si", titolo: "Collegate" },
-  "in-arrivo": { icona: "bell", tinta: "", titolo: "Ti hanno chiesto di collegarti" },
-  "in-attesa": { icona: "clock", tinta: "attesa", titolo: "Aspettano una risposta" },
+  bloccata: {
+    icona: "shield",
+    tinta: "no",
+    get titolo(): string {
+      return t("estianet.gruppo.bloccate");
+    },
+  },
+  collegata: {
+    icona: "link",
+    tinta: "si",
+    get titolo(): string {
+      return t("estianet.gruppo.collegate");
+    },
+  },
+  "in-arrivo": {
+    icona: "bell",
+    tinta: "",
+    get titolo(): string {
+      return t("estianet.gruppo.in_arrivo");
+    },
+  },
+  "in-attesa": {
+    icona: "clock",
+    tinta: "attesa",
+    get titolo(): string {
+      return t("estianet.gruppo.in_attesa");
+    },
+  },
 };
 
 export function gruppoDi(istanza: FederatedInstanceView): Gruppo {

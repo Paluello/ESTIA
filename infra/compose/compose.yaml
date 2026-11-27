@@ -10,6 +10,10 @@ services:
       ESTIA_HOST: 0.0.0.0
       ESTIA_LOG_LEVEL: "${ESTIA_LOG_LEVEL:-info}"
       ESTIA_PORT: "${ESTIA_PORT:-3000}"
+      # La lingua della Casa (ADR 0046): quella delle pagine prima del login e di
+      # chi non ne ha scelta una. Lingue: en (English), it (Italiano). Ognuno la
+      # cambia per se' fra le preferenze. Un codice sconosciuto ferma l'avvio.
+      ESTIA_LINGUA: "${ESTIA_LINGUA:-en}"
       # Ogni variabile che l'istanza legge va elencata qui: `--env-file` serve a
       # sostituire i valori in questo file, non a passarli dentro al container.
       # Un limite scritto nel `.env` e non ripetuto qui sarebbe una

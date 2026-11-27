@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Alert, IconButton, Live, type Tone } from "../../ui/index.js";
 
 import { TITOLI, type Chiave } from "./sezioni.js";
+import { t, useT } from "../../lingua.js";
 
 /**
  * La cornice di una sezione delle impostazioni.
@@ -53,6 +54,7 @@ export type SezioneProps =
     });
 
 export function Sezione(props: SezioneProps): React.ReactElement {
+  useT();
   const navigate = useNavigate();
   const { caricamento = false, lavoro, avviso, children } = props;
   const titolo = props.chiave === undefined ? props.titolo : TITOLI[props.chiave];
@@ -63,7 +65,7 @@ export function Sezione(props: SezioneProps): React.ReactElement {
         <IconButton
           className="split-layout__back"
           icon="arrow-left"
-          label="Torna alle impostazioni"
+          label={t("impostazioni.torna")}
           onClick={() => void navigate("/impostazioni")}
         />
         <h1 className="screen-head__title">{titolo}</h1>
@@ -76,7 +78,7 @@ export function Sezione(props: SezioneProps): React.ReactElement {
          * Montato sempre, anche vuoto: un `aria-live` che nasce insieme al
          * proprio contenuto spesso non viene annunciato affatto.
          */}
-        <Live>{caricamento ? "Carico…" : (lavoro ?? "")}</Live>
+        <Live>{caricamento ? t("comune.carico") : (lavoro ?? "")}</Live>
 
         {/* Finché si lavora vince il lavoro: un esito vecchio accanto a
             un'operazione in corso è la cosa che confonde di più. */}
@@ -85,7 +87,7 @@ export function Sezione(props: SezioneProps): React.ReactElement {
           <Alert tone={avviso.tono}>{avviso.testo}</Alert>
         )}
 
-        {caricamento ? <p className="muted">Carico…</p> : children}
+        {caricamento ? <p className="muted">{t("comune.carico")}</p> : children}
       </div>
     </>
   );

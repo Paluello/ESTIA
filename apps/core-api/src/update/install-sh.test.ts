@@ -90,3 +90,123 @@ describe("bin/estia — aspetto dei comandi", () => {
     }
   });
 });
+
+/**
+ * Verifica 6 di ADR 0046: l'installatore chiede la lingua della Casa quando ha
+ * un terminale, non si blocca quando non ce l'ha, e non la richiede rilanciato
+ * su un container che la porta già. Docker è finto: uno script che scrive i
+ * propri argomenti e risponde come risponderebbe a quelle domande.
+ */
+describe("install.sh — la lingua della Casa (ADR 0046)", () => {
+  const DOCKER_FINTO = `#!/bin/sh
+printf '%s\\n' "$*" >>"$FINTO_LOG"
+case "$1" in
+container)
+  [ -n "$FINTO_ESISTE" ] || exit 1
+  case "$*" in
+  *Config.Env*) printf '%s\\n' "PATH=/usr/bin" $FINTO_ENV ;;
+  *Mounts*) printf '%s\\n' estia-data ;;
+  esac
+  ;;
+inspect) printf '%s\\n' 3000 ;;
+pull | info | volume | rm | run | exec) ;;
+esac
+exit 0
+`;
+
+  function installa(opzioni: { risposta?: string; esiste?: boolean; env?: string }): {
+    uscita: string;
+    run: string;
+  } {
+    const root = mkdtempSync(path.join(tmpdir(), "estia-lingua-"));
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, "docker"), DOCKER_FINTO);
+    chmodSync(path.join(bin, "docker"), 0o755);
+    const log = path.join(root, "docker.log");
+    writeFileSync(log, "");
+
+    // Il «terminale»: un file con la risposta, o un percorso che non si apre.
+    const tty = path.join(root, "tty");
+    if (opzioni.risposta !== undefined) {
+      writeFileSync(tty, `${opzioni.risposta}\n`);
+    }
+
+    const uscita = sh([INSTALL_SH], {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      ESTIA_TTY: tty,
+      ESTIA_CLI_SRC: CLI,
+      ESTIA_CLI_BINDIR: path.join(root, "cli"),
+      ESTIA_LINGUA: "",
+      FINTO_LOG: log,
+      FINTO_ESISTE: opzioni.esiste === true ? "1" : "",
+      FINTO_ENV: opzioni.env ?? "",
+    });
+    const run = readFileSync(log, "utf8")
+      .split("\n")
+      .find((riga) => riga.startsWith("run "));
+
+    return { uscita, run: run ?? "" };
+  }
+
+  it("con un terminale chiede la lingua, in tutte le lingue, e la scrive nel container", () => {
+    const { uscita, run } = installa({ risposta: "2" });
+
+    expect(uscita).toContain(
+      "Which language should this home speak? · In che lingua parla questa Casa?",
+    );
+    expect(uscita).toContain("English (en)");
+    expect(uscita).toContain("Italiano (it)");
+    expect(run).toContain("--env ESTIA_LINGUA=it");
+    // Dopo la risposta, l'installatore parla quella.
+    expect(uscita).toContain("Avvio l'istanza");
+    expect(uscita).toContain("ESTIA e' in piedi");
+  });
+
+  it("accetta anche il codice, e una risposta vuota tiene l'inglese", () => {
+    expect(installa({ risposta: "it" }).run).toContain("--env ESTIA_LINGUA=it");
+
+    const vuota = installa({ risposta: "" });
+    expect(vuota.run).toContain("--env ESTIA_LINGUA=en");
+    expect(vuota.uscita).toContain("Starting the instance");
+  });
+
+  it("senza terminale non si blocca e usa l'inglese", () => {
+    const { uscita, run } = installa({});
+
+    expect(uscita).not.toContain("Which language");
+    expect(run).toContain("--env ESTIA_LINGUA=en");
+    expect(uscita).toContain("ESTIA is up");
+  });
+
+  it("rilanciato su un container che ha già la lingua, non la richiede e la conserva", () => {
+    const { uscita, run } = installa({ risposta: "1", esiste: true, env: "ESTIA_LINGUA=it" });
+
+    expect(uscita).not.toContain("Which language");
+    expect(run).toContain("--env ESTIA_LINGUA=it");
+    expect(uscita).toContain("Scarico l'immagine");
+  });
+
+  it("elenca le stesse lingue della tabella, e ogni frase le ha tutte", async () => {
+    const { lingue } = await import("@estia/lingue");
+    const testo = readFileSync(INSTALL_SH, "utf8");
+    const dichiarate = /^LINGUE="([^"]*)"$/m.exec(testo)?.[1]?.split(" ") ?? [];
+
+    expect([...dichiarate].sort()).toEqual(
+      lingue()
+        .map((voce) => voce.codice)
+        .sort(),
+    );
+
+    const chiavi = new Map<string, Set<string>>();
+    for (const [, lingua, chiave] of testo.matchAll(/^\t([a-z*]+):([a-z_.]+)\) printf/gm)) {
+      chiavi.set(chiave ?? "", (chiavi.get(chiave ?? "") ?? new Set()).add(lingua ?? ""));
+    }
+    expect(chiavi.size).toBeGreaterThan(30);
+    for (const [chiave, lingueDellaFrase] of chiavi) {
+      // `*` è l'inglese, che fa anche da riserva.
+      const attese = dichiarate.map((codice) => (codice === "en" ? "*" : codice));
+      expect([chiave, [...lingueDellaFrase].sort()]).toEqual([chiave, attese.sort()]);
+    }
+  });
+});

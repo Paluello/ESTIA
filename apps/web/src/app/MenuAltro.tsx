@@ -11,6 +11,7 @@ import {
 import { api } from "../api.js";
 import { useApp } from "../state.js";
 import { Choice, ListRow, Live, Sheet } from "../ui/index.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * Il menù «altro»: impostazioni, aspetto rapido, esci.
@@ -28,6 +29,7 @@ export function MenuAltro({
   onClose: () => void;
   anchorRef: RefObject<HTMLElement | null>;
 }): React.ReactElement {
+  useT();
   const { signOut, token, user, refreshUser } = useApp();
   const [prefs, setPrefs] = useState<UiPreferences>(() => user?.appearance ?? leggiPreferenze());
   const [lavoro, setLavoro] = useState<string | undefined>();
@@ -87,59 +89,63 @@ export function MenuAltro({
      * accessibile, e chi lo apre con lo schermo spento sente aprirsi qualcosa
      * che non si presenta. È stato così finché nessuno l'ha ascoltato.
      */
-    <Sheet anchorRef={anchorRef} onClose={onClose} open={open} title="Altro" variant="piccolo">
-      <nav aria-label="Altro" className="menu-altro">
+    <Sheet
+      anchorRef={anchorRef}
+      onClose={onClose}
+      open={open}
+      title={t("nav.altro")}
+      variant="piccolo"
+    >
+      <nav aria-label={t("nav.altro")} className="menu-altro">
         <ListRow
           chevron={false}
           icon="settings"
-          note="Presenza, dispositivi, amministrazione"
+          note={t("menu.impostazioni.nota")}
           onClick={onClose}
-          title="Impostazioni"
+          title={t("nav.impostazioni")}
           to="/impostazioni"
         />
       </nav>
 
       <div className="menu-altro__sezione">
-        <h3 className="gruppo">Aspetto</h3>
-        <Live>{lavoro !== undefined ? "Salvo l'aspetto…" : ""}</Live>
+        <h3 className="gruppo">{t("menu.aspetto")}</h3>
+        <Live>{lavoro !== undefined ? t("aspetto.salvo_aspetto") : ""}</Live>
         <Choice
           checked={prefs.aspetto === "sistema"}
           disabled={lavoro !== undefined}
           name="aspetto"
-          note={
-            lavoro === "aspetto-sistema" ? "Salvo…" : "Come è impostato il telefono o il computer."
-          }
+          note={lavoro === "aspetto-sistema" ? t("comune.salvo") : t("aspetto.sistema.nota")}
           onChoose={() => scegli("sistema")}
-          title="Come il sistema"
+          title={t("aspetto.sistema.titolo")}
         />
         <Choice
           checked={prefs.aspetto === "chiaro"}
           disabled={lavoro !== undefined}
           name="aspetto"
-          note={lavoro === "aspetto-chiaro" ? "Salvo…" : "Sfondo chiaro, anche di notte."}
+          note={lavoro === "aspetto-chiaro" ? t("comune.salvo") : t("aspetto.chiaro.nota")}
           onChoose={() => scegli("chiaro")}
-          title="Chiaro"
+          title={t("aspetto.chiaro.titolo")}
         />
         <Choice
           checked={prefs.aspetto === "scuro"}
           disabled={lavoro !== undefined}
           name="aspetto"
-          note={lavoro === "aspetto-scuro" ? "Salvo…" : "Sfondo scuro, anche di giorno."}
+          note={lavoro === "aspetto-scuro" ? t("comune.salvo") : t("aspetto.scuro.nota")}
           onChoose={() => scegli("scuro")}
-          title="Scuro"
+          title={t("aspetto.scuro.titolo")}
         />
         <ListRow
           chevron={false}
           icon="settings"
-          note="Contrasto alto e palette"
+          note={t("menu.altro_aspetto.nota")}
           onClick={onClose}
-          title="Altro aspetto"
+          title={t("menu.altro_aspetto.titolo")}
           to="/impostazioni/aspetto"
         />
       </div>
 
       <div className="menu-altro__sezione">
-        <ListRow chevron={false} icon="logout" onClick={() => void esci()} title="Esci" />
+        <ListRow chevron={false} icon="logout" onClick={() => void esci()} title={t("menu.esci")} />
       </div>
     </Sheet>
   );

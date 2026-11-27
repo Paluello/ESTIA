@@ -71,7 +71,7 @@ export function Recover(): React.ReactElement {
             hint={t("recupero.codice.aiuto")}
             label={t("recupero.codice.etichetta")}
             onChange={(event) => setForm({ ...form, recoveryCode: event.target.value })}
-            placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
+            placeholder={t("recupero.codice.esempio")}
             required
             value={form.recoveryCode}
           />

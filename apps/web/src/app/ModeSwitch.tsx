@@ -4,10 +4,23 @@ import { useSearchParams } from "react-router-dom";
 import { MODO_PREDEFINITO, isModo, type Modo } from "../modo.js";
 import { useApp } from "../state.js";
 import { Icon, SegmentedControl } from "../ui/index.js";
+import { t, useT } from "../lingua.js";
 
 const OPZIONI = [
-  { icon: "instance" as const, label: "Istanza", value: "istanza" as const },
-  { icon: "globe" as const, label: "Rete", value: "rete" as const },
+  {
+    icon: "instance" as const,
+    get label(): string {
+      return t("modo.istanza");
+    },
+    value: "istanza" as const,
+  },
+  {
+    icon: "globe" as const,
+    get label(): string {
+      return t("modo.rete");
+    },
+    value: "rete" as const,
+  },
 ];
 
 /**
@@ -29,6 +42,7 @@ export function ModeSwitch({
   /** Sulla pagina di un post: resta solo l'indicatore del modo corrente. */
   bloccato?: boolean;
 }): React.ReactElement {
+  useT();
   const { modo, setModo } = useApp();
   const [params, setParams] = useSearchParams();
   const nellUrl = params.get("modo");
@@ -71,7 +85,7 @@ export function ModeSwitch({
   return (
     <SegmentedControl
       compatto={compatto}
-      label="Che cosa stai guardando"
+      label={t("modo.etichetta")}
       onChange={cambia}
       options={OPZIONI}
       value={modo}

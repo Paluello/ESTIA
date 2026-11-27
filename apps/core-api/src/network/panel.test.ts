@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { loadConfig, type AppConfig } from "@estia/config";
 import type { AdminDiagnostics, NetworkProbeReport } from "@estia/contracts";
 import { withClosable, withTempDataDir } from "@estia/testing";
@@ -5,6 +6,10 @@ import type { FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * Turning the network probe on without a terminal.
@@ -75,7 +80,7 @@ describe("turning the network probe on from the panel", () => {
 
       expect(report).toMatchObject({ editable: true, mode: "off", state: "off" });
       // The panel must be able to explain it, not only display a switch.
-      expect(report.detail).toMatch(/chiave pubblica/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/chiave pubblica/);
     });
   });
 

@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -10,6 +11,10 @@ import { describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { buildAtRestReport, detectAtRestEncryption, findMountFor } from "./atrest.js";
 import type { SystemRoots } from "./atrest.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * The tests build small fake machines rather than mocking the module: the
@@ -82,7 +87,7 @@ describe("what the instance can observe", () => {
       const roots = machine(root, MOUNTS, [{ dmUuid: "CRYPT-LUKS2-abc123-estia", id: "254:1" }]);
 
       expect(detectAtRestEncryption("/data", roots)).toMatchObject({ state: "active" });
-      expect(detectAtRestEncryption("/data", roots).detail).toMatch(/CRYPT-LUKS2/);
+      expect(inItaliano(detectAtRestEncryption("/data", roots).detailFrasi)).toMatch(/CRYPT-LUKS2/);
     });
   });
 
@@ -107,7 +112,7 @@ describe("what the instance can observe", () => {
 
       expect(detection.state).toBe("inactive");
       // And it admits what it still cannot see, instead of sounding certain.
-      expect(detection.detail).toMatch(/firmware|hardware/i);
+      expect(inItaliano(detection.detailFrasi)).toMatch(/firmware|hardware/i);
     });
   });
 
@@ -118,7 +123,7 @@ describe("what the instance can observe", () => {
       const detection = detectAtRestEncryption("/data", roots);
 
       expect(detection.state).toBe("unknown");
-      expect(detection.detail).toMatch(/zfs get encryption/);
+      expect(inItaliano(detection.detailFrasi)).toMatch(/zfs get encryption/);
     });
   });
 
@@ -140,7 +145,7 @@ describe("what the instance can observe", () => {
 describe("putting observation and declaration together", () => {
   it("agrees when the declaration matches what is there", () => {
     const report = buildAtRestReport(
-      { detail: "Il volume è cifrato.", state: "active" },
+      { detail: "Il volume è cifrato.", detailFrasi: [], state: "active" },
       "passphrase",
     );
 
@@ -150,17 +155,17 @@ describe("putting observation and declaration together", () => {
   /** The case ADR 0007 exists for: a claimed protection that is not there. */
   it("contradicts a declaration the instance cannot see, and says what to assume", () => {
     const report = buildAtRestReport(
-      { detail: "Nessuna cifratura rilevata.", state: "inactive" },
+      { detail: "Nessuna cifratura rilevata.", detailFrasi: [], state: "inactive" },
       "passphrase",
     );
 
     expect(report.consistent).toBe(false);
-    expect(report.detail).toMatch(/NON protetti/);
+    expect(inItaliano(report.detailFrasi)).toMatch(/NON protetti/);
   });
 
   it("does not contradict a declaration it merely cannot verify", () => {
     const report = buildAtRestReport(
-      { detail: "Non verificabile.", state: "unknown" },
+      { detail: "Non verificabile.", detailFrasi: [], state: "unknown" },
       "automatic",
     );
 
@@ -169,8 +174,10 @@ describe("putting observation and declaration together", () => {
 
   it("leaves «none» alone: declaring no encryption is never a false claim", () => {
     expect(
-      buildAtRestReport({ detail: "Nessuna cifratura rilevata.", state: "inactive" }, "none")
-        .consistent,
+      buildAtRestReport(
+        { detail: "Nessuna cifratura rilevata.", detailFrasi: [], state: "inactive" },
+        "none",
+      ).consistent,
     ).toBe(true);
   });
 });
@@ -180,7 +187,7 @@ describe("what an administrator actually sees", () => {
 
   async function withAdmin(
     declared: "passphrase" | "none" | "unspecified",
-    detection: { state: "active" | "inactive" | "unknown"; detail: string },
+    detection: { state: "active" | "inactive" | "unknown"; detail: string; detailFrasi?: [] },
     use: (diagnostics: AdminDiagnostics, logs: string) => void,
   ): Promise<void> {
     await withTempDataDir(async (dataDir) => {
@@ -194,7 +201,7 @@ describe("what an administrator actually sees", () => {
           }),
         },
         {
-          atRest: detection,
+          atRest: { detailFrasi: [], ...detection },
           logDestination: new Writable({
             write(chunk, _encoding, done) {
               captured.push(String(chunk));
@@ -241,7 +248,11 @@ describe("what an administrator actually sees", () => {
   it("reports an encrypted volume, and does not pretend to know how it unlocks", async () => {
     await withAdmin(
       "passphrase",
-      { detail: "Il volume che contiene i dati è cifrato (CRYPT-LUKS2).", state: "active" },
+      {
+        detail: "Il volume che contiene i dati è cifrato (CRYPT-LUKS2).",
+        detailFrasi: [],
+        state: "active",
+      },
       (diagnostics) => {
         expect(diagnostics.atRest).toMatchObject({
           consistent: true,
@@ -256,10 +267,14 @@ describe("what an administrator actually sees", () => {
   it("contradicts a declared protection it cannot see, in the answer and in the logs", async () => {
     await withAdmin(
       "passphrase",
-      { detail: "Nessuna cifratura rilevata sul volume dei dati (ext4).", state: "inactive" },
+      {
+        detail: "Nessuna cifratura rilevata sul volume dei dati (ext4).",
+        detailFrasi: [],
+        state: "inactive",
+      },
       (diagnostics, logs) => {
         expect(diagnostics.atRest.consistent).toBe(false);
-        expect(diagnostics.atRest.detail).toMatch(/NON protetti/);
+        expect(inItaliano(diagnostics.atRest.detailFrasi)).toMatch(/NON protetti/);
         expect(logs).toContain("at_rest_mismatch");
       },
     );
@@ -268,7 +283,7 @@ describe("what an administrator actually sees", () => {
   it("stays quiet when nothing was declared and nothing was found", async () => {
     await withAdmin(
       "unspecified",
-      { detail: "Nessuna cifratura rilevata.", state: "inactive" },
+      { detail: "Nessuna cifratura rilevata.", detailFrasi: [], state: "inactive" },
       (diagnostics, logs) => {
         expect(diagnostics.atRest.consistent).toBe(true);
         expect(logs).not.toContain("at_rest_mismatch");

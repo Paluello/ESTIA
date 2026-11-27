@@ -4,6 +4,7 @@ import { Button, IconButton } from "./Button.js";
 import { ListRow } from "./ListRow.js";
 import { Sheet } from "./Sheet.js";
 import type { IconName } from "./icons/Icon.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * Le azioni su una cosa, dietro un burger.
@@ -72,6 +73,7 @@ export function MenuAzioni({
   voci,
   occupato = false,
 }: MenuAzioniProps): React.ReactElement {
+  useT();
   const ancora = useRef<HTMLButtonElement>(null);
   const [aperto, setAperto] = useState(false);
   const [daConfermare, setDaConfermare] = useState<VoceMenu | undefined>();
@@ -154,7 +156,7 @@ export function MenuAzioni({
               {daConfermare.conferma.etichetta}
             </Button>
             <Button block onClick={() => setDaConfermare(undefined)} variant="secondary">
-              Annulla
+              {t("comune.annulla")}
             </Button>
           </div>
         )}

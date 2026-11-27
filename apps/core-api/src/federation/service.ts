@@ -1,4 +1,7 @@
+import type { Frase } from "@estia/contracts";
+
 import { DomainError } from "../errors.js";
+import { detto, frase } from "../frasi.js";
 
 import type { AlpnService, InstanceEndpoint, IrohConnection } from "./endpoint.js";
 import { RemoteBudgets, type BudgetLevel } from "./limits.js";
@@ -2218,6 +2221,7 @@ export class FederationService implements AlpnService {
   ): Promise<{
     reached: boolean;
     detail: string;
+    detailFrasi: Frase[];
     declaredName?: string;
     via?: ReachedVia;
   }> {
@@ -2235,7 +2239,7 @@ export class FederationService implements AlpnService {
       );
 
       if (!isOk(response)) {
-        return { detail: refusalOf(response), reached: false };
+        return { ...detto(refusalOf(response)), reached: false };
       }
 
       const declaredName = typeof response.nome === "string" ? response.nome : undefined;
@@ -2252,17 +2256,24 @@ export class FederationService implements AlpnService {
       }
 
       return {
-        detail:
-          via === "relay"
-            ? "Raggiunta attraverso un relay: il collegamento diretto non è passato."
-            : "Raggiunta per collegamento diretto, senza intermediari.",
+        ...detto(
+          frase(
+            via === "relay"
+              ? "diagnostica.rete.raggiunta_relay"
+              : "diagnostica.rete.raggiunta_diretta",
+          ),
+        ),
         reached: true,
         via,
         ...(declaredName === undefined ? {} : { declaredName }),
       };
     } catch (error) {
       return {
-        detail: `Non raggiunta: ${error instanceof Error ? error.message : String(error)}`,
+        ...detto(
+          frase("diagnostica.rete.non_raggiunta", {
+            motivo: error instanceof Error ? error.message : String(error),
+          }),
+        ),
         reached: false,
       };
     }
@@ -2432,14 +2443,16 @@ function isConnected(response: unknown): boolean {
   return isOk(response) && response.stato === "collegata";
 }
 
-function refusalOf(response: unknown): string {
+// The other instance's own sentence is in its own language: it travels as a
+// value, never as a key of this table.
+function refusalOf(response: unknown): Frase {
   if (typeof response === "object" && response !== null) {
     const message = (response as { messaggio?: unknown }).messaggio;
 
     if (typeof message === "string" && message.length <= MAX_NAME_LENGTH * 4) {
-      return message;
+      return frase("diagnostica.rete.rifiutata.motivo", { motivo: message });
     }
   }
 
-  return "L'altra istanza ha rifiutato la richiesta.";
+  return frase("diagnostica.rete.rifiutata");
 }

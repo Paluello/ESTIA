@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError, loadConfig } from "./index.js";
 
 describe("loadConfig", () => {
+  it("reads the language of the home, and stops on one the table does not have", () => {
+    expect(loadConfig({ ESTIA_LINGUA: "it" }).lingua).toBe("it");
+    expect(loadConfig({ ESTIA_LINGUA: " en " }).lingua).toBe("en");
+    expect(loadConfig({ ESTIA_LINGUA: "" }).lingua).toBe("en");
+    expect(() => loadConfig({ ESTIA_LINGUA: "klingon" })).toThrow(ConfigurationError);
+    expect(() => loadConfig({ ESTIA_LINGUA: "klingon" })).toThrow(
+      /en \(English\), it \(Italiano\)/,
+    );
+  });
+
   it("uses the safe bootstrap defaults", () => {
     expect(loadConfig({})).toEqual({
       // The instance refuses to be configured where its data would not survive
@@ -17,6 +27,9 @@ describe("loadConfig", () => {
       backup: { scheduled: false },
       dataDir: "./.data",
       host: "0.0.0.0",
+      // Without a terminal nobody was asked, and English is the reference
+      // language (ADR 0046 §6).
+      lingua: "en",
       logLevel: "info",
       media: {
         maxBytes: 5 * 1024 * 1024,

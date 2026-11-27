@@ -217,6 +217,7 @@ errore esplicito se uno è invalido.
 | `ESTIA_HOST`               | `0.0.0.0`   | non vuota                                                     |
 | `ESTIA_PORT`               | `3000`      | intero tra 1 e 65535                                          |
 | `ESTIA_LOG_LEVEL`          | `info`      | `fatal`, `error`, `warn`, `info`, `debug`, `trace` o `silent` |
+| `ESTIA_LINGUA`             | `en`        | `en` o `it`: la lingua della Casa, ognuno la cambia per sé    |
 | `ESTIA_DATA_DIR`           | `./.data`   | non vuota; contiene database, identità e media dell'istanza   |
 | `ESTIA_MEDIA_MAX_BYTES`    | `5242880`   | 5 MiB; dimensione massima di un'immagine caricata             |
 | `ESTIA_MEDIA_MAX_PIXELS`   | `12000000`  | 12 Mpixel; limite separato, contro le bombe di decompressione |

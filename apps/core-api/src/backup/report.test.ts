@@ -1,3 +1,4 @@
+import { traduciFrasi } from "@estia/lingue";
 import { utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -6,6 +7,10 @@ import { withTempDataDir } from "@estia/testing";
 import { describe, expect, it } from "vitest";
 
 import { buildBackupReport } from "./report.js";
+
+function inItaliano(frasi: Parameters<typeof traduciFrasi>[1]): string {
+  return traduciFrasi("it", frasi) ?? "";
+}
 
 /**
  * The failure this report exists for is not the absent backup — the logs have
@@ -36,7 +41,7 @@ describe("what an administrator can see about their backups", () => {
     });
 
     expect(report.health).toBe("not_configured");
-    expect(report.detail).toMatch(/Non ancora attivi/);
+    expect(inItaliano(report.detailFrasi)).toMatch(/Non ancora attivi/);
   });
 
   it("does not cry wolf in the first minutes after a boot", async () => {
@@ -62,7 +67,7 @@ describe("what an administrator can see about their backups", () => {
       });
 
       expect(report.health).toBe("missing");
-      expect(report.detail).toMatch(/Non stanno funzionando/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/Non stanno funzionando/);
     });
   });
 
@@ -82,8 +87,8 @@ describe("what an administrator can see about their backups", () => {
 
       expect(report).toMatchObject({ health: "healthy", intervalHours: 24, keep: 7 });
       expect(report.last?.name).toBe("estia-2026-08-16T09-00-00Z.tar.age");
-      expect(report.detail).toMatch(/Ultimo .*ore fa/);
-      expect(report.detail).toMatch(/Ogni 24 ore/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/Ultimo .*ore fa/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/Ogni 24 ore/);
     });
   });
 
@@ -103,7 +108,7 @@ describe("what an administrator can see about their backups", () => {
       });
 
       expect(report.health).toBe("stale");
-      expect(report.detail).toMatch(/6 giorni fa/);
+      expect(inItaliano(report.detailFrasi)).toMatch(/6 giorni fa/);
     });
   });
 

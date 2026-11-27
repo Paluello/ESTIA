@@ -1,6 +1,28 @@
 import type { UpdateCommand } from "@estia/contracts";
 
+import type { BasePlurale, Chiave, Valori } from "@estia/lingue";
+
+import { frase, inInglese } from "../frasi.js";
 import { shortContainerId, type Installation } from "./installazione.js";
+
+/** A step, with its title and its note in English and by key (ADR 0046). */
+function passo(
+  titolo: Chiave,
+  command: string,
+  nota: Chiave | BasePlurale,
+  valori?: Valori,
+): UpdateCommand {
+  const titleFrase = frase(titolo);
+  const noteFrasi = [frase(nota, valori)];
+
+  return {
+    title: inInglese([titleFrase]),
+    titleFrase,
+    command,
+    note: inInglese(noteFrasi),
+    noteFrasi,
+  };
+}
 
 /**
  * I comandi con cui si aggiorna **questa** istanza, non un'istanza in generale.
@@ -37,33 +59,26 @@ export function composeProjectIn(volume: string): string | undefined {
 }
 
 function conEstiaCli(): UpdateCommand {
-  return {
-    title: "Con il comando «estia» (consigliato)",
-    command: "estia aggiorna",
-    note: "È il comando unico se hai la CLI installata: scarica l'immagine nuova, rileva se usi Compose o un container singolo e ricrea l'istanza preservando porta e volume dati.",
-  };
+  return passo("aggiornamento.passo.estia", "estia aggiorna", "aggiornamento.passo.estia.nota");
 }
 
 function scarica(channel: string): UpdateCommand {
-  return {
-    title: "Oppure a mano — passo 1: scarica l'immagine",
-    command: `docker pull ${channel}`,
-    note: "Questo scarica e basta: da solo non aggiorna niente, il container continua a girare con l'immagine vecchia finché non lo ricrei — è il comando qui sotto a farlo. E non dipende dalla cartella in cui ti trovi: `docker pull` parla con Docker, non con i file che hai lì.",
-  };
+  return passo(
+    "aggiornamento.passo.scarica",
+    `docker pull ${channel}`,
+    "aggiornamento.passo.scarica.nota",
+  );
 }
-
-const TITOLO_COMPOSE =
-  "Oppure a mano — passo 2: se l'istanza l'ha creata Compose — ricreala dalla sua cartella";
 
 const ETICHETTA_CARTELLA = '{{index .Config.Labels "com.docker.compose.project.working_dir"}}';
 
 function conCompose(installation: Installation): UpdateCommand {
   if (installation.containerId === undefined) {
-    return {
-      title: TITOLO_COMPOSE,
-      command: "docker compose ls",
-      note: "La colonna CONFIG FILES dice dove sta il file di questa istanza. Poi, in quella cartella: `cd LA_CARTELLA && docker compose pull && docker compose up -d`.",
-    };
+    return passo(
+      "aggiornamento.passo.compose",
+      "docker compose ls",
+      "aggiornamento.passo.compose.nota_elenco",
+    );
   }
 
   const id = shortContainerId(installation.containerId);
@@ -72,11 +87,12 @@ function conCompose(installation: Installation): UpdateCommand {
   // Senza guardia il comando proseguirebbe nella cartella in cui sei, e
   // `docker compose` risponderebbe che lì non c'è nessun file — vero, e a
   // proposito della cartella sbagliata. Meglio una frase che lo dice.
-  return {
-    title: TITOLO_COMPOSE,
-    command: `D=$(docker inspect -f '${ETICHETTA_CARTELLA}' ${id}); if [ -n "$D" ]; then cd "$D" && docker compose pull && docker compose up -d; else echo "Questo container non l'ha creato Compose: vale l'altro comando."; fi`,
-    note: `La cartella se la ricava da sola: questa istanza conosce il proprio id di container (${id}), e Docker sa dove l'ha creata. Se invece non è stato Compose a farla, non prova nemmeno: te lo scrive e si ferma.`,
-  };
+  return passo(
+    "aggiornamento.passo.compose",
+    `D=$(docker inspect -f '${ETICHETTA_CARTELLA}' ${id}); if [ -n "$D" ]; then cd "$D" && docker compose pull && docker compose up -d; else echo "Questo container non l'ha creato Compose: vale l'altro comando."; fi`,
+    "aggiornamento.passo.compose.nota",
+    { id },
+  );
 }
 
 /**
@@ -106,13 +122,17 @@ function conRicreazione(installation: Installation, channel: string): UpdateComm
     "{{range $p, $b := .HostConfig.PortBindings}}{{range $b}} -p {{.HostPort}}:{{$p}}{{end}}{{end}}";
   const volumi =
     "{{range .Mounts}} -v {{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}:{{.Destination}}{{end}}";
+  // La lingua della Casa (ADR 0046) è l'unica variabile che si porta dietro:
+  // le altre, se un pannello le ha messe, restano scritte nel pannello.
+  const lingua =
+    '{{range .Config.Env}}{{if eq (index (split . "=") 0) "ESTIA_LINGUA"}} -e {{.}}{{end}}{{end}}';
 
-  return {
-    title:
-      "Oppure a mano — passo 2: se l'ha creata il pannello del NAS o `docker run` — rifallo com'è",
-    command: `docker inspect -f 'docker run -d --name {{slice .Name 1}} --restart unless-stopped${porte}${volumi} ${channel}' ${id}`,
-    note: `Questo non ricrea niente: **stampa** il comando che rifà questo container esattamente com'è — nome, porte e cartelle prese da Docker invece che dalla tua memoria. Leggi la riga: dopo ogni \`-v\` ci deve essere il posto in cui stanno davvero i tuoi dati. Poi \`docker rm -f ${id}\` e incolla la riga stampata.`,
-  };
+  return passo(
+    "aggiornamento.passo.ricrea",
+    `docker inspect -f 'docker run -d --name {{slice .Name 1}} --restart unless-stopped${porte}${volumi}${lingua} ${channel}' ${id}`,
+    "aggiornamento.passo.ricrea.nota",
+    { id },
+  );
 }
 
 function conInstallScript(installation: Installation): UpdateCommand {
@@ -122,11 +142,11 @@ function conInstallScript(installation: Installation): UpdateCommand {
     ? `curl -fsSL ${INSTALL_URL} | sh`
     : `curl -fsSL ${INSTALL_URL} | ESTIA_VOLUME=${volume} sh`;
 
-  return {
-    title: "Oppure a mano — passo 2: se l'hai installata con il comando solo — rilancialo",
-    command: comando,
-    note: `È lo stesso comando con cui si installa: scarica l'immagine nuova e rifà il container${volume === undefined ? "" : ` sullo stesso volume «${volume}»`}, quindi i dati restano dove sono. Si ferma da solo, senza toccare niente, se trova un container che tiene i dati altrove.`,
-  };
+  return volume === undefined
+    ? passo("aggiornamento.passo.script", comando, "aggiornamento.passo.script.nota")
+    : passo("aggiornamento.passo.script", comando, "aggiornamento.passo.script.nota_volume", {
+        volume,
+      });
 }
 
 /**
@@ -147,11 +167,11 @@ export function updateCommands(installation: Installation, channel: string): Upd
 
   if (installation.kind === "ephemeral") {
     return [
-      {
-        title: "Prima i dati, poi l'aggiornamento",
-        command: "docker cp CONTAINER:/data ./estia-data-salvata",
-        note: "I dati di questa istanza stanno dentro il container: ricrearlo per aggiornarlo li cancella — account, contenuti, fotografie e la chiave privata, che non è sostituibile. Portali fuori, monta un volume con un nome, e solo allora aggiorna. Il passo è nella guida di installazione.",
-      },
+      passo(
+        "aggiornamento.passo.effimera",
+        "docker cp CONTAINER:/data ./estia-data-salvata",
+        "aggiornamento.passo.effimera.nota",
+      ),
     ];
   }
 

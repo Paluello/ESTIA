@@ -31,10 +31,12 @@ import { esci, ricominciaDaCapo, ripristina, statoAllAccesso } from "./mls/motor
 import { clearSession, loadSession, storeSession } from "./session.js";
 import { AppProvider } from "./state.js";
 import { AvvisiProvider } from "./avvisi.js";
+import { impostaLinguaDellaCasa, t, useT } from "./lingua.js";
 
 type DeviceIdentityState = "loading" | "needs_restore" | "ready";
 
 export function App(): React.ReactElement {
+  useT();
   const [instance, setInstance] = useState<InstancePublicView | undefined>();
   const [user, setUser] = useState<AuthenticatedUser | undefined>();
   const [token, setToken] = useState<string | undefined>();
@@ -61,7 +63,11 @@ export function App(): React.ReactElement {
   };
 
   const refreshInstance = useCallback(async () => {
-    setInstance(await api.instance());
+    const letta = await api.instance();
+
+    // Chi non ha scelto una lingua legge quella della Casa (ADR 0046).
+    impostaLinguaDellaCasa(letta.lingua);
+    setInstance(letta);
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -84,7 +90,7 @@ export function App(): React.ReactElement {
 
     void (async () => {
       try {
-        setInstance(await api.instance());
+        await refreshInstance();
 
         const stored = loadSession();
 
@@ -115,12 +121,12 @@ export function App(): React.ReactElement {
           }
         }
       } catch {
-        setFailure("Non riesco a contattare l'istanza.");
+        setFailure(t("comune.istanza_irraggiungibile"));
       } finally {
         setReady(true);
       }
     })();
-  }, []);
+  }, [refreshInstance]);
 
   const signIn = useCallback((newToken: string, newUser: AuthenticatedUser) => {
     const { daApplicare, daMigrare } = preferenzeDaServer(newUser.appearance);
@@ -188,18 +194,15 @@ export function App(): React.ReactElement {
   }, []);
 
   if (!ready) {
-    return <p className="center">Un momento…</p>;
+    return <p className="center">{t("comune.un_momento")}</p>;
   }
 
   if (failure !== undefined || instance === undefined) {
     return (
       <main className="column column--narrow">
         <div className="card">
-          <h1>Istanza non raggiungibile</h1>
-          <p className="muted">
-            Il server dell'istanza non risponde. Se sei fuori casa, ricorda che ESTIA vive sulla
-            rete locale della tua comunità.
-          </p>
+          <h1>{t("app.irraggiungibile.titolo")}</h1>
+          <p className="muted">{t("app.irraggiungibile.testo")}</p>
         </div>
       </main>
     );
@@ -227,7 +230,7 @@ export function App(): React.ReactElement {
   }
 
   if (user !== undefined && deviceIdentityState === "loading") {
-    return <p className="center">Un momento…</p>;
+    return <p className="center">{t("comune.un_momento")}</p>;
   }
 
   if (user !== undefined && deviceIdentityState === "needs_restore") {

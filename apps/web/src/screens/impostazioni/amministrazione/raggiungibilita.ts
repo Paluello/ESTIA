@@ -1,5 +1,6 @@
 import type { FederatedInstanceView } from "@estia/contracts";
 
+import { t, tn } from "../../../lingua.js";
 import { giornoEMese } from "../../../tempo.js";
 
 /**
@@ -54,28 +55,28 @@ export function daQuando(valore: string, adesso: Date = new Date()): string {
   }
 
   if (trascorso < MINUTO) {
-    return "meno di un minuto fa";
+    return t("battito.meno_di_un_minuto");
   }
 
   if (trascorso < ORA) {
     const minuti = Math.floor(trascorso / MINUTO);
 
-    return minuti === 1 ? "un minuto fa" : `${String(minuti)} minuti fa`;
+    return tn("battito.minuti_fa", minuti);
   }
 
   if (trascorso < GIORNO) {
     const ore = Math.floor(trascorso / ORA);
 
-    return ore === 1 ? "un'ora fa" : `${String(ore)} ore fa`;
+    return tn("battito.ore_fa", ore);
   }
 
   if (trascorso < SETTIMANA) {
     const giorni = Math.floor(trascorso / GIORNO);
 
-    return giorni === 1 ? "ieri" : `${String(giorni)} giorni fa`;
+    return tn("battito.giorni_fa", giorni);
   }
 
-  return `il ${giornoEMese(istante)}`;
+  return t("battito.il_giorno", { giorno: giornoEMese(istante) });
 }
 
 /** Fra quanto, per l'arretramento: è l'unico posto dove i minuti si vedono. */
@@ -86,29 +87,29 @@ export function fraQuanto(valore: string, adesso: Date = new Date()): string {
   if (Number.isNaN(mancante) || mancante <= MINUTO) {
     // Sotto il minuto non si promette un numero: il giro del battito ha una
     // grana sua, e «fra 4 secondi» sarebbe una precisione che non esiste.
-    return "a momenti";
+    return t("battito.a_momenti");
   }
 
   if (mancante < ORA) {
     const minuti = Math.round(mancante / MINUTO);
 
-    return minuti === 1 ? "fra un minuto" : `fra ${String(minuti)} minuti`;
+    return tn("battito.fra_minuti", minuti);
   }
 
   const ore = Math.round(mancante / ORA);
 
-  return ore === 1 ? "fra un'ora" : `fra ${String(ore)} ore`;
+  return tn("battito.fra_ore", ore);
 }
 
 /** Due parole per il pallino e per chi legge con lo screen reader. */
 export function etichettaDi(segnale: Segnale): string {
   switch (segnale) {
     case "raggiungibile":
-      return "Raggiungibile";
+      return t("battito.raggiungibile");
     case "non-risponde":
-      return "Non risponde";
+      return t("battito.non_risponde");
     case "in-ascolto":
-      return "Controllo in arrivo";
+      return t("battito.in_ascolto");
     case "non-osservata":
       return "";
   }
@@ -128,36 +129,40 @@ export function fraseDi(istanza: FederatedInstanceView, adesso: Date = new Date(
 
   const via =
     istanza.lastReachedVia === "relay"
-      ? ", attraverso un relay"
+      ? t("battito.via_relay")
       : istanza.lastReachedVia === "diretto"
-        ? ", per collegamento diretto"
+        ? t("battito.via_diretto")
         : "";
 
   switch (segnale) {
     case "raggiungibile":
       return istanza.lastSeenAt === null
         ? ""
-        : `Ha risposto ${daQuando(istanza.lastSeenAt, adesso)}${via}.`;
+        : t("battito.ha_risposto", { quando: daQuando(istanza.lastSeenAt, adesso), via });
 
     case "non-risponde": {
       const riprova =
         istanza.battito === undefined
           ? ""
-          : ` Riprovo da solo ${fraQuanto(istanza.battito.prossimoTentativo, adesso)}.`;
+          : t("battito.riprovo", { quando: fraQuanto(istanza.battito.prossimoTentativo, adesso) });
 
       return istanza.lastSeenAt === null
-        ? `Non ha mai risposto finora.${riprova}`
-        : `Vista l'ultima volta ${daQuando(istanza.lastSeenAt, adesso)}${via}.${riprova}`;
+        ? t("battito.mai_risposto", { riprova })
+        : t("battito.vista_riprova", {
+            quando: daQuando(istanza.lastSeenAt, adesso),
+            via,
+            riprova,
+          });
     }
 
     case "in-ascolto":
       return istanza.lastSeenAt === null
-        ? "Il primo controllo parte a momenti."
-        : `Vista ${daQuando(istanza.lastSeenAt, adesso)}${via}. Il primo controllo parte a momenti.`;
+        ? t("battito.primo_controllo")
+        : t("battito.vista_primo_controllo", { quando: daQuando(istanza.lastSeenAt, adesso), via });
 
     case "non-osservata":
       return istanza.lastSeenAt === null
-        ? "Mai raggiunta finora."
-        : `Vista l'ultima volta ${daQuando(istanza.lastSeenAt, adesso)}${via}.`;
+        ? t("battito.mai_raggiunta")
+        : t("battito.vista", { quando: daQuando(istanza.lastSeenAt, adesso), via });
   }
 }

@@ -142,7 +142,11 @@ importers:
         specifier: 8.2.1
         version: 8.2.1(@types/node@24.13.3)(terser@5.50.0)(yaml@2.9.0)
 
-  packages/config: {}
+  packages/config:
+    dependencies:
+      "@estia/lingue":
+        specifier: workspace:*
+        version: link:../lingue
 
   packages/contracts: {}
 

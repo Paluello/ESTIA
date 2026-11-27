@@ -9,11 +9,13 @@ import { Sidebar } from "./Sidebar.js";
 import { TabBar } from "./TabBar.js";
 import { ThreadNavProvider } from "./thread-nav.js";
 import { TopBar } from "./TopBar.js";
+import { t, useT } from "../lingua.js";
 
 /**
  * La cornice: top bar + contenuto + tab (mobile) oppure sidebar in overlay (desktop).
  */
 export function AppShell(): React.ReactElement {
+  useT();
   const { modo } = useApp();
   const { pathname } = useLocation();
   const inImpostazioni = pathname.startsWith("/impostazioni");
@@ -57,7 +59,7 @@ export function AppShell(): React.ReactElement {
       <NotificheProvider>
         <div className="app">
           <a className="skip-link" href="#contenuto">
-            Vai al contenuto
+            {t("app.vai_al_contenuto")}
           </a>
 
           <Sidebar />
