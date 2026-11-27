@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * Il numero di sicurezza come lo vede la persona: il pannello, il «verificato»
- * e l'avviso ([ADR 0048](../../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * e l'avviso ([ADR 0050](../../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * Il calcolo è vero e le chiavi sono finte; il registro è una mappa che il test
  * può cambiare, cioè la sola parte che in produzione appartiene a qualcun altro.

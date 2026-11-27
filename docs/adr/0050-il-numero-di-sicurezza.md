@@ -1,4 +1,4 @@
-# ADR 0048 — Il numero di sicurezza: uno per coppia, fatto come quello di Signal
+# ADR 0050 — Il numero di sicurezza: uno per coppia, fatto come quello di Signal
 
 - Stato: **Proposed** — il merito (uno per coppia, dentro M8) è deciso dal proprietario dal 2026-09-17; **la derivazione scritta qui aspetta la sua approvazione**. Il codice che la attua è costruito il 2026-11-27 e non va considerato definitivo finché questo ADR non è Accepted: cambiare la formula dopo vuol dire invalidare ogni verifica già fatta
 - Data: 2026-11-27

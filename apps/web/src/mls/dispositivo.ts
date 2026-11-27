@@ -172,7 +172,7 @@ export async function esisteIdentita(cassetto: Cassetto): Promise<boolean> {
 /**
  * La chiave pubblica di firma di questo dispositivo, se ne ha una.
  *
- * Serve al numero di sicurezza ([ADR 0048](../../../../docs/adr/0048-il-numero-di-sicurezza.md)):
+ * Serve al numero di sicurezza ([ADR 0050](../../../../docs/adr/0050-il-numero-di-sicurezza.md)):
  * prima di mostrare un numero, il client guarda che **questa** chiave sia fra
  * quelle che il registro dichiara per chi lo sta guardando. Se non c'è, il
  * numero che gli altri calcolano non parla di questo dispositivo.

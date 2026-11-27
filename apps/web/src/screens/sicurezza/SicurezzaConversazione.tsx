@@ -28,7 +28,7 @@ const nomeDi = (autore: AuthorView): string =>
 
 /**
  * Il numero di sicurezza dentro una conversazione: l'avviso e il pannello
- * ([ADR 0048](../../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * ([ADR 0050](../../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * Fa due cose, e sono le due che la conversazione deve alla persona:
  *

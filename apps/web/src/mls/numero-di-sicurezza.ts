@@ -1,5 +1,5 @@
 /**
- * Il numero di sicurezza ([ADR 0048](../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * Il numero di sicurezza ([ADR 0050](../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * È l'unica difesa contro chi tiene il registro delle chiavi — l'istanza, chi
  * la amministra, chi l'ha compromessa: il limite 4 di [ADR 0036](../../../../docs/adr/0036-estia-e2e-v1-e-il-debito-verso-mls.md),
@@ -12,7 +12,7 @@
  * (`NumericFingerprintGenerator`, in libsignal `rust/protocol/src/fingerprint.rs`),
  * e [`improntaSignal`](#improntaSignal) ne è la trascrizione: la prova accanto
  * la confronta con il vettore ufficiale di libsignal. Di ESTIA ci sono solo i
- * due ingressi, e ADR 0048 dice perché:
+ * due ingressi, e ADR 0050 dice perché:
  *
  * - l'**identificativo** è l'identità della credenziale MLS, `<username>@<chiave
  *   della casa>` ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §0),

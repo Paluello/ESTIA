@@ -1,6 +1,6 @@
 /**
  * Chi è verificato, provato con dispositivi veri e un registro finto
- * ([ADR 0048](../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * ([ADR 0050](../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * I dispositivi sono quelli di [`preparaDispositivo`](./dispositivo.ts), con
  * chiavi di firma MLS vere; il registro è una mappa, perché è la sola cosa che

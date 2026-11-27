@@ -2474,7 +2474,7 @@ a.post__author:hover {
 }
 
 /**
- * Il numero di sicurezza (ADR 0048): sessanta cifre in dodici gruppi da cinque,
+ * Il numero di sicurezza (ADR 0050): sessanta cifre in dodici gruppi da cinque,
  * quattro per riga. Si legge a voce a un'altra persona, un gruppo alla volta:
  * per questo i gruppi stanno in una griglia e non vanno a capo dove capita.
  */

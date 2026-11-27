@@ -1,6 +1,6 @@
 /**
  * Chi è verificato, e che cosa si mostra a chi vuole confrontare
- * ([ADR 0048](../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * ([ADR 0050](../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * Il calcolo sta in [`numero-di-sicurezza`](./numero-di-sicurezza.ts); qui c'è
  * il suo contorno: da dove vengono le chiavi, dove si ricorda un «verificato»,

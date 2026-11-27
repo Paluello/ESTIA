@@ -1,6 +1,6 @@
 /**
  * Il numero di sicurezza, provato per ciò che deve garantire
- * ([ADR 0048](../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * ([ADR 0050](../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * Tre gruppi di prove, e ognuno blocca una cosa diversa:
  *

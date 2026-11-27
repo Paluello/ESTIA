@@ -36,7 +36,7 @@ type Lettura = { fase: "carico" } | { fase: "errore" } | { fase: "letto"; sicure
 
 /**
  * Il numero di sicurezza fra chi guarda e **una** persona
- * ([ADR 0048](../../../../../docs/adr/0048-il-numero-di-sicurezza.md)).
+ * ([ADR 0050](../../../../../docs/adr/0050-il-numero-di-sicurezza.md)).
  *
  * È lo stesso pannello nei messaggi privati e in un gruppo, perché è lo stesso
  * numero: non prende una conversazione, prende una persona.
