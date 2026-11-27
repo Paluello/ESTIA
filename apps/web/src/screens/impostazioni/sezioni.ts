@@ -21,6 +21,7 @@ export type Chiave =
   | "presenza"
   | "chat"
   | "dispositivi"
+  | "segnalazioni"
   | "informazioni"
   | "inviti"
   | "estianet"
@@ -56,6 +57,9 @@ export const TITOLI: Readonly<Record<Chiave, string>> = {
   },
   get presenza(): string {
     return t("sezioni.presenza");
+  },
+  get segnalazioni(): string {
+    return t("sezioni.segnalazioni");
   },
   get registro(): string {
     return t("sezioni.registro");
