@@ -30,11 +30,11 @@
 
 set -eu
 
-IMAGE="${ESTIA_IMAGE:-ghcr.io/chrono-web/estia:latest}"
+IMAGE="${ESTIA_IMAGE:-ghcr.io/paluello/estia:latest}"
 NAME="${ESTIA_CONTAINER:-estia}"
 VOLUME="${ESTIA_VOLUME:-estia-data}"
 PORT="${ESTIA_PORT:-3000}"
-CLI_URL="${ESTIA_CLI_URL:-https://raw.githubusercontent.com/chrono-web/estia/main/bin/estia}"
+CLI_URL="${ESTIA_CLI_URL:-https://raw.githubusercontent.com/Paluello/ESTIA/main/bin/estia}"
 
 CLI_DEST=""
 CLI_NEL_PATH=0
@@ -125,6 +125,23 @@ without this password the command goes into your home folder." ;;
 	*:docker.manca) printf '%s' "Docker is not here. On a NAS you install it from the app centre — Container Manager on Synology, Container Station on QNAP, Docker on UGREEN — and on Linux with: curl -fsSL https://get.docker.com | sh" ;;
 	it:docker.muto) printf '%s' "Docker c'e' ma non risponde. Se sei su Linux e l'hai appena installato, il tuo utente non e' ancora nel gruppo docker: 'sudo usermod -aG docker \"\$USER\"', poi chiudi e riapri il terminale." ;;
 	*:docker.muto) printf '%s' "Docker is here but does not answer. If you are on Linux and have just installed it, your user is not in the docker group yet: 'sudo usermod -aG docker \"\$USER\"', then close and reopen the terminal." ;;
+
+	it:docker.nas) printf '%s' "Docker non c'e', e questa macchina e' un NAS: li' Docker si installa dal centro applicazioni — Container Manager su Synology, Container Station su QNAP, Docker su UGREEN — non da qui. Fatto quello, rilancia questo stesso comando." ;;
+	*:docker.nas) printf '%s' "Docker is not here, and this machine is a NAS: there Docker is installed from the app centre — Container Manager on Synology, Container Station on QNAP, Docker on UGREEN — not from here. Once that is done, run this same command again." ;;
+	it:docker.proposta) printf '%s' "Docker non c'e'. ESTIA gira dentro Docker, e posso installarlo io adesso dai pacchetti di questo sistema (${DOCKER_COME}). Serve la password di amministratore (sudo), una volta." ;;
+	*:docker.proposta) printf '%s' "Docker is not here. ESTIA runs inside Docker, and I can install it now from this system's packages (${DOCKER_COME}). It needs the administrator password (sudo), once." ;;
+	it:docker.domanda) printf '%s' "Installo Docker? [S/n] > " ;;
+	*:docker.domanda) printf '%s' "Install Docker? [Y/n] > " ;;
+	it:docker.installo) printf '%s' "Installo Docker… (qualche minuto, e' normale che stia fermo un po')" ;;
+	*:docker.installo) printf '%s' "Installing Docker… (a few minutes; it is normal for it to sit still for a while)" ;;
+	it:docker.installato) printf '%s' "Docker e' installato." ;;
+	*:docker.installato) printf '%s' "Docker is installed." ;;
+	it:docker.fallito) printf '%s' "L'installazione di Docker non e' riuscita. Il messaggio qui sopra dice perche'; la strada a mano e' il passo 1 della guida: https://github.com/Paluello/ESTIA/blob/main/docs/INSTALLAZIONE.md" ;;
+	*:docker.fallito) printf '%s' "Installing Docker did not work. The message above says why; the manual way is step 1 of the guide: https://github.com/Paluello/ESTIA/blob/main/docs/en/INSTALL.md" ;;
+	it:docker.rifiutato) printf '%s' "Va bene, non tocco niente. Quando Docker c'e', rilancia questo stesso comando." ;;
+	*:docker.rifiutato) printf '%s' "Fine, I am not touching anything. Once Docker is here, run this same command again." ;;
+	it:docker.con_sudo) printf '%s' "Il tuo utente non e' ancora nel gruppo docker (vale dal prossimo accesso): per questa volta uso sudo." ;;
+	*:docker.con_sudo) printf '%s' "Your user is not in the docker group yet (it takes effect at your next login): this time I am using sudo." ;;
 
 	it:esistente.senza_volume) printf '%s' "C'e' gia' un container «${NAME}» che tiene i dati dentro di se', senza volume. Ricrearlo li cancellerebbe. Fermati: 'docker cp $NAME:/data ./estia-data-salvata' li porta fuori, e da li' si ripartono." ;;
 	*:esistente.senza_volume) printf '%s' "There is already a container «${NAME}» that keeps its data inside itself, without a volume. Recreating it would erase them. Stop here: 'docker cp $NAME:/data ./estia-data-saved' copies them out, and you start again from there." ;;
@@ -440,18 +457,144 @@ if [ "${ESTIA_SOLO_CLI:-}" = "1" ]; then
 	die "$(frase cli.non_copiato)"
 fi
 
+# --- Docker, per chi non lo conosce -------------------------------------------
+#
+# La prova del 2026-08-15 ha detto che l'installazione, non il prodotto, e' la
+# parte che non regge; e il primo muro e' Docker. Su un Linux qualunque lo
+# script lo installa da se', con il consenso di chi installa, invece di
+# rimandare a una guida. Su un NAS no: li' Docker e' un'applicazione del
+# pannello, e installarlo da terminale romperebbe il sistema del produttore.
+#
+# Si usano i pacchetti della distribuzione dove c'e' apt (Debian, Ubuntu, Mint,
+# Raspberry Pi OS): firmati da chi mantiene il sistema, nessuno script di terzi
+# eseguito da root. Altrove lo script ufficiale di Docker, che riconosce
+# Fedora, CentOS e RHEL. Su tutto il resto ci si ferma e si dice come.
+
+OS_RELEASE="${ESTIA_OS_RELEASE:-/etc/os-release}"
+DOCKER_COME=""
+DOCKER_SUDO=""
+
+come_root() {
+	if [ "$(id -u)" -eq 0 ]; then
+		"$@"
+	else
+		sudo "$@"
+	fi
+}
+
+e_un_nas() {
+	[ -f /etc/synoinfo.conf ] || [ -f /etc/config/qpkg.conf ] || [ -d /ugreen ] || [ -f /etc/nas.conf ] || [ "${ESTIA_FINTO_NAS:-}" = "1" ]
+}
+
+# Che cosa userei per installare Docker qui, o niente se non lo so fare.
+scegli_installatore_docker() {
+	DOCKER_COME=""
+	[ "$(uname -s)" = "Linux" ] || return 1
+	[ -r "$OS_RELEASE" ] || return 1
+	id_os=$(sed -n 's/^ID=//p' "$OS_RELEASE" | tr -d '"' | head -n 1)
+	id_like=$(sed -n 's/^ID_LIKE=//p' "$OS_RELEASE" | tr -d '"' | head -n 1)
+	if command -v apt-get >/dev/null 2>&1; then
+		case " $id_os $id_like " in
+		*" debian "* | *" ubuntu "* | *" raspbian "*)
+			DOCKER_COME="apt-get install docker.io"
+			return 0
+			;;
+		esac
+	fi
+	case "$id_os" in
+	fedora | centos | rhel | rocky | almalinux)
+		if command -v curl >/dev/null 2>&1; then
+			DOCKER_COME="get.docker.com"
+			return 0
+		fi
+		;;
+	esac
+	return 1
+}
+
+installa_docker() {
+	case "$DOCKER_COME" in
+	"apt-get install docker.io")
+		come_root apt-get update -q </dev/null || return 1
+		come_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker.io </dev/null || return 1
+		;;
+	get.docker.com)
+		tmp_docker=$(mktemp)
+		curl -fsSL https://get.docker.com -o "$tmp_docker" || return 1
+		come_root sh "$tmp_docker" </dev/null || return 1
+		rm -f "$tmp_docker"
+		;;
+	*) return 1 ;;
+	esac
+
+	if command -v systemctl >/dev/null 2>&1; then
+		come_root systemctl enable --now docker >/dev/null 2>&1 || true
+	fi
+	if [ "$(id -u)" -ne 0 ]; then
+		come_root usermod -aG docker "$(id -un)" || true
+	fi
+	command -v docker >/dev/null 2>&1
+}
+
+# Docker c'e' e risponde, oppure lo si rende tale, oppure ci si ferma dicendo
+# che cosa fare. ESTIA_INSTALLA_DOCKER=1 risponde si' senza chiedere (per chi
+# installa senza terminale, da uno script); =0 non lo installa mai.
+assicura_docker() {
+	if ! command -v docker >/dev/null 2>&1; then
+		if e_un_nas; then
+			die "$(frase docker.nas)"
+		fi
+		if [ "${ESTIA_INSTALLA_DOCKER:-}" = "0" ] || ! scegli_installatore_docker; then
+			die "$(frase docker.manca)"
+		fi
+
+		if [ "${ESTIA_INSTALLA_DOCKER:-}" != "1" ]; then
+			terminale || die "$(frase docker.manca)"
+			sayb "${CYELLOW}$(frase docker.proposta)${C0}"
+			printf '%s' "$(frase docker.domanda)"
+			risposta=""
+			IFS= read -r risposta <"$TTY" || risposta=""
+			say ""
+			case "$risposta" in
+			"" | s | S | si | sì | y | Y | yes) ;;
+			*) die "$(frase docker.rifiutato)" ;;
+			esac
+		fi
+
+		sayb "${CCYAN}→${C0} $(frase docker.installo)"
+		installa_docker || die "$(frase docker.fallito)"
+		sayb "${CGREEN}●${C0} $(frase docker.installato)"
+	fi
+
+	if command docker info >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Spento: si prova ad accenderlo.
+	if command -v systemctl >/dev/null 2>&1; then
+		come_root systemctl start docker >/dev/null 2>&1 || true
+		command docker info >/dev/null 2>&1 && return 0
+	fi
+
+	# Acceso ma non nostro: il gruppo docker vale dal prossimo accesso.
+	if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+		DOCKER_SUDO=1
+		# Da qui ogni chiamata a Docker passa da sudo. Si definisce solo adesso,
+		# perche' `command -v docker` vede anche le funzioni.
+		docker() { sudo docker "$@"; }
+		sayb "  ${CDIM}$(frase docker.con_sudo)${C0}"
+		return 0
+	fi
+
+	die "$(frase docker.muto)"
+}
+
 # --- Istanza -----------------------------------------------------------------
 
 # Prima di ogni altra cosa, cosi' da qui in poi l'installatore parla quella.
 scegli_lingua chiedi
 
-if ! command -v docker >/dev/null 2>&1; then
-	die "$(frase docker.manca)"
-fi
-
-if ! docker info >/dev/null 2>&1; then
-	die "$(frase docker.muto)"
-fi
+assicura_docker
 
 # Il controllo che questo script esiste per non far saltare a nessuno.
 #
@@ -607,5 +750,5 @@ sayb "💾 ${C1}$(frase esito.aggiornare)${C0}
 
       docker logs ${NAME} | head -20
 
-${CDIM}$(frase esito.documentazione) https://github.com/chrono-web/estia${C0}
+${CDIM}$(frase esito.documentazione) https://github.com/Paluello/ESTIA${C0}
 "

@@ -22,7 +22,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository_owner }}/estia
 
-# `Chrono-Web` ha una maiuscola e i nomi dei repository Docker devono essere
+# `Paluello` ha una maiuscola e i nomi dei repository Docker devono essere
 # minuscoli. `metadata-action` normalizza da se', quindi finche' il nome passava
 # solo di li' non si vedeva; qui serve anche a `imagetools`, e le espressioni di
 # GitHub non sanno abbassare le maiuscole. Da cui questo passo, ripetuto nei due

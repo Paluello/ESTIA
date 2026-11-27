@@ -14,6 +14,16 @@ Questo piano copre la **Fase 1** del piano di progetto di luglio 2026 e la espan
 - I budget di esperienza di [`PRODUCT_VISION.md`](PRODUCT_VISION.md) §4 sono criteri di gate, non aspirazioni.
 - Ricerca con utenti e reclutamento del pilot non rientrano in questo piano tecnico. I budget di esperienza sì.
 
+### Deroga del 2026-11-27: il mese verso la 1.0
+
+**Decisa dal proprietario il 2026-11-27**: il lavoro verso la 1.0 procede **in parallelo** invece che una milestone per volta. Insieme sono aperti: l'accesso del Dispositivo e l'app ([ADR 0044](adr/0044-il-dispositivo-e-l-app.md), con il multi-dispositivo di [ADR 0040](adr/0040-un-membro-ha-piu-di-un-dispositivo.md)), i relay della comunità ([ADR 0045](adr/0045-la-rete-dei-relay-della-comunita.md)), M8, la moderazione federata ([ADR 0047](adr/0047-le-segnalazioni-si-visitano.md)) e la preparazione del lancio. Le PR si uniscono quando i controlli sono verdi.
+
+**Che cosa la deroga apre.** Apre la **costruzione**: codice, test e documentazione di più milestone nello stesso tempo.
+
+**Che cosa non apre.** Non apre i **gate**. I gate sul campo restano nell'ordine di ADR 0044 (app → M8 → 1.0) e li fa il proprietario su Case e persone vere. Una voce costruita in parallelo resta `[~]` finché la sua prova non c'è. Una casella diventa `[x]` solo dopo una verifica contro il codice, perché M7 è stata ritirata per nove caselle che non vi corrispondevano.
+
+**Che cosa la revoca.** Se un gate sul campo trova un difetto che tocca la riservatezza o i dati di qualcuno, il lavoro in parallelo si ferma finché quel difetto non è corretto.
+
 ## Il cambio di rotta, in breve
 
 Lo spike di rete ha stabilito che il control plane non serve: il primo contatto avviene sulla **rete locale**, dove non occorre alcuna infrastruttura di fiducia. Ne conseguono tre semplificazioni:
@@ -803,8 +813,22 @@ Lato istanza il `tipo` c'è già nello schema e nei contratti (`CONVERSAZIONE_TI
 
 ### Fase 3 — Le misure che nessuno ha fatto
 
-- [ ] **Quanto pesano `GroupInfo` e Welcome su un gruppo vero.** [S3](spike/S3-il-rientro-di-un-dispositivo.md) ne ha misurati 1143 byte per un gruppo da due e dichiara di non aver misurato niente su gruppi grandi. Il tetto di 256 kB (`MAX_GROUP_INFO_CHARS`) è stato scelto senza quel dato, e [ADR 0039](adr/0039-mls-attraversa-le-istanze.md) §5 ci appende il tetto della federazione.
-- [ ] **Quanto costa `validateCredential`.** Viene chiamata a ogni validazione dell'albero: se in ESTIA significa una query per foglia, su gruppi grandi va guardato ([S4](spike/S4-autenticare-chi-entra.md) §«Limiti»).
+- [x] **Quanto pesano `GroupInfo` e Welcome su un gruppo vero.** [S3](spike/S3-il-rientro-di-un-dispositivo.md) ne ha misurati 1143 byte per un gruppo da due e dichiara di non aver misurato niente su gruppi grandi. Il tetto di 256 kB (`MAX_GROUP_INFO_CHARS`) è stato scelto senza quel dato, e [ADR 0039](adr/0039-mls-attraversa-le-istanze.md) §5 ci appende il tetto della federazione.
+- [x] **Quanto costa `validateCredential`.** Viene chiamata a ogni validazione dell'albero: se in ESTIA significa una query per foglia, su gruppi grandi va guardato ([S4](spike/S4-autenticare-chi-entra.md) §«Limiti»).
+
+**Esito della Fase 3, misurato il 2026-11-27** da [`misure.test.ts`](../apps/web/src/mls/misure.test.ts) (vitest, moduli veri di `gruppo.ts`, nessuna rete, nessun database). Il metodo è quello di [S5](spike/S5-quanto-pesa-un-albero.md) — gruppo cresciuto una foglia alla volta, misura in **caratteri Base64** — e il test lo rifà a ogni esecuzione facendone una soglia. I numeri non coincidono con quelli di S5 e non devono: dopo S5 la credenziale porta anche la casa (ADR 0042 §0), e ogni foglia pesa circa il 6% in più. Variano di qualche decina di caratteri da un'esecuzione all'altra (le firme ECDSA sono DER), perciò il test blocca bande e non numeri esatti.
+
+| foglie | Welcome b64 | `GroupInfo` b64 | commit b64 |
+| -----: | ----------: | --------------: | ---------: |
+|      2 |       1 252 |          ~1 110 |       ~805 |
+|     10 |      ~4 200 |          ~4 060 |       ~805 |
+|     25 |      ~9 720 |          ~9 590 |       ~810 |
+|     50 |     ~18 900 |         ~18 800 |       ~805 |
+
+- **Pendenza**: ~367-369 caratteri b64 per foglia (S5: ~349), lineare entro il 5% fra le quattro tappe. Il commit non cresce.
+- **`MAX_GROUP_INFO_CHARS` (262 144 caratteri)**: il `GroupInfo` a 50 foglie ne usa il 7%. Il tetto regge fino a ~700 foglie; il test impone un margine di almeno 10x a ogni tappa.
+- **Busta federata**: `MAX_BUSTA_BYTES` = 65 536 caratteri, e il tetto di lettura di una richiesta che porta una busta è derivato, `MAX_REQUEST_BYTES_CON_BUSTA` = 65 536 + 4 096 = **69 632**. Un Welcome a 50 foglie ne usa il 29% del primo; il tetto di controllo da solo (4 096) non basta già a 10 foglie. Estrapolando la pendenza il primo tetto cade a **~177 foglie** (S5 diceva ~187). Il test impone un margine di 3x a ogni tappa e che il primo tetto resti fra 150 e 250 foglie. **Il disegno non cambia**, come S5 aveva concluso. Resta fuori dalla misura che nessun `GroupInfo` viaggia ancora in una busta: qui si è confrontata la dimensione, non il trasporto.
+- **`validateCredential`**: `ts-mls` la chiama **una volta per foglia** più una — 51 chiamate quando si entra dal Welcome di un gruppo da 50 — e **una sola chiamata** quando si applica o si crea il commit che aggiunge una foglia (si valida solo la foglia nuova). Le **richieste al registro** sono invece **una per persona**, mai due per la stessa nella stessa validazione: 50 persone → 50 richieste a 50 foglie; **25 persone con due dispositivi (50 foglie) → 25 richieste**; commit che aggiunge una foglia → 1 richiesta. Quindi quanto dice il piano («il registro si chiede una volta per validazione») è **vero** ed è provato; il costo di un ingresso su un gruppo da 50 è però **50 richieste al registro**, non una. Un registro remoto lento si sentirebbe solo all'ingresso, non nel traffico ordinario. Il tempo di quelle richieste non è stato misurato: il test conta, perché una soglia in millisecondi sarebbe instabile.
 
 ### Criteri di accettazione
 
