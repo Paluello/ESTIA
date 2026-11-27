@@ -76,8 +76,15 @@ for configurazione in debug Debug; do
   mkdir -p "$esterni"
   cp "src-tauri/target/aarch64-apple-ios-sim/debug/libestia_app_lib.a" "$esterni/libapp.a"
 done
-perl -0pi -e 's/shellScript = "[^"]*tauri ios xcode-script[^"]*";/shellScript = "echo libreria Rust gia costruita da ios-simulatore.sh";/g' \
+# Lo script nel progetto ha virgolette escapate (\"), quindi la stringa si
+# legge carattere per carattere, escape compresi.
+perl -0pi -e 's/shellScript = "(?:[^"\\]|\\.)*?tauri ios xcode-script(?:[^"\\]|\\.)*";/shellScript = "echo libreria Rust gia costruita da ios-simulatore.sh";/g' \
   "$progetto/project.pbxproj"
+if grep -q "tauri ios xcode-script" "$progetto/project.pbxproj"; then
+  echo "La fase «Build Rust Code» non si è lasciata sostituire:" >&2
+  grep -n "xcode-script" "$progetto/project.pbxproj" >&2
+  exit 1
+fi
 
 xcodebuild \
   -project "$progetto" \
