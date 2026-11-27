@@ -995,4 +995,30 @@ export const migrations: readonly Migration[] = [
        ) STRICT`,
     ],
   },
+  {
+    version: 34,
+    name: "accesso-del-dispositivo",
+    statements: [
+      // La chiave di rete di un Dispositivo (ADR 0044 §2, §4): l'identità iroh
+      // con cui l'app bussa da fuori. Una chiave, una sessione: revocare la
+      // sessione è revocare la chiave, e nessun'altra tabella lo deve ricordare.
+      `CREATE TABLE chiavi_di_rete (
+         chiave TEXT PRIMARY KEY NOT NULL,
+         session_id TEXT NOT NULL UNIQUE REFERENCES sessions (id) ON DELETE CASCADE,
+         user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+         creato_il TEXT NOT NULL
+       ) STRICT`,
+      `CREATE INDEX chiavi_di_rete_user ON chiavi_di_rete (user_id)`,
+      // I codici del QR (ADR 0044 §5). Solo l'impronta, come per le sessioni:
+      // leggere il database non dà un codice usabile. Monouso e brevi.
+      `CREATE TABLE ingressi_dispositivo (
+         id TEXT PRIMARY KEY NOT NULL,
+         user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+         codice_hash TEXT NOT NULL UNIQUE,
+         emesso_il TEXT NOT NULL,
+         scade_il TEXT NOT NULL,
+         usato_il TEXT
+       ) STRICT`,
+    ],
+  },
 ];

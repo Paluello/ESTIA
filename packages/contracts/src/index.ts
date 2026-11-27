@@ -1525,6 +1525,12 @@ export interface SessionView {
   expiresAt: string;
   /** True for the session making the request. */
   current: boolean;
+  /**
+   * La chiave di rete dell'app legata a questa sessione ([ADR 0044](../../../docs/adr/0044-il-dispositivo-e-l-app.md) §4),
+   * quando la sessione è un Dispositivo entrato con il QR. Assente per un
+   * browser. Revocare la sessione chiude la porta a quella chiave.
+   */
+  chiaveDiRete?: string;
 }
 
 export const sessionListSchema = {
@@ -1545,6 +1551,7 @@ export const sessionListSchema = {
           lastSeenAt: { type: "string" },
           expiresAt: { type: "string" },
           current: { type: "boolean" },
+          chiaveDiRete: { type: "string" },
         },
       },
     },
@@ -3140,4 +3147,165 @@ export const scriviReplicaRequestSchema = {
   additionalProperties: false,
   required: ["testo"],
   properties: { testo: { type: "string", minLength: 1, maxLength: 4000 } },
+} as const;
+// ---------------------------------------------------------------------------
+// L'accesso del Dispositivo (ADR 0044 §4–§5). Il filo è descritto per intero in
+// docs/ACCESSO_DEL_DISPOSITIVO.md; qui c'è quello che client e Casa devono
+// scrivere e leggere allo stesso modo.
+// ---------------------------------------------------------------------------
+
+/** L'ALPN su cui un Dispositivo registrato parla l'API dei membri. */
+export const ALPN_DISPOSITIVO = "estia/dispositivo/1";
+
+/**
+ * L'ALPN su cui una chiave **non ancora registrata** presenta il codice del QR.
+ * È separato perché su `ALPN_DISPOSITIVO` una chiave sconosciuta non riceve
+ * niente, nemmeno la schermata d'ingresso (ADR 0044 §4).
+ */
+export const ALPN_INGRESSO = "estia/ingresso/1";
+
+/** Tetto dell'intestazione JSON di un frame, in byte. */
+export const FRAME_MAX_INTESTAZIONE = 64 * 1024;
+
+/** Tetto del corpo di una richiesta su stream, in byte. */
+export const FRAME_MAX_CORPO_RICHIESTA = 32 * 1024 * 1024;
+
+/** Quanto vive un codice d'ingresso, in millisecondi. */
+export const INGRESSO_DURATA_MS = 10 * 60 * 1000;
+
+export interface RichiestaSuStream {
+  metodo: string;
+  /** Percorso più query, per esempio `/api/v1/feed?limit=20`. Sempre sotto `/api/`. */
+  percorso: string;
+  intestazioni: Record<string, string>;
+}
+
+export interface RispostaSuStream {
+  stato: number;
+  intestazioni: Record<string, string>;
+}
+
+const frameEncoder = new TextEncoder();
+const frameDecoder = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Un frame: 4 byte big-endian con la lunghezza dell'intestazione JSON, poi
+ * l'intestazione, poi il corpo grezzo fino alla fine dello stream.
+ */
+export function codificaFrame(
+  intestazione: RichiestaSuStream | RispostaSuStream,
+  corpo: Uint8Array = new Uint8Array(),
+): Uint8Array {
+  const json = frameEncoder.encode(JSON.stringify(intestazione));
+
+  if (json.length > FRAME_MAX_INTESTAZIONE) {
+    throw new Error("Intestazione del frame troppo lunga.");
+  }
+
+  const frame = new Uint8Array(4 + json.length + corpo.length);
+  new DataView(frame.buffer).setUint32(0, json.length, false);
+  frame.set(json, 4);
+  frame.set(corpo, 4 + json.length);
+
+  return frame;
+}
+
+/** L'inverso di `codificaFrame`. Lancia su un frame malformato. */
+export function decodificaFrame(frame: Uint8Array): {
+  intestazione: unknown;
+  corpo: Uint8Array;
+} {
+  if (frame.length < 4) {
+    throw new Error("Frame troppo corto.");
+  }
+
+  const lunghezza = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(
+    0,
+    false,
+  );
+
+  if (lunghezza > FRAME_MAX_INTESTAZIONE || 4 + lunghezza > frame.length) {
+    throw new Error("Lunghezza dell'intestazione non valida.");
+  }
+
+  return {
+    corpo: frame.subarray(4 + lunghezza),
+    intestazione: JSON.parse(frameDecoder.decode(frame.subarray(4, 4 + lunghezza))) as unknown,
+  };
+}
+
+/** Che cosa la chiave nuova manda su `ALPN_INGRESSO`, in JSON, e poi chiude. */
+export interface DomandaDiIngresso {
+  codice: string;
+  /** Come il membro riconoscerà questo dispositivo nell'elenco, per esempio «iPhone di Anna». */
+  etichetta: string;
+}
+
+/** La sola risposta che una domanda valida riceve. Una non valida non riceve niente. */
+export interface EsitoDiIngresso {
+  esito: "ammesso";
+  utente: { id: string; username: string; displayName: string };
+  /** La sessione legata alla chiave, quella che il membro vede e può revocare. */
+  sessionId: string;
+}
+
+/** Il contenuto del QR (ADR 0044 §5). */
+export interface QrDiIngresso {
+  /** La chiave pubblica della Casa: l'unica identità di cui l'app si fiderà. */
+  casa: string;
+  codice: string;
+  /** Gli indirizzi, solo dove la scoperta non c'è (rete su «local»). */
+  ticket?: string;
+}
+
+export function formattaQrDiIngresso(qr: QrDiIngresso): string {
+  const parametri = new URLSearchParams({ casa: qr.casa, codice: qr.codice });
+
+  if (qr.ticket !== undefined) {
+    parametri.set("ticket", qr.ticket);
+  }
+
+  return `estia://ingresso?${parametri.toString()}`;
+}
+
+/** `undefined` per tutto ciò che non è un QR d'ingresso di ESTIA. */
+export function leggiQrDiIngresso(testo: string): QrDiIngresso | undefined {
+  const prefisso = "estia://ingresso?";
+
+  if (!testo.startsWith(prefisso)) {
+    return undefined;
+  }
+
+  const parametri = new URLSearchParams(testo.slice(prefisso.length));
+  const casa = parametri.get("casa");
+  const codice = parametri.get("codice");
+  const ticket = parametri.get("ticket");
+
+  if (casa === null || casa === "" || codice === null || codice === "") {
+    return undefined;
+  }
+
+  return ticket === null || ticket === "" ? { casa, codice } : { casa, codice, ticket };
+}
+
+export interface IngressoEmessoView {
+  codice: string;
+  casa: string;
+  ticket?: string;
+  /** Il testo da mettere nel QR, già formattato. */
+  qr: string;
+  scadeIl: string;
+}
+
+export const ingressoEmessoViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["codice", "casa", "qr", "scadeIl"],
+  properties: {
+    codice: { type: "string" },
+    casa: { type: "string" },
+    ticket: { type: "string" },
+    qr: { type: "string" },
+    scadeIl: { type: "string" },
+  },
 } as const;

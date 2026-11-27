@@ -54,6 +54,13 @@ export interface SessionRepository {
   findByTokenHash(tokenHash: string): SessionRecord | undefined;
   /** Scoped by user on purpose: a caller must not reach another's session. */
   findForUser(userId: string, sessionId: string): SessionRecord | undefined;
+  /**
+   * Per id soltanto. Lo usa solo il canale dei Dispositivi, dove l'id viene
+   * dalla chiave di rete che QUIC ha provato, non da chi chiama.
+   */
+  findById(sessionId: string): SessionRecord | undefined;
+  /** Sposta la scadenza: una sessione d'app vive finché il suo dispositivo si fa vedere. */
+  extend(id: string, expiresAt: string): void;
   listForUser(userId: string): SessionRecord[];
   touch(id: string, seenAt: string): void;
   revoke(id: string, revokedAt: string): boolean;
@@ -249,6 +256,20 @@ export class SqliteSessionRepository implements SessionRepository {
       .get(sessionId, userId) as SessionRow | undefined;
 
     return row === undefined ? undefined : toSession(row);
+  }
+
+  public findById(sessionId: string): SessionRecord | undefined {
+    const row = this.database
+      .prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ?`)
+      .get(sessionId) as SessionRow | undefined;
+
+    return row === undefined ? undefined : toSession(row);
+  }
+
+  public extend(id: string, expiresAt: string): void {
+    this.database
+      .prepare("UPDATE sessions SET expires_at = ? WHERE id = ? AND revoked_at IS NULL")
+      .run(expiresAt, id);
   }
 
   public listForUser(userId: string): SessionRecord[] {
