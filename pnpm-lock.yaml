@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  ts-mls@1.6.4: 3a319e29b00bf28da47fb1e22859b75571dea203dc5d96aa627b87667bfbf4b8
+
 importers:
   .:
     devDependencies:
@@ -135,8 +138,8 @@ importers:
         specifier: 7.18.2
         version: 7.18.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       ts-mls:
-        specifier: 1.6.2
-        version: 1.6.2(@noble/ciphers@2.1.1)(@noble/curves@2.0.1)
+        specifier: 1.6.4
+        version: 1.6.4(patch_hash=3a319e29b00bf28da47fb1e22859b75571dea203dc5d96aa627b87667bfbf4b8)(@noble/ciphers@2.1.1)(@noble/curves@2.0.1)
     devDependencies:
       "@types/react":
         specifier: 19.2.18
@@ -496,10 +499,10 @@ packages:
       }
     engines: { node: ">=16.0.0" }
 
-  "@hpke/core@1.8.0":
+  "@hpke/core@1.9.0":
     resolution:
       {
-        integrity: sha512-yHuo+2q4HSPUFuxcg87Kiy7QZRk4IeR+cwBB0qW8fHnr71bnRCArM39Cq1bWHBt75gTyeERGD/v1H14yPB2wyw==,
+        integrity: sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q==,
       }
     engines: { node: ">=16.0.0" }
 
@@ -2964,16 +2967,16 @@ packages:
     peerDependencies:
       typescript: ">=4.8.4"
 
-  ts-mls@1.6.2:
+  ts-mls@1.6.4:
     resolution:
       {
-        integrity: sha512-Li0Ow/IkcV3x2Jk9zi7QaQlqPIegOFUtM1mfBvvJdCysU/byifYFKWpCkKfKpu2wRa9/RH8MaT+rq/JSheUYTQ==,
+        integrity: sha512-BFb9qJ3V1+HIuifC+MtnlROEj3oc6NEzA7Ig1/LAmANDRhNay7UCnwkzijzHH9cav5wf1BoJw8KQ2mXiEhPy1Q==,
       }
     peerDependencies:
-      "@hpke/chacha20poly1305": 1.7.1
-      "@hpke/dhkem-x448": 1.7.0
-      "@hpke/hybridkem-x-wing": 0.6.1
-      "@hpke/ml-kem": 0.2.1
+      "@hpke/chacha20poly1305": 1.8.0
+      "@hpke/dhkem-x448": 1.8.0
+      "@hpke/hybridkem-x-wing": 0.7.0
+      "@hpke/ml-kem": 0.3.0
       "@noble/ciphers": 2.1.1
       "@noble/curves": 2.0.1
       "@noble/post-quantum": 0.5.2
@@ -3516,7 +3519,7 @@ snapshots:
 
   "@hpke/common@1.10.1": {}
 
-  "@hpke/core@1.8.0":
+  "@hpke/core@1.9.0":
     dependencies:
       "@hpke/common": 1.10.1
 
@@ -4842,9 +4845,9 @@ snapshots:
     dependencies:
       typescript: 5.9.3
 
-  ts-mls@1.6.2(@noble/ciphers@2.1.1)(@noble/curves@2.0.1):
+  ts-mls@1.6.4(patch_hash=3a319e29b00bf28da47fb1e22859b75571dea203dc5d96aa627b87667bfbf4b8)(@noble/ciphers@2.1.1)(@noble/curves@2.0.1):
     dependencies:
-      "@hpke/core": 1.8.0
+      "@hpke/core": 1.9.0
       "@noble/ciphers": 2.1.1
     optionalDependencies:
       "@noble/curves": 2.0.1
