@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import { loadConfig, type AppConfig } from "@estia/config";
@@ -8,8 +16,8 @@ import { describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
 import { encodeJpegForTests, samplePixels } from "../media/fixtures.js";
-import { safeDestination, UnsafeArchiveEntryError } from "./archive.js";
-import { createBackupKeyPair } from "./crypto.js";
+import { packFiles, safeDestination, UnsafeArchiveEntryError } from "./archive.js";
+import { createBackupKeyPair, encryptArchive } from "./crypto.js";
 import { backupFileName, createBackup, restoreBackup } from "./service.js";
 
 const SETUP_TOKEN = "token-di-prova";
@@ -307,7 +315,7 @@ describe("restoring a backup", () => {
             );
 
             // The write that could not happen, not the cleanup that followed it.
-            expect(failure).toMatch(/permission denied, open/);
+            expect(failure).toMatch(/permission denied, (open|mkdtemp)/);
             expect(failure).not.toMatch(/rmdir/);
 
             // The directory it was told to fill is still there to try again.
@@ -396,8 +404,129 @@ describe("restoring a backup", () => {
           key: { kind: "privateKey", value: keys.privateKey },
           force: true,
         });
-        expect(restored.length).toBeGreaterThan(0);
+        expect(restored.files.length).toBeGreaterThan(0);
         expect(existsSync(path.join(dataDir, "estia.db"))).toBe(true);
+        // What was there is moved aside, not deleted.
+        expect(restored.previous).toBeDefined();
+        expect(existsSync(path.join(restored.previous ?? "", "estia.db"))).toBe(true);
+      });
+    });
+  });
+});
+
+/**
+ * Internal review, 2026-11-27: `--sovrascrivi` emptied the destination before
+ * reading the archive, so a valid but empty archive wiped the instance (the
+ * backups folder included) and reported success.
+ */
+describe("restoring over a live instance", () => {
+  async function archiveOf(
+    files: Record<string, string>,
+    publicKey: string,
+    directory: string,
+  ): Promise<string> {
+    const entries = Object.entries(files).map(([name, body]) => {
+      const source = path.join(directory, `sorgente-${name.replace(/\//g, "_")}`);
+      writeFileSync(source, body);
+      return { name, size: Buffer.byteLength(body), source };
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of packFiles(entries)) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
+    const target = path.join(directory, "finto.tar.age");
+    writeFileSync(
+      target,
+      await encryptArchive(new Uint8Array(Buffer.concat(chunks)), {
+        kind: "publicKey",
+        value: publicKey,
+      }),
+    );
+    return target;
+  }
+
+  it("leaves everything as it was when the archive holds no database", async () => {
+    await withPopulatedInstance(async ({ dataDir }) => {
+      await withTempDataDir(async (out) => {
+        const keys = await createBackupKeyPair();
+        const archive = await archiveOf({ "LEGGIMI.txt": "vuoto" }, keys.publicKey, out);
+        mkdirSync(path.join(dataDir, "backup"), { recursive: true });
+        writeFileSync(path.join(dataDir, "backup", "estia-vecchio.tar.age"), "archivio");
+        const before = readFileSync(path.join(dataDir, "estia.db"));
+
+        await expect(
+          restoreBackup({
+            archive,
+            destination: dataDir,
+            force: true,
+            key: { kind: "privateKey", value: keys.privateKey },
+          }),
+        ).rejects.toThrow(/non contiene estia\.db.*non sono stati toccati/);
+
+        expect(readFileSync(path.join(dataDir, "estia.db")).equals(before)).toBe(true);
+        expect(existsSync(path.join(dataDir, "instance-identity.pem"))).toBe(true);
+        expect(existsSync(path.join(dataDir, "backup", "estia-vecchio.tar.age"))).toBe(true);
+        expect(readdirSync(dataDir).filter((name) => name.startsWith("."))).not.toContainEqual(
+          expect.stringMatching(/^\.ripristino-|^\.prima-del-ripristino-/),
+        );
+      });
+    });
+  });
+
+  it("refuses a database that does not open, without touching the live one", async () => {
+    await withPopulatedInstance(async ({ dataDir }) => {
+      await withTempDataDir(async (out) => {
+        const keys = await createBackupKeyPair();
+        const archive = await archiveOf({ "estia.db": "non un database" }, keys.publicKey, out);
+        const before = readFileSync(path.join(dataDir, "estia.db"));
+
+        await expect(
+          restoreBackup({
+            archive,
+            destination: dataDir,
+            force: true,
+            key: { kind: "privateKey", value: keys.privateKey },
+          }),
+        ).rejects.toThrow(/danneggiato/);
+
+        expect(readFileSync(path.join(dataDir, "estia.db")).equals(before)).toBe(true);
+      });
+    });
+  });
+
+  it("keeps the backups folder and drops the old WAL", async () => {
+    await withPopulatedInstance(async ({ dataDir, publicKey }) => {
+      await withTempDataDir(async (out) => {
+        const keys = await createBackupKeyPair();
+        const backup = await createBackup({
+          dataDir,
+          destination: out,
+          recipient: { kind: "publicKey", value: keys.publicKey },
+        });
+        mkdirSync(path.join(dataDir, "backup"), { recursive: true });
+        writeFileSync(path.join(dataDir, "backup", "estia-vecchio.tar.age"), "archivio");
+        writeFileSync(path.join(dataDir, "estia.db-wal"), "wal di un'altra vita");
+
+        const restored = await restoreBackup({
+          archive: backup.path,
+          destination: dataDir,
+          force: true,
+          key: { kind: "privateKey", value: keys.privateKey },
+        });
+
+        expect(existsSync(path.join(dataDir, "backup", "estia-vecchio.tar.age"))).toBe(true);
+        expect(existsSync(path.join(dataDir, "estia.db-wal"))).toBe(false);
+        expect(existsSync(path.join(restored.previous ?? "", "estia.db-wal"))).toBe(true);
+        expect(existsSync(path.join(dataDir, "LEGGIMI.txt"))).toBe(false);
+
+        const revived = await buildApp(configFor(dataDir), { setupToken: "x" });
+        try {
+          expect(
+            (await revived.inject({ method: "GET", url: "/api/v1/instance" })).json().publicKey,
+          ).toBe(publicKey);
+        } finally {
+          await revived.close();
+        }
       });
     });
   });
