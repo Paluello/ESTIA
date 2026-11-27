@@ -42,7 +42,7 @@ function passo(
  *     `docker compose` che cerca un file dove sei.
  */
 
-const INSTALL_URL = "https://raw.githubusercontent.com/chrono-web/estia/main/install.sh";
+const INSTALL_URL = "https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh";
 
 /** Il volume che `install.sh` gestisce senza che glielo si chieda. */
 const VOLUME_PREDEFINITO = "estia-data";

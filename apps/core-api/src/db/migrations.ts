@@ -957,6 +957,46 @@ export const migrations: readonly Migration[] = [
   },
   {
     version: 33,
+    name: "segnalazioni",
+    statements: [
+      // Le segnalazioni dei membri di qui su altre istanze ([ADR 0047]
+      // Decisione 1). Restano solo qui, e il ritiro è una cancellazione vera:
+      // nessuno ne tiene copia, quindi non c'è niente da annunciare.
+      //
+      // Una per persona per categoria per istanza ([ADR 0049] Decisione 3):
+      // chi insiste sostituisce, non moltiplica.
+      `CREATE TABLE segnalazioni (
+         id TEXT PRIMARY KEY NOT NULL,
+         autore_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+         istanza TEXT NOT NULL,
+         categoria TEXT NOT NULL CHECK (categoria IN ('non_autentica', 'non_gradita')),
+         motivo TEXT NOT NULL,
+         creata_il TEXT NOT NULL,
+         UNIQUE (autore_id, istanza, categoria)
+       ) STRICT`,
+      `CREATE INDEX segnalazioni_per_istanza ON segnalazioni (istanza, categoria, creata_il DESC)`,
+      // La replica di questa istanza alle segnalazioni su di sé (ADR 0047
+      // Decisione 6). Una sola, scritta da chi amministra.
+      `CREATE TABLE replica_segnalazioni (
+         singleton INTEGER NOT NULL DEFAULT 1 CHECK (singleton = 1) UNIQUE,
+         testo TEXT NOT NULL,
+         autore_id TEXT REFERENCES users (id) ON DELETE SET NULL,
+         aggiornata_il TEXT NOT NULL
+       ) STRICT`,
+      // Il verdetto locale (ADR 0047 Decisione 5): l'unica cosa che si
+      // conserva. Il blocco resta in `remote_instances`; qui la nota e la
+      // scelta di ignorare.
+      `CREATE TABLE verdetti_istanze (
+         istanza TEXT PRIMARY KEY NOT NULL,
+         ignora INTEGER NOT NULL DEFAULT 0 CHECK (ignora IN (0, 1)),
+         nota TEXT NOT NULL DEFAULT '',
+         autore_id TEXT REFERENCES users (id) ON DELETE SET NULL,
+         deciso_il TEXT NOT NULL
+       ) STRICT`,
+    ],
+  },
+  {
+    version: 34,
     name: "accesso-del-dispositivo",
     statements: [
       // La chiave di rete di un Dispositivo (ADR 0044 §2, §4): l'identità iroh

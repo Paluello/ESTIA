@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ESTIA — Privacy policy</title>
+    <meta
+      name="description"
+      content="What the ESTIA apps and homes collect, who can see what, and what the people who make ESTIA never receive."
+    />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="./">ESTIA</a>
+        <nav aria-label="Site">
+          <a href="./#how">How it works</a>
+          <a href="./#install">Install</a>
+          <a href="https://github.com/Paluello/ESTIA">Code</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap prose">
+      <h1>Privacy policy</h1>
+      <p class="muted">
+        Applies to the ESTIA apps, the ESTIA home software and this website. Last updated 27
+        November 2026.
+      </p>
+
+      <h2>In short</h2>
+      <p>
+        <strong
+          >The people who make ESTIA do not receive your content, your contacts, your location or
+          any analytics.</strong
+        >
+        There is no ESTIA account with us, no advertising, no tracking and no analytics or
+        crash-reporting service inside the apps. What you write, the photos you share and your
+        messages live on <strong>your home</strong>: an ESTIA instance running on a machine in your
+        home or your community's space, run by its administrator.
+      </p>
+
+      <h2>Who is responsible for your data</h2>
+      <p>
+        Each home is run by its <strong>administrator</strong> — the person or group that installed
+        it — and they are responsible for the data their home stores. ESTIA is self-hosted software:
+        the project does not run your home and cannot see into it. If you want to know what your
+        home keeps, or to have your account deleted, ask its administrator.
+      </p>
+      <p>
+        The ESTIA project is responsible only for the few things described under
+        <a href="#outside">"What leaves your home"</a> that it operates itself, and for this
+        website.
+      </p>
+
+      <h2>What your home stores</h2>
+      <ul>
+        <li>
+          <strong>Your account</strong>: username, display name and bio, and a password hash
+          (Argon2id). The password itself is never stored.
+        </li>
+        <li>
+          <strong>What you publish</strong>: posts, comments, likes and photos. Photos are stripped
+          of Exif metadata, including the location where they were taken, before they are kept.
+        </li>
+        <li>
+          <strong>Your private messages</strong>, end-to-end encrypted with MLS (RFC 9420). Your
+          home stores them in a form it cannot read; the keys are only on your devices. The other
+          person's home keeps only a placeholder (who wrote, when) and fetches the content from your
+          home when it is read.
+        </li>
+        <li>
+          <strong>Your devices and sessions</strong>, so you can see and revoke them, and a log of
+          administrative actions (invites, approvals, moderation).
+        </li>
+      </ul>
+      <p>
+        The administrator of a home can see everything the home stores, except the content of
+        private messages. Backups are encrypted with a key the home itself does not hold.
+      </p>
+
+      <h2 id="outside">What leaves your home</h2>
+      <p>
+        ESTIA homes and apps talk to each other directly, by public key. A few outside services are
+        involved, and this is everything each of them can see. None of them can read content.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Service</th>
+            <th scope="col">When</th>
+            <th scope="col">What it can see</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Discovery (DNS run by n0, the makers of iroh)</td>
+            <td>A device or home looks up another home's key</td>
+            <td>Which key looks up which key, when, and IP addresses</td>
+          </tr>
+          <tr>
+            <td>Relay (run by a community volunteer, or by n0 as a last resort)</td>
+            <td>Only when two devices cannot connect directly</td>
+            <td>
+              That one key talks to another, when and how much, and IP addresses. Traffic is
+              encrypted end to end and not kept. A relay run by someone near you may be able to tell
+              whose keys those are.
+            </td>
+          </tr>
+          <tr>
+            <td>Notification wake-up (optional, chosen by your home)</td>
+            <td>Your home wants your phone to check for something new</td>
+            <td>
+              That a home wakes a device token, and when. The notification is empty: no sender, no
+              text, no conversation. On iPhone it passes through Apple's push service, on Android
+              through the service your phone uses. The project operates the forwarding service for
+              the published app, because Apple requires the publisher's key.
+            </td>
+          </tr>
+          <tr>
+            <td>App stores (Apple, Google)</td>
+            <td>You download or update the app</td>
+            <td>What the stores themselves collect, under their own policies</td>
+          </tr>
+          <tr>
+            <td>Image registry (GitHub)</td>
+            <td>A home is installed or checks for updates</td>
+            <td>The home's IP address and which version it downloads</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Publishing to the wider Fediverse through ActivityPub is planned but not available yet. When
+        it is, it will be off by default, and content shared that way will be copied by the servers
+        that receive it, because ActivityPub works by copies.
+      </p>
+
+      <h2>What the apps keep on your device</h2>
+      <p>
+        The keys that identify your device and decrypt your messages, kept in the device's secure
+        storage where available, and a local cache of what you have read. Uninstalling the app
+        removes them. Your home keeps your account until you or its administrator delete it.
+      </p>
+
+      <h2>Permissions the apps ask for</h2>
+      <ul>
+        <li>
+          <strong>Camera</strong>, to scan the QR code that introduces your home, and to take photos
+          you choose to post.
+        </li>
+        <li><strong>Photos</strong>, only for the pictures you pick to post.</li>
+        <li><strong>Notifications</strong>, if you want to be told when something new arrives.</li>
+        <li>
+          <strong>Local network</strong>, to find and reach your home when you are on the same
+          network.
+        </li>
+      </ul>
+      <p>The apps never ask for your contacts or your location.</p>
+
+      <h2>Children</h2>
+      <p>
+        ESTIA is not directed at children under 13, or under the age of digital consent where you
+        live. Whether a home admits younger members is up to its administrator and the people who
+        share it, under the law that applies to them.
+      </p>
+
+      <h2>Your rights</h2>
+      <p>
+        You can see and edit your profile, delete what you published and revoke your devices from
+        the app. For anything else your home stores about you — a copy, a correction, the deletion
+        of your account — ask your home's administrator, who holds that data. If you are in the
+        European Union, the GDPR gives you these rights towards them. The ESTIA project holds no
+        personal data about you to give back or delete, apart from what is described above.
+      </p>
+
+      <h2>This website</h2>
+      <p>
+        This site sets no cookies, has no analytics and loads nothing from other servers. It is
+        hosted on GitHub Pages; GitHub keeps server logs, including IP addresses, under
+        <a
+          href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement"
+          >its own privacy statement</a
+        >.
+      </p>
+
+      <h2>Changes and contact</h2>
+      <p>
+        This policy lives in ESTIA's public repository, so every change is visible with its date.
+        Questions about it:
+        <a href="https://github.com/Paluello/ESTIA/issues">open an issue</a>. To report a security
+        problem privately, follow
+        <a href="https://github.com/Paluello/ESTIA/blob/main/SECURITY.md">the security policy</a>.
+      </p>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <p><a href="./">ESTIA</a> · free software under the GNU AGPL v3</p>
+      </div>
+    </footer>
+  </body>
+</html>

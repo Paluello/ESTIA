@@ -140,7 +140,9 @@ export type RequestType =
   | "bacheca"
   | "immagine"
   | "cuore"
-  | "commento";
+  | "commento"
+  | "segnalazioni"
+  | "replica";
 
 export interface PresentazioneRequest {
   tipo: "presentazione";
@@ -623,6 +625,64 @@ export interface DettaglioPostResponse {
   commenti: CommentoRemoto[];
 }
 
+/**
+ * Le due categorie di [ADR 0047] Decisione 2, che non si mescolano mai.
+ * «Non autentica» afferma un fatto controllabile, «non gradita» un'opinione.
+ */
+export const CATEGORIE_SEGNALAZIONE = ["non_autentica", "non_gradita"] as const;
+
+export type CategoriaSegnalazione = (typeof CATEGORIE_SEGNALAZIONE)[number];
+
+/** Quanti motivi per categoria in una risposta ([ADR 0049] Decisione 3). */
+export const MAX_MOTIVI_PER_CATEGORIA = 3;
+
+/** Quanto è lungo un motivo, al massimo ([ADR 0049] Decisione 3). */
+export const MAX_MOTIVO_LENGTH = 400;
+
+/** Quanto è lunga la replica di un'istanza alle segnalazioni su di sé. */
+export const MAX_REPLICA_LENGTH = 1000;
+
+/**
+ * «Che cosa dicono i tuoi membri di questa istanza?» ([ADR 0049] Decisione 1).
+ *
+ * Sempre su **una chiave** che chi chiede sa già nominare: non esiste la
+ * domanda «dammi tutte le segnalazioni che hai» ([ADR 0020] §1).
+ */
+export interface SegnalazioniRequest {
+  tipo: "segnalazioni";
+  nome: string;
+  /** La chiave dell'istanza di cui si chiede. */
+  istanza: string;
+}
+
+/**
+ * Una segnalazione come attraversa il filo: **mai chi l'ha scritta**, e la
+ * data al mese ([ADR 0047] Decisione 6, [ADR 0049] Decisione 2).
+ */
+export interface SegnalazioneSulFilo {
+  categoria: CategoriaSegnalazione;
+  motivo: string;
+  /** `AAAA-MM`. */
+  mese: string;
+}
+
+export interface SegnalazioniResponse {
+  ok: true;
+  segnalazioni: SegnalazioneSulFilo[];
+}
+
+/** «Che cosa rispondi alle segnalazioni su di te?» */
+export interface ReplicaRequest {
+  tipo: "replica";
+  nome: string;
+}
+
+export interface ReplicaResponse {
+  ok: true;
+  /** Assente se questa istanza non ha scritto una replica. */
+  replica?: { testo: string; mese: string };
+}
+
 export type ProtocolRequest =
   | PresentazioneRequest
   | CollegamentoRequest
@@ -642,7 +702,9 @@ export type ProtocolRequest =
   | ImmagineRequest
   | CuoreRequest
   | CommentoRequest
-  | DettaglioPostRequest;
+  | DettaglioPostRequest
+  | SegnalazioniRequest
+  | ReplicaRequest;
 
 /**
  * A profile as it crosses the wire.
@@ -756,6 +818,8 @@ export type ProtocolResponse =
   | CuoreResponse
   | CommentoResponse
   | DettaglioPostResponse
+  | SegnalazioniResponse
+  | ReplicaResponse
   | ErrorResponse;
 
 const encoder = new TextEncoder();
@@ -1423,6 +1487,18 @@ export function parseRequest(value: unknown): { request?: ProtocolRequest; error
         ...(dopo === undefined ? {} : { dopo }),
       },
     };
+  }
+
+  if (value.tipo === "segnalazioni") {
+    const istanza = readShortText(value.istanza, MAX_NAME_LENGTH);
+
+    return istanza === undefined
+      ? { error: errorResponse("malformata", "Manca la chiave dell'istanza di cui si chiede.") }
+      : { request: { istanza, nome, tipo: "segnalazioni" } };
+  }
+
+  if (value.tipo === "replica") {
+    return { request: { nome, tipo: "replica" } };
   }
 
   if (value.tipo === "chiavi-di-firma") {

@@ -8,7 +8,7 @@
 
 set -eu
 
-IMAGE="${ESTIA_IMAGE:-ghcr.io/chrono-web/estia:latest}"
+IMAGE="${ESTIA_IMAGE:-ghcr.io/paluello/estia:latest}"
 NAME="${ESTIA_CONTAINER:-estia}"
 VOLUME="${ESTIA_VOLUME:-estia-data}"
 
@@ -92,7 +92,7 @@ ${CCYAN}╔═══════════════════════
    ${CCYAN}├──${C0} ${C1}estia riavvia${C0}               Riavvio del container
    ${CCYAN}└──${C0} ${C1}estia aiuto${C0}                 Questo elenco
 
-📖 ${CDIM}Documentazione: https://github.com/chrono-web/estia${C0}
+📖 ${CDIM}Documentazione: https://github.com/Paluello/ESTIA${C0}
 "
 }
 
@@ -160,7 +160,7 @@ ${CCYAN}╔═══════════════════════
    ${CCYAN}└──${C0} ${C1}estia riavvia${C0}               Riavvia il container
 
 📖 ${CDIM}Il codice di configurazione e' in cima ai log: estia logs${C0}
-📖 ${CDIM}Documentazione e codice: https://github.com/chrono-web/estia${C0}
+📖 ${CDIM}Documentazione e codice: https://github.com/Paluello/ESTIA${C0}
 "
 }
 
@@ -189,8 +189,8 @@ ${CCYAN}╔═══════════════════════
 ║  📊 ESTIA — Diagnostica e stato del container                      ║
 ╚════════════════════════════════════════════════════════════════════╝${C0}"
 		avviso "Container «${NAME}»: non presente sull'host."
-		sayb "   ${CCYAN}├──${C0} Per installarlo: ${C1}curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | sh${C0}"
-		sayb "   ${CCYAN}└──${C0} Documentazione:  ${CBLUE}https://github.com/chrono-web/estia${C0}"
+		sayb "   ${CCYAN}├──${C0} Per installarlo: ${C1}curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh${C0}"
+		sayb "   ${CCYAN}└──${C0} Documentazione:  ${CBLUE}https://github.com/Paluello/ESTIA${C0}"
 		return
 	fi
 
@@ -437,7 +437,7 @@ ${CCYAN}╔═══════════════════════
 
 	# Fallback su install.sh se il container non esiste ancora
 	avviso "Container «${NAME}» non presente. Avvio l'installazione iniziale…"
-	curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | sh
+	curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
 }
 
 # --- Main Dispatcher ---

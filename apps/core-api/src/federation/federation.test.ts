@@ -1168,3 +1168,66 @@ describe("archivio, sul filo", () => {
     });
   }, 30_000);
 });
+
+describe("le segnalazioni sul filo (ADR 0049)", () => {
+  const X = "a".repeat(64);
+
+  it("rispondono solo a una collegata, senza dire chi ha scritto", async () => {
+    await dueCase(async (a, b) => {
+      b.federation.useSegnalazioni({
+        perLaRete: (istanza) =>
+          istanza === X ? [{ categoria: "non_autentica", mese: "2026-11", motivo: "bot" }] : [],
+        replicaPerLaRete: () => ({ mese: "2026-11", testo: "Siamo vere." }),
+      });
+
+      // Sconosciuta: un no ordinato, che chi chiede conta fra le mute.
+      expect(await a.federation.segnalazioniPresso(b.endpoint.ticket ?? "", X)).toEqual({
+        esito: "muta",
+      });
+
+      b.remotes.upsertState({
+        at: new Date().toISOString(),
+        publicKey: a.endpoint.endpointId ?? "",
+        state: "collegata",
+      });
+
+      expect(await a.federation.segnalazioniPresso(b.endpoint.ticket ?? "", X)).toEqual({
+        esito: "risposta",
+        segnalazioni: [{ categoria: "non_autentica", mese: "2026-11", motivo: "bot" }],
+      });
+      expect(await a.federation.replicaPresso(b.endpoint.ticket ?? "")).toEqual({
+        esito: "replica",
+        mese: "2026-11",
+        testo: "Siamo vere.",
+      });
+    });
+  }, 30_000);
+
+  it("scarta ciò che non rispetta la forma", async () => {
+    await dueCase(async (a, b) => {
+      b.federation.useSegnalazioni({
+        perLaRete: () =>
+          [
+            { categoria: "generata_con_ai", mese: "2026-11", motivo: "x" },
+            { categoria: "non_gradita", mese: "2026-11-27", motivo: "giorno preciso" },
+            { categoria: "non_gradita", mese: "2026-11", motivo: "y".repeat(401) },
+            { categoria: "non_gradita", mese: "2026-11", motivo: "buona" },
+          ] as never,
+        replicaPerLaRete: () => undefined,
+      });
+      b.remotes.upsertState({
+        at: new Date().toISOString(),
+        publicKey: a.endpoint.endpointId ?? "",
+        state: "collegata",
+      });
+
+      expect(await a.federation.segnalazioniPresso(b.endpoint.ticket ?? "", X)).toEqual({
+        esito: "risposta",
+        segnalazioni: [{ categoria: "non_gradita", mese: "2026-11", motivo: "buona" }],
+      });
+      expect(await a.federation.replicaPresso(b.endpoint.ticket ?? "")).toEqual({
+        esito: "nessuna",
+      });
+    });
+  }, 30_000);
+});

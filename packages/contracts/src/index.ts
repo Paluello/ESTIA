@@ -1483,7 +1483,7 @@ export interface UpdateCheckResult {
   detail: string;
   /** `detail` by its keys, for the client to read in its own language. */
   detailFrasi?: Frase[];
-  /** Image ref compared against, e.g. `ghcr.io/chrono-web/estia:latest`. */
+  /** Image ref compared against, e.g. `ghcr.io/paluello/estia:latest`. */
   channel: string;
   /** Commit this instance was built from, when the image declares it. */
   currentRevision?: string;
@@ -2931,6 +2931,223 @@ export const segnaConversazioneLettaRequestSchema = {
   },
 } as const;
 
+// --- Segnalazioni fra istanze (ADR 0047, forma in ADR 0049) -----------------
+
+/** Le due categorie, che non si mescolano mai (ADR 0047 Decisione 2). */
+export type CategoriaSegnalazione = "non_autentica" | "non_gradita";
+
+export const CATEGORIE_SEGNALAZIONE: readonly CategoriaSegnalazione[] = [
+  "non_autentica",
+  "non_gradita",
+];
+
+export interface CreaSegnalazioneRequest {
+  /** La chiave dell'istanza segnalata. */
+  istanza: string;
+  categoria: CategoriaSegnalazione;
+  motivo: string;
+}
+
+export const creaSegnalazioneRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["istanza", "categoria", "motivo"],
+  properties: {
+    istanza: { type: "string", minLength: 1, maxLength: 512 },
+    categoria: { type: "string", enum: ["non_autentica", "non_gradita"] },
+    motivo: { type: "string", minLength: 1, maxLength: 2000 },
+  },
+} as const;
+
+/**
+ * Una segnalazione scritta qui. `autore` c'è solo per chi modera, che ne
+ * risponde; a chi l'ha scritta non serve.
+ */
+export interface SegnalazioneView {
+  id: string;
+  istanza: string;
+  /** Il nome che l'istanza dichiara di sé, se questa casa la conosce. */
+  nomeIstanza?: string;
+  categoria: CategoriaSegnalazione;
+  motivo: string;
+  creataIl: string;
+  autore?: string;
+}
+
+export const segnalazioneViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "istanza", "categoria", "motivo", "creataIl"],
+  properties: {
+    id: { type: "string" },
+    istanza: { type: "string" },
+    nomeIstanza: { type: "string" },
+    categoria: { type: "string", enum: ["non_autentica", "non_gradita"] },
+    motivo: { type: "string" },
+    creataIl: { type: "string" },
+    autore: { type: "string" },
+  },
+} as const;
+
+export const segnalazioneListSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["segnalazioni"],
+  properties: { segnalazioni: { type: "array", items: segnalazioneViewSchema } },
+} as const;
+
+/** Da dove arriva una categoria di segnalazioni: un'istanza, mai un numero di persone. */
+export interface ProvenienzaView {
+  /** Il nome che l'istanza **dichiara di sé**: non è verificato (ADR 0020 §5). */
+  tramite: string;
+  motivi: Array<{ motivo: string; mese: string }>;
+}
+
+const provenienzaSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["tramite", "motivi"],
+  properties: {
+    tramite: { type: "string" },
+    motivi: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["motivo", "mese"],
+        properties: { motivo: { type: "string" }, mese: { type: "string" } },
+      },
+    },
+  },
+} as const;
+
+export interface ReplicaAvvisoView {
+  /** `non_disponibile`: l'istanza non è collegata, o non ha risposto (ADR 0049 Decisione 4). */
+  stato: "disponibile" | "assente" | "non_disponibile";
+  testo?: string;
+  mese?: string;
+}
+
+/**
+ * Ciò che le istanze collegate dicono di un'altra, ricomposto al momento e
+ * mai archiviato (ADR 0047 Decisione 4). Un avviso, non un verdetto.
+ */
+export interface AvvisoView {
+  istanza: string;
+  ignorate: boolean;
+  interpellate: number;
+  senzaRisposta: number;
+  nonAutentica: ProvenienzaView[];
+  nonGradita: ProvenienzaView[];
+  replica: ReplicaAvvisoView;
+  /** Solo per chi amministra. */
+  verdetto?: VerdettoView;
+}
+
+export interface VerdettoView {
+  istanza: string;
+  ignora: boolean;
+  nota: string;
+  autore: string | null;
+  decisoIl: string;
+}
+
+export const verdettoViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["istanza", "ignora", "nota", "autore", "decisoIl"],
+  properties: {
+    istanza: { type: "string" },
+    ignora: { type: "boolean" },
+    nota: { type: "string" },
+    autore: { type: ["string", "null"] },
+    decisoIl: { type: "string" },
+  },
+} as const;
+
+export const avvisoViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "istanza",
+    "ignorate",
+    "interpellate",
+    "senzaRisposta",
+    "nonAutentica",
+    "nonGradita",
+    "replica",
+  ],
+  properties: {
+    istanza: { type: "string" },
+    ignorate: { type: "boolean" },
+    interpellate: { type: "integer" },
+    senzaRisposta: { type: "integer" },
+    nonAutentica: { type: "array", items: provenienzaSchema },
+    nonGradita: { type: "array", items: provenienzaSchema },
+    replica: {
+      type: "object",
+      additionalProperties: false,
+      required: ["stato"],
+      properties: {
+        stato: { type: "string", enum: ["disponibile", "assente", "non_disponibile"] },
+        testo: { type: "string" },
+        mese: { type: "string" },
+      },
+    },
+    verdetto: verdettoViewSchema,
+  },
+} as const;
+
+export interface DecidiVerdettoRequest {
+  ignora: boolean;
+  nota: string;
+}
+
+export const decidiVerdettoRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ignora", "nota"],
+  properties: { ignora: { type: "boolean" }, nota: { type: "string", maxLength: 4000 } },
+} as const;
+
+export const verdettoListSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verdetti"],
+  properties: { verdetti: { type: "array", items: verdettoViewSchema } },
+} as const;
+
+/** La replica di questa istanza alle segnalazioni su di sé. */
+export interface ReplicaView {
+  testo: string;
+  aggiornataIl: string;
+}
+
+export const replicaViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["replica"],
+  properties: {
+    replica: {
+      anyOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["testo", "aggiornataIl"],
+          properties: { testo: { type: "string" }, aggiornataIl: { type: "string" } },
+        },
+        { type: "null" },
+      ],
+    },
+  },
+} as const;
+
+export const scriviReplicaRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["testo"],
+  properties: { testo: { type: "string", minLength: 1, maxLength: 4000 } },
+} as const;
 // ---------------------------------------------------------------------------
 // L'accesso del Dispositivo (ADR 0044 §4–§5). Il filo è descritto per intero in
 // docs/ACCESSO_DEL_DISPOSITIVO.md; qui c'è quello che client e Casa devono

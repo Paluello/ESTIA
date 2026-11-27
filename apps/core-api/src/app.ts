@@ -67,6 +67,9 @@ import {
 import { ConnectionOriginLog } from "./instance/origin.js";
 import { InstanceEndpoint } from "./federation/endpoint.js";
 import { registerFederationRoutes } from "./federation/routes.js";
+import { SqliteSegnalazioniRepository } from "./segnalazioni/repository.js";
+import { registerSegnalazioniRoutes } from "./segnalazioni/routes.js";
+import { SegnalazioniService } from "./segnalazioni/service.js";
 import { BattitoDelleIstanze } from "./federation/battito.js";
 import { SqliteRemoteInstanceRepository } from "./federation/repository.js";
 import { FederationService } from "./federation/service.js";
@@ -676,6 +679,31 @@ export async function buildApp(
   app.decorate("battito", battito);
 
   registerFederationRoutes(app, { battito, endpoint, federation, identity: identityService });
+
+  // Le segnalazioni si visitano ([ADR 0047], [ADR 0049]): quelle dei membri di
+  // qui rispondono alle collegate, quelle delle altre case si chiedono al
+  // momento e non toccano il disco.
+  const segnalazioniService = new SegnalazioniService({
+    repository: new SqliteSegnalazioniRepository(database),
+    rete: {
+      chiaveDiQuesta: () => endpoint.endpointId,
+      collegate: () =>
+        federation
+          .list()
+          .filter((remota) => remota.state === "collegata")
+          .map(({ declaredName, publicKey }) => ({ declaredName, publicKey })),
+      replicaPresso: (target) => federation.replicaPresso(target),
+      segnalazioniPresso: (target, istanza) => federation.segnalazioniPresso(target, istanza),
+    },
+    ...(options.now === undefined ? {} : { now: () => new Date(options.now?.() ?? Date.now()) }),
+  });
+
+  federation.useSegnalazioni(segnalazioniService);
+  registerSegnalazioniRoutes(app, {
+    identity: identityService,
+    nomeDi: (key) => federation.nomeDi(key),
+    segnalazioni: segnalazioniService,
+  });
   registerProfileRoutes(
     app,
     {

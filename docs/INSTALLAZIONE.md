@@ -26,20 +26,20 @@ Non vanno mescolate: la stessa istanza si installa in un modo **o** nell'altro. 
 
 ## Installare con un comando solo
 
-Se sulla macchina c'è già Docker — e se non c'è, è il passo 1 — questo la installa e la accende:
+Su un Linux qualunque — mini-PC, vecchio portatile, Raspberry Pi — questo installa l'istanza e la accende. **Se manca Docker, te lo propone e lo installa lui**, dai pacchetti del sistema (`apt-get install docker.io` su Debian, Ubuntu, Mint e Raspberry Pi OS; lo script ufficiale di Docker su Fedora e RHEL), dopo averti chiesto il permesso. Su un NAS invece Docker si installa dal centro applicazioni, ed è il passo 1:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
 ```
 
 Di solito non chiede niente. Su un Linux da desktop (Mint, Ubuntu, …) può chiedere **una volta** la password di amministratore: serve solo a copiare il comando `estia` in `/usr/local/bin`, perché da utente normale quella cartella non è scrivibile. Non avvolgere tutto in `sudo` (`curl … | sudo sh`): Docker deve restare del tuo utente. Se non dai la password, l'istanza parte lo stesso e il comando finisce in `~/.local/bin`.
 
-Scarica l'immagine, prepara il posto dove staranno i dati, avvia l'istanza, installa `estia` e ti stampa l'indirizzo a cui aprirla. Da lì vai al **passo 7**.
+Se ha dovuto installare Docker, il tuo utente entra nel gruppo `docker` dal prossimo accesso: per questa volta lo script usa `sudo`, e non devi chiudere niente. Poi scarica l'immagine, prepara il posto dove staranno i dati, avvia l'istanza, installa `estia` e ti stampa l'indirizzo a cui aprirla. Da lì vai al **passo 7**.
 
 **Se l'istanza gira già e manca solo il comando** (`estia: comando non trovato` su Linux Mint, dopo un'installazione fatta da utente normale):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | env ESTIA_SOLO_CLI=1 sh
+curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | env ESTIA_SOLO_CLI=1 sh
 ```
 
 **Lo stesso comando aggiorna**, un domani: rilanciarlo tira giù la versione nuova e rimette in piedi l'istanza con dentro le stesse cose. Se sulla macchina trova qualcosa che non ha messo lui, si ferma e te lo dice invece di passarci sopra. Il dettaglio — e come si aggiorna se hai installato in un altro modo — sta al [passo 12](#12-aggiornare).
@@ -51,7 +51,7 @@ Il resto di questa guida serve se vuoi fare le stesse cose a mano, un pezzo alla
 ## Che cosa serve
 
 - Una **macchina che resti accesa**: NAS (Synology, QNAP, UGREEN, Asustor, TerraMaster), mini-PC Linux, o un vecchio portatile con Linux.
-- **Docker**. Se non ce l'hai, è il passo 1: non darlo per installato, quasi nessuna macchina ce l'ha già.
+- **Docker**. Su Linux, se non c'è, lo installa il comando solo; sui NAS e per la strada passo per passo è il passo 1. Non darlo per installato: quasi nessuna macchina ce l'ha già.
 - **Un accesso a un terminale**: SSH è il modo più comodo. Sui NAS va abilitato dal pannello, di solito sotto «Terminale» o «SSH».
 - Un **secondo dispositivo sulla stessa rete** — telefono o portatile — per completare la configurazione.
 
@@ -157,28 +157,28 @@ Sostituisci `/volume1` con un percorso che esiste sulla tua macchina — lo hai 
 
 ## 4. Prendi l'immagine
 
-**Non devi fare niente: la scarica il passo 6.** L'immagine è pubblica su `ghcr.io/chrono-web/estia`, senza credenziali e senza account, e la stessa etichetta contiene sia `linux/amd64` sia `linux/arm64`.
+**Non devi fare niente: la scarica il passo 6.** L'immagine è pubblica su `ghcr.io/paluello/estia`, senza credenziali e senza account, e la stessa etichetta contiene sia `linux/amd64` sia `linux/arm64`.
 
 Se vuoi portarti avanti, o semplicemente vedere che la rete funziona:
 
 ```sh
-docker pull ghcr.io/chrono-web/estia:latest
+docker pull ghcr.io/paluello/estia:latest
 ```
 
 Sono qualche centinaio di megabyte: su una connessione lenta ci mette parecchio, ed è normale che la barra stia ferma un po'.
 
-**Quale etichetta usare.** `latest` segue `main`: ogni modifica pubblicata diventa un aggiornamento disponibile per te. Va benissimo per provare, ma su un'istanza con dentro le fotografie di persone vere è più tranquillo **agganciarsi a un'etichetta fissa**, così sei tu a decidere quando aggiornare e non il ritmo di chi sviluppa. Ne esiste una per ogni commit, e si scrive al posto di `latest` nel file del passo 5: `ghcr.io/chrono-web/estia:sha-8a1147c`.
+**Quale etichetta usare.** `latest` segue `main`: ogni modifica pubblicata diventa un aggiornamento disponibile per te. Va benissimo per provare, ma su un'istanza con dentro le fotografie di persone vere è più tranquillo **agganciarsi a un'etichetta fissa**, così sei tu a decidere quando aggiornare e non il ritmo di chi sviluppa. Ne esiste una per ogni commit, e si scrive al posto di `latest` nel file del passo 5: `ghcr.io/paluello/estia:sha-8a1147c`.
 
 Le trovi elencate nella pagina dei package del repository. Quando vorrai aggiornare, cambi quella riga e fai `docker compose pull && docker compose up -d` — con il passo 12 letto prima, non dopo.
 
 > **Se la macchina non ha rete verso Internet**, o preferisci non fargliene avere, l'immagine si scarica altrove e si trasferisce. Il modo che funziona anche quando la macchina non ti lascia scrivere da nessuna parte è farla scorrere dentro `docker load`, senza appoggiare file. Qui l'architettura la scegli tu, quindi il passo 2 conta davvero — e va detta esplicitamente, perché altrimenti prendi quella del computer da cui scarichi:
 >
 > ```sh
-> docker pull --platform linux/amd64 ghcr.io/chrono-web/estia:latest
+> docker pull --platform linux/amd64 ghcr.io/paluello/estia:latest
 > ```
 >
 > ```sh
-> docker save ghcr.io/chrono-web/estia:latest | gzip | ssh utente@nas 'docker load'
+> docker save ghcr.io/paluello/estia:latest | gzip | ssh utente@nas 'docker load'
 > ```
 >
 > `scp` verso molti NAS fallisce con un `Permission denied` fuorviante: `scp` recente usa il protocollo SFTP, e parecchi NAS non espongono `sftp-server`. Se ti serve comunque copiare un file, `scp -O` usa il vecchio protocollo.
@@ -201,7 +201,7 @@ name: estia
 services:
   core-api:
     container_name: estia
-    image: ghcr.io/chrono-web/estia:latest
+    image: ghcr.io/paluello/estia:latest
     environment:
       ESTIA_DATA_DIR: /data
       ESTIA_HOST: 0.0.0.0
@@ -262,18 +262,18 @@ Salta questa sezione se hai appena acceso l'istanza da terminale: è l'altra str
 **Se il tuo pannello non sa importare un Compose, non costruire il container a mano nel modulo**: è lì che si dimentica la riga dei volumi, ed è così che sono andate perse due istanze. Apri un terminale SSH e dai un comando solo, che porta con sé tutto quello che serve:
 
 ```sh
-docker run -d --name estia --restart unless-stopped -p 3000:3000 -v estia-data:/data ghcr.io/chrono-web/estia:latest
+docker run -d --name estia --restart unless-stopped -p 3000:3000 -v estia-data:/data ghcr.io/paluello/estia:latest
 ```
 
 Il container poi compare nel pannello come tutti gli altri, e da lì si ferma, si riavvia e se ne leggono i log. `-v estia-data:/data` è la parte che non si tocca: crea un volume **con un nome**, che Docker si porta dietro a ogni ricreazione. Per aggiornare, tre comandi in fila:
 
 ```sh
-docker pull ghcr.io/chrono-web/estia:latest && docker rm -f estia && docker run -d --name estia --restart unless-stopped -p 3000:3000 -v estia-data:/data ghcr.io/chrono-web/estia:latest
+docker pull ghcr.io/paluello/estia:latest && docker rm -f estia && docker run -d --name estia --restart unless-stopped -p 3000:3000 -v estia-data:/data ghcr.io/paluello/estia:latest
 ```
 
 Se proprio crei il container dal modulo del pannello, servono tre cose e nessun'altra.
 
-**L'immagine.** Nel registro delle immagini cerca `ghcr.io/chrono-web/estia`, etichetta `latest`. Alcuni pannelli cercano solo su Docker Hub e non la trovano: in quel caso scaricala una volta da terminale con `docker pull ghcr.io/chrono-web/estia:latest`, e poi comparirà fra le immagini locali del pannello.
+**L'immagine.** Nel registro delle immagini cerca `ghcr.io/paluello/estia`, etichetta `latest`. Alcuni pannelli cercano solo su Docker Hub e non la trovano: in quel caso scaricala una volta da terminale con `docker pull ghcr.io/paluello/estia:latest`, e poi comparirà fra le immagini locali del pannello.
 
 **La porta.** Porta locale `3000`, porta del container `3000`. Se il pannello ha un campo per l'indirizzo su cui pubblicare, lascialo vuoto o mettici `0.0.0.0`: con `127.0.0.1` l'istanza si apre solo dal NAS stesso.
 
@@ -374,7 +374,7 @@ sudo mkdir -p /volume1/docker/estia-backup && sudo chown 10001:10001 /volume1/do
 La coppia di chiavi la generi comunque dal pannello, oppure da qui:
 
 ```sh
-docker run --rm --entrypoint node ghcr.io/chrono-web/estia:latest dist/backup/cli.js chiavi
+docker run --rm --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js chiavi
 ```
 
 **Attenzione a una conseguenza**: se metti quelle variabili, la configurazione arriva dall'ambiente e **il pannello smette di poterla cambiare** — te lo dice, invece di far finta. È voluto: due posti dove cambiare la stessa cosa, con uno che vince al riavvio, sono peggio di uno solo scomodo.
@@ -435,6 +435,10 @@ Nel pannello, **Impostazioni → Stato dell'istanza → Verifica aggiornamenti**
 
 Serve ancora Docker: nessuno dei comandi sotto lo installa al posto tuo. L'ordine conta, perché le migrazioni del database sono **solo in avanti**: non si torna indietro, e il rollback è il ripristino da un backup ([`SECURITY_BASELINE.md`](SECURITY_BASELINE.md) §8).
 
+### Se la tua istanza è nata prima del 2026-11-27
+
+Fino a quel giorno la guida, `install.sh` e il comando `estia` puntavano a `ghcr.io/chrono-web/estia`, un indirizzo che non riceve più versioni nuove: le immagini si pubblicano su `ghcr.io/paluello/estia`. Un'istanza installata prima continua a funzionare, ma `estia aggiorna` e la verifica del pannello guardano ancora il vecchio indirizzo e dicono «aggiornata» anche quando non lo è. Si sistema una volta sola: se hai installato con `install.sh`, rilancia il comando del [passo 12](#oppure-a-mano-se-hai-installato-con-un-comando-solo-installsh) dal nuovo indirizzo, che rimette anche il comando `estia`; se hai usato Compose o il pannello, cambia la riga `image:` in `ghcr.io/paluello/estia:latest`. Il volume dei dati resta lo stesso.
+
 ### Prima di toccare l'immagine
 
 Se i backup non sono ancora configurati, fallo **adesso** — passo 10, senza cambiare versione. Vale per ogni istanza nata prima di quel passo, e va letto prima di aggiornare, perché è il caso in cui l'ordine sbagliato costa qualcosa che non si recupera.
@@ -466,7 +470,7 @@ Al posto di `estia` va il nome — o l'id — del container, che `docker ps` ele
 **Se il container l'hai costruito nel modulo del pannello.** Non c'è nessuna cartella dove tornare, e **non rilanciare `install.sh`**: quello ricrea sul volume che gestisce lui, e i tuoi dati stanno sulla cartella che hai mappato al passo dei volumi — l'istanza ripartirebbe vuota accanto a loro. Le porte e le cartelle esatte non stanno a mente di nessuno, quindi te le fai scrivere da Docker:
 
 ```sh
-docker inspect -f 'docker run -d --name {{slice .Name 1}} --restart unless-stopped{{range $p, $b := .HostConfig.PortBindings}}{{range $b}} -p {{.HostPort}}:{{$p}}{{end}}{{end}}{{range .Mounts}} -v {{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}:{{.Destination}}{{end}} ghcr.io/chrono-web/estia:latest' estia
+docker inspect -f 'docker run -d --name {{slice .Name 1}} --restart unless-stopped{{range $p, $b := .HostConfig.PortBindings}}{{range $b}} -p {{.HostPort}}:{{$p}}{{end}}{{end}}{{range .Mounts}} -v {{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}:{{.Destination}}{{end}} ghcr.io/paluello/estia:latest' estia
 ```
 
 Questo **stampa** un comando, non ne esegue nessuno. Leggi la riga che esce: dopo ogni `-v` ci deve essere il posto in cui stanno davvero i tuoi dati. Se è giusta, `docker rm -f estia` e incolla la riga. Al posto di `estia` va il nome del container, che `docker ps` elenca.
@@ -488,7 +492,7 @@ Fa tutto da sé: scarica l'immagine aggiornata, rileva se l'istanza è gestita d
 Rilanci lo stesso comando. Docker deve esserci già; lo script scarica l'immagine nuova, ricrea il container `estia` e rimonta il volume `estia-data` con dentro tutto quello che c'era:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chrono-web/estia/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Paluello/ESTIA/main/install.sh | sh
 ```
 
 Se sulla macchina trova un container con i dati altrove — non sul volume che gestisce lui — **si ferma e te lo dice**, invece di azzerarti l'istanza. È lo stesso controllo dell'installazione.
@@ -512,7 +516,7 @@ Prima il backup, poi l'aggiornamento. Se qualcosa va storto, il punto di ritorno
 Tre comandi in fila, **con lo stesso volume che avevi già** — se ometti `-v estia-data:/data` (o la cartella che usavi) i dati non ti seguono:
 
 ```sh
-docker pull ghcr.io/chrono-web/estia:latest && docker rm -f estia && docker run -d --name estia --restart unless-stopped -p 3000:3000 -v estia-data:/data ghcr.io/chrono-web/estia:latest
+docker pull ghcr.io/paluello/estia:latest && docker rm -f estia && docker run -d --name estia --restart unless-stopped -p 3000:3000 -v estia-data:/data ghcr.io/paluello/estia:latest
 ```
 
 Il dettaglio e il perché stanno nella sezione [dal pannello grafico](#dal-pannello-grafico-del-nas-al-posto-dei-passi-4-5-e-6).
@@ -557,7 +561,7 @@ estia ripristino-backup
 In alternativa, con Docker diretto (la chiave viene chiesta a video in modo interattivo, evitando che finisca nella cronologia della shell; aggiungi `--sovrascrivi` se la cartella di destinazione contiene già dati):
 
 ```sh
-docker run --rm -it --user 0:0 -v /cartella/del/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/chrono-web/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVIO.tar.age /restore
+docker run --rm -it --user 0:0 -v /cartella/del/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVIO.tar.age /restore
 ```
 
 **Perché questo comando parte da root, quando tutto il resto della guida non lo fa.** La cartella di destinazione l'hai creata tu, quindi appartiene al tuo utente; l'istanza invece gira come utente `10001`, e con i suoi permessi non può scriverci dentro. Il container ripristina e poi **consegna automaticamente i file all'utente dell'istanza** con `chown`. È un container usa e getta che non serve niente a nessuno e muore subito dopo — la differenza con l'istanza, che resta accesa e risponde dalla rete, è tutta qui.
