@@ -14,6 +14,8 @@ export default tseslint.config(
       ".data/**",
       ".logs/**",
       "coverage/**",
+      // Compilati di Rust (lo spike S6 in infra/spike-app).
+      "**/target/**",
     ],
   },
   js.configs.recommended,

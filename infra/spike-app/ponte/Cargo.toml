@@ -1,0 +1,17 @@
+[package]
+name = "estia-ponte"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only"
+description = "Spike S6: il collegamento iroh fra il Dispositivo e la Casa (ADR 0044 §4)"
+
+[dependencies]
+iroh = "=1.4.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }

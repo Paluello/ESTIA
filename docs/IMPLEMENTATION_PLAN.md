@@ -744,6 +744,10 @@ Questo paragrafo resta qui perché è la prova su cui poggiano regole che oggi s
 
 **Aggiornamento del 2026-10-07.** Il proprietario ha deciso che **le app vengono prima di ESTIA 1.0**, iOS, Android **e PC**, con un numero di milestone nuovo: da fuori casa la Casa si raggiungerà solo con loro ([ADR 0044](adr/0044-il-dispositivo-e-l-app.md), Accepted). Le tre precondizioni qui sopra restano; la prima si allarga a uno spike sullo **stack** dell'app, perché React Native non ha binding iroh, e la terza è ADR 0044 insieme ad [ADR 0045](adr/0045-la-rete-dei-relay-della-comunita.md).
 
+**Aggiornamento del 2026-11-18: lo spike sullo stack è cominciato.** [S6](spike/S6-lo-stack-dell-app.md) prova **Tauri 2** — iroh in Rust nativo, interfaccia e `ts-mls` nella WebView — con il materiale in [`infra/spike-app/`](../infra/spike-app/README.md). Esito **parziale, a favore di Tauri**: nella WebView dell'app il codice MLS di `apps/web/src/mls` gira senza modifiche, la cassaforte di sistema regge al riavvio su Linux, e iroh 1.4.1 in Rust si collega alla Casa che parla il binding Node 1.1.0. Restano quattro prove su hardware (Mac, iPhone, Android, Milano–Campello); finché non ci sono, lo spike è aperto e la milestone delle app non si apre.
+
+- [ ] Spike [S6](spike/S6-lo-stack-dell-app.md): le quattro prove sul dispositivo.
+
 **Aggiornamento del 2026-10-14: le lingue.** [ADR 0046](adr/0046-le-lingue-di-estia.md), **Accepted** il 2026-10-15. ESTIA esce almeno in inglese e in italiano, e chiunque può aggiungere una lingua riempiendo una tabella. L'istanza manda codici d'errore, il client sceglie la frase, ogni membro sceglie la propria lingua, e `install.sh` chiede quella della Casa. Non è una precondizione delle app, ma va fatta **prima di scrivere l'app**: altrimenti le frasi si estraggono da due client invece che da uno.
 
 - [x] Accettazione di ADR 0046 (2026-10-15).

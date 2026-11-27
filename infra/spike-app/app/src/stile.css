@@ -1,0 +1,65 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  padding: env(safe-area-inset-top) 16px 32px;
+}
+main {
+  max-width: 640px;
+  margin: 0 auto;
+}
+h1 {
+  margin-bottom: 0;
+}
+.sotto {
+  margin-top: 4px;
+  opacity: 0.7;
+}
+ol {
+  padding-left: 0;
+  list-style: none;
+}
+li {
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+li .nome {
+  font-weight: 600;
+}
+li .dettaglio {
+  display: block;
+  font-size: 0.9em;
+  opacity: 0.8;
+  word-break: break-word;
+}
+.ok::before {
+  content: "✓ ";
+  color: #1a7f37;
+}
+.no::before {
+  content: "✗ ";
+  color: #cf222e;
+}
+.info::before {
+  content: "· ";
+}
+code,
+pre {
+  font-size: 0.8em;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  margin: 4px 0 8px;
+}
+button {
+  font: inherit;
+  padding: 8px 14px;
+  min-height: 44px;
+}

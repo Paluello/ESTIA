@@ -1,0 +1,144 @@
+{
+  "quando": "2026-11-18T09:58:40.941Z",
+  "inTauri": true,
+  "voci": [
+    {
+      "nome": "Motore",
+      "esito": "info",
+      "dettaglio": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15"
+    },
+    {
+      "nome": "Origine",
+      "esito": "info",
+      "dettaglio": "tauri://localhost"
+    },
+    {
+      "nome": "Contesto sicuro",
+      "esito": "ok",
+      "dettaglio": "isSecureContext = true"
+    },
+    {
+      "nome": "crypto.subtle",
+      "esito": "ok",
+      "dettaglio": "presente"
+    },
+    {
+      "nome": "CSP su WebAssembly",
+      "esito": "info",
+      "dettaglio": "WebAssembly compila: questo motore non applica la CSP a WebAssembly"
+    },
+    {
+      "nome": "CSP viva (eval bloccato)",
+      "esito": "ok",
+      "dettaglio": "EvalError"
+    },
+    {
+      "nome": "Lato nativo",
+      "esito": "ok",
+      "dettaglio": "{\"os\":\"linux\",\"arch\":\"x86_64\",\"cassaforte\":{\"negozio\":\"Linux: Secret Service (GNOME Keyring o KWallet) via D-Bus\",\"chiave_nuova\":true,\"residuo_cancellato\":true,\"file_all_apertura\":0},\"errore_cassaforte\":null}",
+      "ms": 1
+    },
+    {
+      "nome": "ECDH P-256 (il KEM di HPKE)",
+      "esito": "ok",
+      "dettaglio": "32 byte condivisi",
+      "ms": 25
+    },
+    {
+      "nome": "PBKDF2 600 000 iterazioni (backup sotto passphrase)",
+      "esito": "ok",
+      "dettaglio": "derivata",
+      "ms": 127
+    },
+    {
+      "nome": "Identità MLS da un avvio precedente",
+      "esito": "info",
+      "dettaglio": "no: primo avvio (o app reinstallata)"
+    },
+    {
+      "nome": "Anna: preparaDispositivo (identità + 10 KeyPackage)",
+      "esito": "ok",
+      "dettaglio": "anna-1",
+      "ms": 328
+    },
+    {
+      "nome": "Bruno: preparaDispositivo",
+      "esito": "ok",
+      "dettaglio": "bruno-1",
+      "ms": 193
+    },
+    {
+      "nome": "Anna crea la conversazione",
+      "esito": "ok",
+      "dettaglio": "epoch 0",
+      "ms": 27
+    },
+    {
+      "nome": "Anna aggiunge Bruno (Commit + Welcome)",
+      "esito": "ok",
+      "dettaglio": "Welcome 1035 byte, epoch 1",
+      "ms": 44
+    },
+    {
+      "nome": "Bruno entra dal Welcome",
+      "esito": "ok",
+      "dettaglio": "dentro",
+      "ms": 28
+    },
+    {
+      "nome": "Anna cifra",
+      "esito": "ok",
+      "dettaglio": "324 byte",
+      "ms": 4
+    },
+    {
+      "nome": "Bruno decifra",
+      "esito": "ok",
+      "dettaglio": "\"ciao Bruno\"",
+      "ms": 9
+    },
+    {
+      "nome": "Bruno risponde",
+      "esito": "ok",
+      "dettaglio": "324 byte",
+      "ms": 7
+    },
+    {
+      "nome": "Lo stato del gruppo passa dalla cassaforte e torna",
+      "esito": "ok",
+      "dettaglio": "decodificato",
+      "ms": 6
+    },
+    {
+      "nome": "Anna legge la risposta con lo stato riaperto",
+      "esito": "ok",
+      "dettaglio": "\"ciao Anna\"",
+      "ms": 5
+    },
+    {
+      "nome": "Backup sotto passphrase (PBKDF2 + AES-GCM)",
+      "esito": "ok",
+      "dettaglio": "salvato",
+      "ms": 124
+    },
+    {
+      "nome": "Ripristino dal backup su un dispositivo vuoto",
+      "esito": "ok",
+      "dettaglio": "identità ripristinata",
+      "ms": 123
+    },
+    {
+      "nome": "Sul disco il materiale è sigillato",
+      "esito": "ok",
+      "dettaglio": "09f4a14d7ffba3346591523496186fe90a4906c6bf721c3ab236235e310977e02247c7665909f490952f51ac6a4d26f4… (9432 byte)",
+      "ms": 3
+    },
+    {
+      "nome": "Serializzazione del cassetto",
+      "esito": "ok",
+      "dettaglio": "Uint8Array e bigint attraversano il JSON"
+    }
+  ],
+  "riuscite": 20,
+  "fallite": 0
+}
