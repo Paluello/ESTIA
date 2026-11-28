@@ -4,11 +4,16 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   INGRESSO_DURATA_MS,
   formattaQrDiIngresso,
+  type DomandaConInvito,
   type EsitoDiIngresso,
+  type EsitoDiRichiesta,
   type IngressoEmessoView,
+  type JoinRequestSubmission,
+  type JoinRequestView,
 } from "@estia/contracts";
 
 import type { Transactor } from "../db/database.js";
+import { DomainError } from "../errors.js";
 import type { IdentityService } from "../identity/service.js";
 import { hashSessionToken } from "../identity/tokens.js";
 
@@ -108,6 +113,28 @@ export class SqliteAccessoRepository {
         };
   }
 
+  /** Quale chiave ha mandato una richiesta d'ingresso con invito. */
+  public salvaRichiesta(record: {
+    requestId: string;
+    chiave: string;
+    etichetta: string;
+    creatoIl: string;
+  }): void {
+    this.db.prepare(`DELETE FROM richieste_dispositivo WHERE chiave = ?`).run(record.chiave);
+    this.db
+      .prepare(
+        `INSERT INTO richieste_dispositivo (request_id, chiave, etichetta, creato_il)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(record.requestId, record.chiave, record.etichetta, record.creatoIl);
+  }
+
+  public richiesta(requestId: string): { chiave: string; etichetta: string } | undefined {
+    return this.db
+      .prepare(`SELECT chiave, etichetta FROM richieste_dispositivo WHERE request_id = ?`)
+      .get(requestId) as { chiave: string; etichetta: string } | undefined;
+  }
+
   public chiaveDellaSessione(sessionId: string): string | undefined {
     const row = this.db
       .prepare(`SELECT chiave FROM chiavi_di_rete WHERE session_id = ?`)
@@ -120,11 +147,26 @@ export class SqliteAccessoRepository {
 /** Lunghezza massima dell'etichetta che il dispositivo dichiara di sé. */
 export const ETICHETTA_MAX = 80;
 
+/** Ciò che serve dell'ammissione: chiedere con un invito. */
+export interface Ammissioni {
+  submitJoinRequest(input: JoinRequestSubmission): Promise<JoinRequestView>;
+}
+
+/**
+ * Le domande con invito che una Casa accetta in dieci minuti, da tutte le
+ * chiavi insieme: ogni domanda valida costa un hash di password, e le chiavi
+ * iroh non costano niente. Un tetto per chiave non fermerebbe nessuno.
+ */
+const RICHIESTE_MAX = 20;
+const RICHIESTE_FINESTRA_MS = 10 * 60 * 1000;
+
 export class AccessoDispositivi {
   readonly #repository: SqliteAccessoRepository;
   readonly #identity: IdentityService;
   readonly #transaction: Transactor;
   readonly #now: () => Date;
+  #ammissioni: Ammissioni | undefined;
+  #richiesteRecenti: number[] = [];
 
   public constructor(options: {
     repository: SqliteAccessoRepository;
@@ -198,10 +240,7 @@ export class AccessoDispositivi {
       this.#identity.revokeSession(precedente.userId, precedente.sessionId);
     }
 
-    const caller = this.#identity.openDeviceSession(
-      userId,
-      etichetta.trim().slice(0, ETICHETTA_MAX) || "App ESTIA",
-    );
+    const caller = this.#identity.openDeviceSession(userId, etichettaDi(etichetta));
 
     this.#repository.legaChiave({
       chiave,
@@ -241,4 +280,94 @@ export class AccessoDispositivi {
   public chiaveDellaSessione(sessionId: string): string | undefined {
     return this.#repository.chiaveDellaSessione(sessionId);
   }
+
+  /** L'ammissione nasce prima dell'accesso, in `app.ts`: si collegano dopo. */
+  public useAmmissioni(ammissioni: Ammissioni): void {
+    this.#ammissioni = ammissioni;
+  }
+
+  /**
+   * Chi non è membro chiede di entrare, con un invito, da `chiave`.
+   *
+   * La richiesta è quella di `POST /api/v1/join/request`, e la decide
+   * l'amministratore come sempre: un invito fa **chiedere**, non entrare
+   * ([ADR 0003](../../../../docs/adr/0003-primo-contatto-in-rete-locale.md), requisito 3). Qui si
+   * ricorda soltanto da quale chiave è arrivata. `undefined` — nessuna
+   * risposta — per un invito che non vale, come per un codice d'ingresso
+   * sbagliato.
+   */
+  public async richiedi(
+    chiave: string,
+    domanda: DomandaConInvito,
+  ): Promise<EsitoDiRichiesta | undefined> {
+    if (this.#ammissioni === undefined) {
+      return undefined;
+    }
+
+    const adesso = this.#now().getTime();
+    this.#richiesteRecenti = this.#richiesteRecenti.filter(
+      (t) => t > adesso - RICHIESTE_FINESTRA_MS,
+    );
+    if (this.#richiesteRecenti.length >= RICHIESTE_MAX) {
+      return undefined;
+    }
+    this.#richiesteRecenti.push(adesso);
+
+    const { codice, username, password, displayName, message } = domanda.invito;
+    let richiesta: JoinRequestView;
+    try {
+      richiesta = await this.#ammissioni.submitJoinRequest({
+        inviteCode: codice,
+        password,
+        username,
+        ...(displayName === undefined ? {} : { displayName }),
+        ...(message === undefined ? {} : { message }),
+      });
+    } catch (causa) {
+      if (causa instanceof DomainError && causa.code !== "invalid_invite") {
+        return { codice: causa.code, esito: "rifiutata" };
+      }
+
+      return undefined;
+    }
+
+    this.#repository.salvaRichiesta({
+      chiave,
+      creatoIl: new Date(adesso).toISOString(),
+      etichetta: etichettaDi(domanda.etichetta),
+      requestId: richiesta.id,
+    });
+
+    return { esito: "richiesta", richiestaId: richiesta.id };
+  }
+
+  /**
+   * L'amministratore ha detto di sì: se la richiesta era arrivata dall'app,
+   * la sua chiave diventa il primo dispositivo del nuovo account.
+   *
+   * Si chiama **dentro** la transazione dell'approvazione: o l'account nasce
+   * con il dispositivo, o non nasce.
+   */
+  public dopoApprovazione(requestId: string, userId: string): void {
+    const richiesta = this.#repository.richiesta(requestId);
+    if (richiesta === undefined) {
+      return;
+    }
+
+    const precedente = this.#repository.perChiave(richiesta.chiave);
+    if (precedente !== undefined) {
+      this.#identity.revokeSession(precedente.userId, precedente.sessionId);
+    }
+
+    const caller = this.#identity.openDeviceSession(userId, richiesta.etichetta);
+    this.#repository.legaChiave({
+      chiave: richiesta.chiave,
+      creatoIl: this.#now().toISOString(),
+      sessionId: caller.sessionId,
+      userId,
+    });
+  }
 }
+
+const etichettaDi = (etichetta: string): string =>
+  etichetta.trim().slice(0, ETICHETTA_MAX) || "App ESTIA";

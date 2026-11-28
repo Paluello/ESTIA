@@ -53,6 +53,7 @@ describe("instance database", () => {
           { name: "accesso-del-dispositivo", version: 34 },
           { name: "gruppi", version: 35 },
           { name: "trasloco", version: 36 },
+          { name: "ingresso-con-invito", version: 37 },
         ]);
 
         // Re-running must be a no-op rather than an error.

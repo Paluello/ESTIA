@@ -611,6 +611,20 @@ export async function buildApp(
   });
 
   identityService.useChiaviDiRete((sessionId) => accessoDispositivi.chiaveDellaSessione(sessionId));
+  accessoDispositivi.useAmmissioni(admissionService);
+  /** La chiave di rete della Casa per i QR, e il ticket solo dove la scoperta non c'è. */
+  const reteDellaCasa = (): { chiave: string; ticket?: string } | undefined =>
+    endpoint.endpointId === undefined
+      ? undefined
+      : {
+          chiave: endpoint.endpointId,
+          ...(endpoint.reachableByKey || endpoint.ticket === undefined
+            ? {}
+            : { ticket: endpoint.ticket }),
+        };
+  admissionService.useDopoApprovazione((requestId, userId) =>
+    accessoDispositivi.dopoApprovazione(requestId, userId),
+  );
 
   endpoint.register(networkProbe);
   endpoint.register(federation);
@@ -757,15 +771,7 @@ export async function buildApp(
   registerDispositiviRoutes(app, {
     accesso: accessoDispositivi,
     casa: deriveNetworkPublicId(identity),
-    rete: () =>
-      endpoint.endpointId === undefined
-        ? undefined
-        : {
-            chiave: endpoint.endpointId,
-            ...(endpoint.reachableByKey || endpoint.ticket === undefined
-              ? {}
-              : { ticket: endpoint.ticket }),
-          },
+    rete: reteDellaCasa,
     dispositivi: dispositiviService,
     federation,
     identity: identityService,
@@ -805,7 +811,11 @@ export async function buildApp(
     ...(upgrade === undefined ? {} : { lastUpgrade: upgrade }),
   });
   registerBackupRoutes(app, { backups: backupSettings, identity: identityService });
-  registerAdmissionRoutes(app, { admission: admissionService, identity: identityService });
+  registerAdmissionRoutes(app, {
+    admission: admissionService,
+    identity: identityService,
+    rete: reteDellaCasa,
+  });
   registerFeedRoutes(app, {
     feed: feedService,
     identity: identityService,
