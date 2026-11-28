@@ -532,6 +532,74 @@ describe("restoring over a live instance", () => {
   });
 });
 
+/**
+ * Internal review, 2026-11-27: an archive did not say which instance it came
+ * from. Anybody who knows the public backup key can encrypt one, so an archive
+ * planted next to the real ones would have replaced the instance.
+ */
+describe("an archive says which instance it belongs to", () => {
+  it("refuses, over a live instance, the archive of another one", async () => {
+    await withPopulatedInstance(async ({ dataDir: altra }) => {
+      await withPopulatedInstance(async ({ dataDir }) => {
+        await withTempDataDir(async (out) => {
+          const keys = await createBackupKeyPair();
+          const estranea = await createBackup({
+            dataDir: altra,
+            destination: out,
+            recipient: { kind: "publicKey", value: keys.publicKey },
+          });
+          const key = { kind: "privateKey" as const, value: keys.privateKey };
+          const prima = readFileSync(path.join(dataDir, "instance-identity.pem"), "utf8");
+
+          await expect(
+            restoreBackup({ archive: estranea.path, destination: dataDir, force: true, key }),
+          ).rejects.toThrow(/non di questa.*--altra-istanza/);
+          // Refused before anything moved.
+          expect(readFileSync(path.join(dataDir, "instance-identity.pem"), "utf8")).toBe(prima);
+          expect(readdirSync(dataDir).some((name) => name.startsWith(".prima-del"))).toBe(false);
+
+          // Said explicitly, it goes through, and names the instance it brought.
+          const sostituita = await restoreBackup({
+            archive: estranea.path,
+            destination: dataDir,
+            force: true,
+            key,
+            otherInstance: true,
+          });
+
+          expect(sostituita.instance).toMatch(/^[0-9a-f]{64}$/);
+          expect(readFileSync(path.join(dataDir, "instance-identity.pem"), "utf8")).toBe(
+            readFileSync(path.join(altra, "instance-identity.pem"), "utf8"),
+          );
+        });
+      });
+    });
+  });
+
+  it("names the instance on an empty destination, where there is nothing to compare", async () => {
+    await withPopulatedInstance(async ({ dataDir }) => {
+      await withTempDataDir(async (out) => {
+        await withTempDataDir(async (vuota) => {
+          const keys = await createBackupKeyPair();
+          const backup = await createBackup({
+            dataDir,
+            destination: out,
+            recipient: { kind: "publicKey", value: keys.publicKey },
+          });
+
+          const restored = await restoreBackup({
+            archive: backup.path,
+            destination: vuota,
+            key: { kind: "privateKey", value: keys.privateKey },
+          });
+
+          expect(restored.instance).toMatch(/^[0-9a-f]{64}$/);
+        });
+      });
+    });
+  });
+});
+
 describe("an archive is untrusted input", () => {
   it("refuses entries that would escape the destination", () => {
     for (const name of [

@@ -1,8 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { deriveNetworkPublicId } from "../instance/identity.js";
 import { collectFiles, packFiles, unpackInto, type ArchiveEntry } from "./archive.js";
 import { decryptArchive, encryptArchive, type BackupRecipient } from "./crypto.js";
 
@@ -138,6 +139,11 @@ export interface RestoreOptions {
   destination: string;
   key: { kind: "privateKey" | "passphrase"; value: string };
   force?: boolean;
+  /**
+   * Allows replacing an instance with a **different** one: an archive whose
+   * instance key is not the one already in the destination. Off by default.
+   */
+  otherInstance?: boolean;
   now?: () => Date;
 }
 
@@ -149,6 +155,11 @@ export interface RestoreResult {
    * deleted: whoever restores decides when it can go.
    */
   previous?: string;
+  /**
+   * The network key of the instance the archive belongs to, as the panel and
+   * `estia info` show it. Absent for an archive with no instance key.
+   */
+  instance?: string;
 }
 
 /**
@@ -204,6 +215,12 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
     await unpackInto(Readable.from(Buffer.from(decrypted)), staging);
     checkRestoredDatabase(path.join(staging, "estia.db"));
 
+    const instance = instanceKeyIn(staging);
+
+    if (!options.otherInstance) {
+      checkSameInstance(instance, instanceKeyIn(destination));
+    }
+
     const present = RESTORED.filter((name) => existsSync(path.join(destination, name)));
     let previous: string | undefined;
 
@@ -241,7 +258,11 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
       }
     }
 
-    return previous === undefined ? { files } : { files, previous };
+    return {
+      files,
+      ...(previous === undefined ? {} : { previous }),
+      ...(instance === undefined ? {} : { instance }),
+    };
   } finally {
     await rm(staging, { force: true, recursive: true });
   }
@@ -271,6 +292,47 @@ function checkRestoredDatabase(file: string): void {
   } finally {
     database?.close();
   }
+}
+
+/**
+ * The network key of the instance whose identity file is in `directory`, or
+ * nothing when there is none. A file that is not a key counts as none: what
+ * matters here is only whether it is the same instance.
+ */
+function instanceKeyIn(directory: string): string | undefined {
+  const file = path.join(directory, "instance-identity.pem");
+
+  if (!existsSync(file)) {
+    return undefined;
+  }
+
+  try {
+    const privateKeyPem = readFileSync(file, "utf8");
+
+    return deriveNetworkPublicId({ privateKeyPem, publicKey: "" });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * An archive says where it comes from through the instance key it carries,
+ * which only that instance holds. Anybody who knows the public backup key can
+ * encrypt an archive, so over an existing instance the key must be its own
+ * (internal review, 2026-11-27): otherwise a planted archive would replace it.
+ * On an empty destination there is nothing to compare, and the CLI shows the
+ * key so that whoever restores can check it.
+ */
+function checkSameInstance(archive: string | undefined, current: string | undefined): void {
+  if (current === undefined || archive === current) {
+    return;
+  }
+
+  throw new Error(
+    archive === undefined
+      ? `L'archivio non contiene la chiave di nessuna istanza, e questa è l'istanza ${current}. I dati attuali non sono stati toccati. Se vuoi davvero sostituirla, ripeti con --altra-istanza.`
+      : `L'archivio è dell'istanza ${archive}, non di questa (${current}). I dati attuali non sono stati toccati. Se vuoi davvero sostituirla con un'altra istanza, ripeti con --altra-istanza.`,
+  );
 }
 
 /** Best effort: the error that brought us here is the one worth reporting. */

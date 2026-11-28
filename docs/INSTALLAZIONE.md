@@ -572,6 +572,8 @@ Se il comando risponde `EACCES: permission denied`, quasi sempre è l'archivio: 
 
 Poi accendi un'istanza di prova sui dati ripristinati, su un'altra porta, senza toccare quella vera, e guarda se c'è tutto. **Provato davvero il 2026-08-19** su un mini-PC Linux: l'istanza ripristinata torna su con la stessa chiave pubblica, la stessa password e i contenuti al loro posto.
 
+**Un archivio dice di quale istanza è.** Dentro c'è la chiave dell'istanza, che ha solo lei, e il ripristino la mostra alla fine («Istanza: …»): è la stessa che il pannello mostra in EstiaNet come chiave di questa Casa, quando la rete è accesa. Sopra un'istanza che c'è già, un archivio di un'altra istanza viene rifiutato senza toccare niente, perché chiunque conosca la chiave pubblica dei backup può cifrarne uno. Se vuoi davvero sostituire un'istanza con un'altra, aggiungi `--altra-istanza` (`estia ripristino-backup ARCHIVIO.tar.age --altra-istanza`).
+
 E vale la pena saperlo: **un archivio si apre anche senza ESTIA**, con strumenti standard ([ADR 0013](adr/0013-backup-cifrati-in-formato-age.md)):
 
 ```sh

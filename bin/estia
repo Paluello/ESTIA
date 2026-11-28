@@ -269,6 +269,12 @@ ${CCYAN}╔═══════════════════════
 cmd_ripristina() {
 	check_docker
 	ARCHIVIO="${1:-}"
+	# L'archivio di un'altra istanza si rifiuta, se qui ce n'e' gia' una: per
+	# sostituirla davvero serve dirlo.
+	ALTRA_ISTANZA=""
+	if [ "${2:-}" = "--altra-istanza" ]; then
+		ALTRA_ISTANZA="--altra-istanza"
+	fi
 
 	sayb "
 ${CCYAN}╔════════════════════════════════════════════════════════════════════╗
@@ -353,7 +359,7 @@ ${CCYAN}╔═══════════════════════
 		--network none \
 		-v "${ARCH_HOST_DIR}:/backup:ro" \
 		-v "${DATA_SOURCE}:/restore" \
-		--entrypoint node "$IMAGE" dist/backup/cli.js ripristina "/backup/${ARCH_FILE}" /restore --sovrascrivi; then
+		--entrypoint node "$IMAGE" dist/backup/cli.js ripristina "/backup/${ARCH_FILE}" /restore --sovrascrivi ${ALTRA_ISTANZA}; then
 
 		if [ "$WAS_RUNNING" = "1" ]; then
 			sayb ""

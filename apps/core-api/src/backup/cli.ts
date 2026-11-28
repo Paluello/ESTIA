@@ -32,10 +32,12 @@ const USAGE = `
    │   Crea un backup cifrato. La chiave pubblica si passa in
    │   ESTIA_BACKUP_PUBLIC_KEY, oppure una passphrase in ESTIA_BACKUP_PASSPHRASE.
    │
-   \x1b[36m└──\x1b[0m \x1b[1mnode dist/backup/cli.js ripristina <archivio> <directory-di-destinazione> [--sovrascrivi]\x1b[0m
+   \x1b[36m└──\x1b[0m \x1b[1mnode dist/backup/cli.js ripristina <archivio> <directory-di-destinazione> [--sovrascrivi] [--altra-istanza]\x1b[0m
        Ripristina un archivio. La chiave privata viene richiesta a video,
        oppure passata in ESTIA_BACKUP_PRIVATE_KEY. Con --sovrascrivi sovrascrive
-       i dati esistenti solo dopo che la chiave e' stata verificata.
+       i dati esistenti solo dopo che la chiave e' stata verificata, e solo se
+       l'archivio e' della stessa istanza. --altra-istanza toglie quest'ultimo
+       controllo: serve solo per sostituire un'istanza con un'altra.
 
 \x1b[2m📖 Un archivio e' un tar cifrato con age: si apre anche senza ESTIA, con
    age -d -i chiave.txt archivio.tar.age | tar -xv\x1b[0m
@@ -190,8 +192,9 @@ async function main(): Promise<void> {
     const restored = await restoreBackup({
       archive: first,
       destination: second,
-      key,
       force,
+      key,
+      otherInstance: process.argv.includes("--altra-istanza"),
     });
 
     if (typeof process.getuid === "function" && process.getuid() === 0) {
@@ -201,6 +204,7 @@ async function main(): Promise<void> {
     process.stdout.write(
       `\x1b[32m●\x1b[0m \x1b[1mRipristino completato con successo!\x1b[0m\n` +
         `   \x1b[36m├──\x1b[0m Destinazione: \x1b[1m${second}\x1b[0m\n` +
+        `   \x1b[36m├──\x1b[0m Istanza:      \x1b[1m${restored.instance ?? "nessuna chiave nell'archivio"}\x1b[0m\n` +
         `   \x1b[36m${restored.previous === undefined ? "└──" : "├──"}\x1b[0m File estratti: \x1b[36m${String(restored.files.length)}\x1b[0m file ripristinati\n` +
         (restored.previous === undefined
           ? "\n"
