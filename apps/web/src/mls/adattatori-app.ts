@@ -16,7 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { base64InBytes, bytesInBase64 } from "../piattaforma/app.js";
 import type { Cassetto } from "./dispositivo.js";
-import type { Deposito } from "./sessione.js";
+import type { CommitInSospeso, Deposito } from "./sessione.js";
 
 export function serializza(valore: unknown): string {
   return JSON.stringify(valore, (_k, v: unknown) => {
@@ -43,6 +43,7 @@ const DISPOSITIVO = "mls/dispositivo/";
 const STATI = "mls/stato/";
 const CURSORI = "mls/cursore/";
 const MAZZI = "mls/mazzo/";
+const SOSPESI = "mls/sospeso/";
 
 async function leggi(nome: string): Promise<unknown> {
   const testo = await invoke<string | null>("cassaforte_leggi", { nome });
@@ -67,12 +68,18 @@ export const depositoCassaforte: Deposito = {
   leggi: async (id) => (await leggi(STATI + id)) as Uint8Array | undefined,
   leggiCursore: async (id) => (await leggi(CURSORI + id)) as string | undefined,
   leggiMazzo: async (id) => (await leggi(MAZZI + id)) as string | undefined,
+  // La cassaforte non toglie una voce sola: «niente in sospeso» si scrive come
+  // `null`, e si rilegge come se la voce non ci fosse.
+  leggiSospeso: async (id) =>
+    ((await leggi(SOSPESI + id)) ?? undefined) as CommitInSospeso | undefined,
   scrivi: (id, stato) => scrivi(STATI + id, stato),
   scriviCursore: (id, cursore) => scrivi(CURSORI + id, cursore),
   scriviMazzo: (id, mazzo) => scrivi(MAZZI + id, mazzo),
+  scriviSospeso: (id, sospeso) => scrivi(SOSPESI + id, sospeso ?? null),
   svuota: async () => {
     await svuota(STATI);
     await svuota(CURSORI);
     await svuota(MAZZI);
+    await svuota(SOSPESI);
   },
 };

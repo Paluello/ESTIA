@@ -593,6 +593,7 @@ class Browser {
             preleva(id).map((p) => ({
               idDiChiEntra: id,
               keyPackage: pacchettoPerIlWeb(p.keyPackage),
+              membro: { casa: CASA, username: nomeDi(id) },
             })),
           ),
     );

@@ -24,7 +24,13 @@ import {
   type Portachiavi,
 } from "./gruppo.js";
 import type { Anagrafe, Cassetto } from "./dispositivo.js";
-import type { BustaHandshake, Deposito, Istanza, VoceArchivio } from "./sessione.js";
+import type {
+  BustaHandshake,
+  CommitInSospeso,
+  Deposito,
+  Istanza,
+  VoceArchivio,
+} from "./sessione.js";
 import type { KeyPackage } from "ts-mls";
 
 /** Una busta sul canale, destinatario compreso: la rotta vera non lo restituisce. */
@@ -223,12 +229,14 @@ export function depositoFinto(): DepositoFinto {
   const stati = new Map<string, Uint8Array>();
   const cursori = new Map<string, string>();
   const mazzi = new Map<string, string>();
+  const sospesi = new Map<string, CommitInSospeso>();
   let scritture = 0;
 
   return {
     leggi: (id) => Promise.resolve(stati.get(id)),
     leggiCursore: (id) => Promise.resolve(cursori.get(id)),
     leggiMazzo: (id) => Promise.resolve(mazzi.get(id)),
+    leggiSospeso: (id) => Promise.resolve(sospesi.get(id)),
     quanteScritture: () => scritture,
     scrivi(id, stato) {
       scritture += 1;
@@ -243,10 +251,19 @@ export function depositoFinto(): DepositoFinto {
       mazzi.set(id, mazzo);
       return Promise.resolve();
     },
+    scriviSospeso(id, sospeso) {
+      if (sospeso === undefined) {
+        sospesi.delete(id);
+      } else {
+        sospesi.set(id, sospeso);
+      }
+      return Promise.resolve();
+    },
     svuota() {
       stati.clear();
       cursori.clear();
       mazzi.clear();
+      sospesi.clear();
       return Promise.resolve();
     },
   };

@@ -13,7 +13,6 @@
  */
 import {
   confronta,
-  diChiE,
   epochDi,
   foglieDi,
   scriviIdentita,
@@ -26,6 +25,7 @@ import {
   apriCon,
   cambiaMembri,
   cronologia,
+  eDiChiSiAspetta,
   entra,
   invia,
   riprendi,
@@ -33,6 +33,7 @@ import {
   rientraIn,
   sincronizza,
   togliFoglie,
+  ChiaveDiUnAltro,
   type BustaHandshake,
   type Contesto,
   type Ingresso,
@@ -95,6 +96,11 @@ export type Apertura =
 export interface Invitato {
   keyPackage: KeyPackage;
   idDiChiEntra: string;
+  /**
+   * Chi è, per MLS, la persona che si invita. La chiave d'ingresso la manda
+   * la sua casa: se nomina qualcun altro, con quella non entra nessuno.
+   */
+  membro: Membro;
 }
 
 /**
@@ -186,9 +192,16 @@ export async function apriConversazione(
   }
 
   const invitati = await invito();
-  const ingressi = (Array.isArray(invitati) ? invitati : [invitati as Invitato]).map(
-    (i): Ingresso => ({ destinatario: i.idDiChiEntra, keyPackage: i.keyPackage }),
+  const tutti = (Array.isArray(invitati) ? invitati : [invitati as Invitato]).map(
+    (i): Ingresso => ({ destinatario: i.idDiChiEntra, keyPackage: i.keyPackage, membro: i.membro }),
   );
+  // Una chiave d'ingresso che nomina un altro non fa entrare nessuno: resta
+  // fuori lei, e chi ne ha una buona entra lo stesso. Se non ne resta nessuna
+  // lo dice `apriCon`, che le ricontrolla tutte.
+  const ingressi = tutti.filter(eDiChiSiAspetta);
+  if (ingressi.length === 0 && tutti.length > 0) {
+    throw new ChiaveDiUnAltro();
+  }
 
   return { kind: "pronta", sessione: await apriCon(ctx, conversazione.id, ingressi) };
 }
@@ -293,14 +306,10 @@ export async function allineaMieiDispositivi(
 
   // Si fa entrare soltanto ciò che si è chiesto: una chiave d'ingresso che
   // firma con un'altra chiave, o che nomina un'altra persona, resta fuori.
-  const chi = scriviIdentita(io.membro);
   const ingressi = (await prendi(mancanti))
     .filter((kp) => mancanti.some((m) => stessiByte(m, kp.leafNode.signaturePublicKey)))
-    .filter((kp) => {
-      const suo = diChiE(kp);
-      return suo !== undefined && scriviIdentita(suo) === chi;
-    })
-    .map((keyPackage): Ingresso => ({ destinatario: io.id, keyPackage }));
+    .map((keyPackage): Ingresso => ({ destinatario: io.id, keyPackage, membro: io.membro }))
+    .filter(eDiChiSiAspetta);
 
   return ingressi.length === 0 ? attuale : aggiungiFoglie(ctx, attuale, io.membro, ingressi);
 }
@@ -323,7 +332,7 @@ export async function faiEntrare(
     ctx,
     sessione,
     chi.membro,
-    keyPackages.map((keyPackage) => ({ destinatario: chi.id, keyPackage })),
+    keyPackages.map((keyPackage) => ({ destinatario: chi.id, keyPackage, membro: chi.membro })),
     { alPostoDelleVecchie: true },
   );
 }
@@ -353,8 +362,9 @@ export async function invita(
   sessione: Sessione,
   chiEntra: KeyPackage,
   idDiChiEntra: string,
+  membro: Membro,
 ): Promise<Sessione> {
-  return aggiungiMembro(ctx, sessione, chiEntra, idDiChiEntra);
+  return aggiungiMembro(ctx, sessione, chiEntra, idDiChiEntra, membro);
 }
 
 export interface Lettura {

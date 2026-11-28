@@ -72,14 +72,14 @@ Le regole sono quelle del web, e le applica il nucleo:
 - **Non si scrive se nell'albero c'è chi non è fra i membri** (`PresenzaEstranea`): chi ha una foglia apre il mazzo.
 - Chi è stato tolto non rientra da sé, e non legge il seguito.
 
-Quattro cose il nucleo le fa diversamente dal web, tutte dalla parte della prudenza:
+Quattro cose di prudenza, che il nucleo ha fatto per primo e che dal 2026-11-28 fa anche il client web (`apps/web/src/mls/sessione.ts`):
 
-- **Un commit proprio resta in sospeso finché la fila non l'ha preso.** Prima di depositarlo il nucleo lo annota nel deposito (`nucleo/sessioni`, accanto ai cursori). Se l'app si chiude o la risposta si perde, al giro dopo lo riconosce in fila byte per byte e finisce il lavoro (mazzo, inviti), oppure lo butta se la fila non l'ha mai visto. Sul web uno stato salvato dopo il deposito lascia una finestra in cui il dispositivo non sa applicare il proprio commit.
+- **Un commit proprio resta in sospeso finché la fila non l'ha preso.** Prima di depositarlo il nucleo lo annota nel deposito (`nucleo/sessioni`, accanto ai cursori). Se l'app si chiude o la risposta si perde, al giro dopo lo riconosce in fila byte per byte e finisce il lavoro (mazzo, inviti), oppure lo butta se la fila non l'ha mai visto. Il web annota accanto alla busta anche lo stato che ne esce, perché `ts-mls` non riapplica un commit a chi l'ha scritto.
 - **Lo stato si salva commit per commit**, prima del cursore: un giro interrotto a metà non lascia il cursore più avanti dello stato.
 - **Un dispositivo che aspetta il sì non crea e non rientra.** Il suo commit lo rifiuterebbero tutti, perché la sua chiave nel registro non c'è, e la fila resterebbe ferma su quella busta.
 - **Un KeyPackage che nomina un'altra persona non fa entrare nessuno**, anche alla creazione, e un invito per un'altra conversazione non si apre.
 
-Chi perde la corsa a creare una chat a due (409) resta `InAttesa` dell'invito dell'altro, invece di ricevere un errore.
+Una differenza resta. Chi perde la corsa a creare una chat a due (409) resta `InAttesa` dell'invito dell'altro, invece di ricevere un errore.
 
 Quello che `Sessioni` **non** fa ancora, e che le schermate dovranno sapere: uscire da un gruppo, ritirare un messaggio, segnare come letto, i ruoli, il trasloco di un gruppo congelato, approvare o revocare un dispositivo, il numero di sicurezza. Le rotte ci sono; mancano le chiamate.
 
