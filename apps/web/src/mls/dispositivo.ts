@@ -170,6 +170,30 @@ async function leggiMaterialeVecchio(cassetto: Cassetto): Promise<MaterialeV1 | 
   return letto?.v === 1 ? letto : undefined;
 }
 
+/**
+ * Se nel cassetto c'è il materiale di **un'altra persona**, o di questa
+ * persona su un'altra casa.
+ *
+ * Il logout esplicito svuota tutto, ma non è l'unico modo in cui una sessione
+ * finisce: un token scaduto o revocato riporta all'ingresso senza passare da
+ * lì. Prima il materiale restava, e chi entrava dopo sullo stesso browser se lo
+ * trovava addosso: registrava come propria la chiave di firma di un altro, e ne
+ * ereditava i gruppi (revisione interna, 2026-11-27).
+ */
+export async function materialeDiAltri(cassetto: Cassetto, membro: Membro): Promise<boolean> {
+  const letto = (await cassetto.leggi(CHIAVE)) as Materiale | MaterialeV1 | undefined;
+
+  if (letto === undefined) {
+    return false;
+  }
+
+  if (letto.username !== membro.username) {
+    return true;
+  }
+
+  return letto.v === 2 && letto.casa !== membro.casa;
+}
+
 /** C'è già un'identità MLS su questo dispositivo? */
 export async function esisteIdentita(cassetto: Cassetto): Promise<boolean> {
   return (await leggiMateriale(cassetto)) !== undefined;
@@ -247,6 +271,14 @@ export interface Dispositivo {
  */
 export async function preparaDispositivo(ctx: Contesto, username: string): Promise<Dispositivo> {
   const membro: Membro = { casa: ctx.casa, username };
+
+  // Chi chiama ha già svuotato il cassetto se era di altri (`materialeDiAltri`):
+  // arrivare qui con il materiale di un'altra persona è un errore, e
+  // registrarlo sarebbe consegnarle questa sessione.
+  if (await materialeDiAltri(ctx.cassetto, membro)) {
+    throw new Error("Il materiale MLS di questo dispositivo è di un'altra persona.");
+  }
+
   const materiale =
     (await leggiMateriale(ctx.cassetto)) ??
     (await aggiorna(ctx.cassetto, membro)) ??

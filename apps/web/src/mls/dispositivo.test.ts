@@ -17,6 +17,7 @@ import {
   ALGORITMO,
   dimentica,
   esisteIdentita,
+  materialeDiAltri,
   portachiaviSu,
   preparaDispositivo,
   ripristinaDaPassphrase,
@@ -248,6 +249,37 @@ describe("il logout", () => {
 
     expect(await esisteIdentita(ctx.cassetto)).toBe(false);
     expect(await deposito.leggi("conv-1")).toBeUndefined();
+  });
+});
+
+/**
+ * Revisione interna, 2026-11-27: una sessione che finisce senza logout (token
+ * scaduto, revocato) lasciava il materiale nel cassetto, e chi entrava dopo
+ * sullo stesso browser lo registrava come proprio.
+ */
+describe("il materiale di un'altra persona", () => {
+  it("si riconosce: un altro nome, o lo stesso nome su un'altra casa", async () => {
+    const ctx = contesto();
+    await preparaDispositivo(ctx, "anna");
+
+    expect(await materialeDiAltri(ctx.cassetto, { casa: CASA, username: "anna" })).toBe(false);
+    expect(await materialeDiAltri(ctx.cassetto, { casa: CASA, username: "bruno" })).toBe(true);
+    expect(await materialeDiAltri(ctx.cassetto, { casa: "un'altra-casa", username: "anna" })).toBe(
+      true,
+    );
+    expect(await materialeDiAltri(cassettoFinto(), { casa: CASA, username: "anna" })).toBe(false);
+  });
+
+  it("non viene mai registrato a nome di chi entra dopo", async () => {
+    const ctx = contesto();
+    await preparaDispositivo(ctx, "anna");
+    const diAnna = ctx.anagrafe.registrata();
+    ctx.anagrafe.nuovoAccesso();
+
+    await expect(preparaDispositivo(ctx, "bruno")).rejects.toThrow(/un'altra persona/);
+    // Nessuna registrazione nuova: la chiave di Anna non finisce a nome di Bruno.
+    expect(ctx.anagrafe.registrata()).toBe(diAnna);
+    expect(ctx.anagrafe.scortaDi(ctx.anagrafe.deviceId())).toBe(0);
   });
 });
 
