@@ -4,6 +4,8 @@ L'app Android di ESTIA in Jetpack Compose e Material 3 ([ADR 0051](../../docs/ad
 
 Per ora fa tre cose: l'ingresso nella Casa con il codice del QR, la bacheca e il profilo, con l'uscita da questo dispositivo.
 
+Dal profilo si aprono i propri dispositivi ([ADR 0040](../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md), `schermate/Dispositivi.kt`): chi ha il sì, chi lo aspetta con il codice da confrontare, chi è stato revocato; il sì, il no e la revoca con conferma. Finché il telefono aspetta il sì, i messaggi mostrano il suo codice al posto dell'elenco.
+
 ## Che cosa c'è
 
 - `app/src/main/java/org/estia/app/`

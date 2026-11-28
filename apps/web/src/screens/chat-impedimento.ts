@@ -30,6 +30,14 @@ export type Impedimento =
   | { kind: "nessuno" }
   /** Il browser tiene spenta la crittografia: riguarda te, e blocca tutto. */
   | { kind: "connessione-non-sicura" }
+  /**
+   * Questo dispositivo aspetta ancora il sì di uno già approvato
+   * ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)):
+   * non crea e non rientra, perché gli altri rifiuterebbero la sua foglia. Non
+   * è un guasto e non c'è niente da riprovare qui: la mossa è su un altro
+   * dispositivo, ed è quella che si dice.
+   */
+  | { kind: "dispositivo-in-attesa" }
   /** Chi legge non ha ancora una chiave: non c'è niente a cui cifrare. */
   | { kind: "destinatario-senza-dispositivo"; nome: string }
   /**
@@ -120,6 +128,12 @@ export function impedimentoDi(condizioni: {
     return { kind: "connessione-non-sicura" };
   }
 
+  // Il codice, non la classe: `DispositivoInAttesa` di `mls/sessione.ts` lo
+  // porta, e guardarlo da qui non trascina la crittografia in questo modulo.
+  if (codiceDi(condizioni.erroreChiave) === "dispositivo_in_attesa") {
+    return { kind: "dispositivo-in-attesa" };
+  }
+
   // Si guarda il codice, non il testo: il testo dell'istanza può cambiare, e
   // una schermata che riconosce un errore dalla sua frase si rompe in silenzio.
   if (
@@ -170,6 +184,14 @@ export function impedimentoDi(condizioni: {
   return { kind: "nessuno" };
 }
 
+/** Il codice di un errore che ne porta uno, qualunque sia la sua classe. */
+function codiceDi(errore: unknown): string | undefined {
+  if (typeof errore !== "object" || errore === null || !("code" in errore)) {
+    return undefined;
+  }
+  return typeof errore.code === "string" ? errore.code : undefined;
+}
+
 /** Le parole. `undefined` quando non c'è niente da spiegare. */
 export function spiegazioneDi(impedimento: Impedimento): Spiegazione | undefined {
   if (impedimento.kind === "connessione-non-sicura") {
@@ -178,6 +200,15 @@ export function spiegazioneDi(impedimento: Impedimento): Spiegazione | undefined
       segnaposto: t("chat.insicura.segnaposto"),
       testo: t("chat.insicura.testo"),
       titolo: t("chat.insicura.titolo"),
+    };
+  }
+
+  if (impedimento.kind === "dispositivo-in-attesa") {
+    return {
+      cosaFare: t("chat.dispositivo_in_attesa.cosa_fare"),
+      segnaposto: t("chat.dispositivo_in_attesa.segnaposto"),
+      testo: t("chat.dispositivo_in_attesa.testo"),
+      titolo: t("chat.dispositivo_in_attesa.titolo"),
     };
   }
 

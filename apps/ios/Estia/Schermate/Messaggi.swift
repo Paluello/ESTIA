@@ -28,7 +28,14 @@ struct Messaggi: View {
         NavigationStack(path: $percorso) {
             Group {
                 if let io, !io.approvato {
-                    Avviso(titolo: Frasi.t("messaggi.titolo"), testo: Frasi.t("app_messaggi.non_approvato"))
+                    // Finché aspetta il sì non c'è niente da elencare: si dice
+                    // perché, si mostra il codice, e dove andare a dirlo.
+                    ScrollView {
+                        AttesaDelSi(codice: io.codice, ricontrolla: { await carica() })
+                            .padding(20)
+                            .background(Tema.superficie, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .padding(16)
+                    }
                 } else if conversazioni.isEmpty {
                     switch stato {
                     case .carico:
@@ -91,13 +98,26 @@ struct Messaggi: View {
                 }
             }
             .refreshable { await carica() }
-            .task { await carica() }
+            .task {
+                await carica()
+                // Chi aspetta il sì ricontrolla da sé ogni dieci secondi: il sì
+                // arriva da un altro dispositivo, e qui non lo annuncia nessuno.
+                while !Task.isCancelled, io?.approvato == false {
+                    try? await Task.sleep(for: .seconds(10))
+                    await carica()
+                }
+            }
         }
     }
 
     private func carica() async {
         do {
             let sessioni = try await casa.sessioniPronte()
+            // Chi aspettava lo scopre dall'elenco dei dispositivi, che
+            // aggiorna `approvato`.
+            if !sessioni.io().approvato {
+                _ = try? await sessioni.dispositivi()
+            }
             io = sessioni.io()
             guard sessioni.io().approvato else {
                 stato = .pronto
@@ -232,6 +252,8 @@ struct SchermataConversazione: View {
     @State private var apertura: Apertura?
     @State private var senzaCronologia = false
     @State private var estranei: [String] = []
+    /// Questo dispositivo aspetta ancora il sì: non crea e non rientra.
+    @State private var aspettaIlSi = false
     @State private var testo = ""
     @State private var invio = false
     @State private var errore: String?
@@ -247,6 +269,12 @@ struct SchermataConversazione: View {
     /// Perché non si può scrivere, se non si può.
     private var blocco: (titolo: String, testo: String)? {
         let nome = ["nome": altro]
+        if aspettaIlSi {
+            return (
+                Frasi.t("chat.dispositivo_in_attesa.titolo"),
+                Frasi.t("chat.dispositivo_in_attesa.testo") + "\n\n" + Frasi.t("chat.dispositivo_in_attesa.cosa_fare")
+            )
+        }
         switch apertura {
         case .none: return nil
         case .tolto: return (Frasi.t("chat.tolto.titolo"), Frasi.t("chat.tolto.testo"))
@@ -267,6 +295,11 @@ struct SchermataConversazione: View {
     }
 
     private var spento: Bool { blocco != nil || apertura != .pronta }
+
+    /// Che cosa dice il campo di scrittura mentre è spento.
+    private var segnaposto: String {
+        aspettaIlSi ? Frasi.t("chat.dispositivo_in_attesa.segnaposto") : Frasi.t("messaggi.scrivi_segnaposto")
+    }
 
     var body: some View {
         ScrollViewReader { lettore in
@@ -420,7 +453,7 @@ struct SchermataConversazione: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(Frasi.t("messaggi.scrivi_segnaposto"), text: $testo, axis: .vertical)
+                TextField(segnaposto, text: $testo, axis: .vertical)
                     .font(Tema.corpo())
                     .lineLimit(1...5)
                     .focused($scrivendo)
@@ -450,10 +483,14 @@ struct SchermataConversazione: View {
         do {
             let sessioni = try await casa.sessioniPronte()
             apertura = try await sessioni.apriConversazione(conversazione: conversazione.id)
+            aspettaIlSi = false
             if apertura == .pronta {
                 let pagina = try await sessioni.cronologia(conversazione: conversazione.id, prima: nil)
                 messaggi = pagina.messaggi
             }
+        } catch ErroreNucleo.DispositivoInAttesa {
+            // Non è un guasto: la mossa è su un altro dispositivo, e si dice.
+            aspettaIlSi = true
         } catch {
             errore = Frasi.t("messaggi.errore_avvio")
         }
@@ -464,9 +501,17 @@ struct SchermataConversazione: View {
     }
 
     private func giro() async {
-        guard let sessioni = try? await casa.sessioniPronte(),
-              let a = try? await sessioni.aggiorna(conversazione: conversazione.id)
-        else { return }
+        guard let sessioni = try? await casa.sessioniPronte() else { return }
+        let a: Aggiornamento
+        do {
+            a = try await sessioni.aggiorna(conversazione: conversazione.id)
+        } catch ErroreNucleo.DispositivoInAttesa {
+            aspettaIlSi = true
+            return
+        } catch {
+            return
+        }
+        aspettaIlSi = false
         apertura = a.apertura
         senzaCronologia = a.senzaCronologia
         estranei = a.estranei

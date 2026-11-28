@@ -158,6 +158,9 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
     suspend fun carica() {
         stato = try {
             val sessioni = casa.sessioniPronte()
+            // Chi aspettava il sì lo scopre dall'elenco dei dispositivi, che
+            // aggiorna `approvato`.
+            if (!sessioni.io().approvato) runCatching { sessioni.dispositivi() }
             val chi = sessioni.io()
             io = chi
             if (chi.approvato) conversazioni = sessioni.conversazioni()
@@ -173,7 +176,15 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
         aperta = creata.id
     }
 
-    LaunchedEffect(Unit) { carica() }
+    LaunchedEffect(Unit) {
+        carica()
+        // Chi aspetta il sì ricontrolla da sé ogni dieci secondi: il sì arriva
+        // da un altro dispositivo, e qui non lo annuncia nessuno.
+        while (isActive && io?.approvato == false) {
+            delay(10_000)
+            carica()
+        }
+    }
 
     val scelta = conversazioni.firstOrNull { it.id == aperta }
     if (scelta != null) {
@@ -237,8 +248,19 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
         ) {
             val chi = io
             when {
-                chi != null && !chi.approvato ->
-                    Avviso(Frasi.t("messaggi.titolo"), Frasi.t("app_messaggi.non_approvato"))
+                // Finché aspetta il sì non c'è niente da elencare: si dice
+                // perché, si mostra il codice, e dove andare a dirlo.
+                chi != null && !chi.approvato -> LazyColumn(Modifier.fillMaxSize()) {
+                    item(key = "attesa") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        ) {
+                            AttesaDelSi(chi.codice, onRicontrolla = { carica() }, modifier = Modifier.padding(20.dp))
+                        }
+                    }
+                }
                 conversazioni.isEmpty() && stato == StatoElenco.Carico ->
                     Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
                 conversazioni.isEmpty() && stato == StatoElenco.Errore ->
@@ -340,6 +362,8 @@ private fun SchermataConversazione(
     var apertura by remember { mutableStateOf<Apertura?>(null) }
     var senzaCronologia by remember { mutableStateOf(false) }
     var estranei by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Questo dispositivo aspetta ancora il sì: non crea e non rientra.
+    var aspettaIlSi by remember { mutableStateOf(false) }
     var testo by rememberSaveable { mutableStateOf("") }
     var invio by remember { mutableStateOf(false) }
     var errore by remember { mutableStateOf<String?>(null) }
@@ -369,7 +393,10 @@ private fun SchermataConversazione(
 
     val altro = conversazione.membri.firstOrNull { it.id != io?.id }?.nome ?: Frasi.t("messaggi.questa_persona")
     val nome = mapOf("nome" to altro)
-    val blocco: Pair<String, String>? = when (apertura) {
+    val blocco: Pair<String, String>? = if (aspettaIlSi) {
+        Frasi.t("chat.dispositivo_in_attesa.titolo") to
+            (Frasi.t("chat.dispositivo_in_attesa.testo") + "\n\n" + Frasi.t("chat.dispositivo_in_attesa.cosa_fare"))
+    } else when (apertura) {
         null -> null
         Apertura.TOLTO -> Frasi.t("chat.tolto.titolo") to Frasi.t("chat.tolto.testo")
         Apertura.IN_ATTESA ->
@@ -402,14 +429,21 @@ private fun SchermataConversazione(
         try {
             val sessioni = casa.sessioniPronte()
             apertura = sessioni.apriConversazione(conversazione.id)
+            aspettaIlSi = false
             if (apertura == Apertura.PRONTA) {
                 messaggi = sessioni.cronologia(conversazione.id, null).messaggi
             }
+        } catch (e: ErroreNucleo.DispositivoInAttesa) {
+            // Non è un guasto: la mossa è su un altro dispositivo, e si dice.
+            aspettaIlSi = true
         } catch (e: Exception) {
             errore = Frasi.t("messaggi.errore_avvio")
         }
         while (isActive) {
-            runCatching { casa.sessioniPronte().aggiorna(conversazione.id) }.onSuccess { a ->
+            runCatching { casa.sessioniPronte().aggiorna(conversazione.id) }.onFailure { e ->
+                if (e is ErroreNucleo.DispositivoInAttesa) aspettaIlSi = true
+            }.onSuccess { a ->
+                aspettaIlSi = false
                 apertura = a.apertura
                 senzaCronologia = a.senzaCronologia
                 estranei = a.estranei
@@ -500,7 +534,15 @@ private fun SchermataConversazione(
                         TextField(
                             value = testo,
                             onValueChange = { testo = it },
-                            placeholder = { Text(Frasi.t("messaggi.scrivi_segnaposto")) },
+                            placeholder = {
+                                Text(
+                                    if (aspettaIlSi) {
+                                        Frasi.t("chat.dispositivo_in_attesa.segnaposto")
+                                    } else {
+                                        Frasi.t("messaggi.scrivi_segnaposto")
+                                    },
+                                )
+                            },
                             enabled = !spento,
                             maxLines = 5,
                             shape = RoundedCornerShape(24.dp),

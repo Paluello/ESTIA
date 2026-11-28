@@ -8,6 +8,8 @@ Per ora l'app fa tre cose:
 - mostra la bacheca della Casa;
 - mostra il profilo e permette di uscire da questo dispositivo.
 
+Dal Profilo si aprono i propri dispositivi ([ADR 0040](../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md), `Schermate/Dispositivi.swift`): chi ha il sì, chi lo aspetta con il codice da confrontare, chi è stato revocato; il sì, il no e la revoca con conferma. Finché questo iPhone aspetta il sì, i messaggi mostrano il suo codice al posto dell'elenco.
+
 | Cartella           | Che cosa c'è                                                                                                      |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `Estia/App`        | L'avvio e lo stato: se il telefono è entrato in una Casa, e il collegamento con cui le parla                      |

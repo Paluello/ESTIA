@@ -295,3 +295,33 @@ describe("i gruppi", () => {
     ).toBe("tolto-dal-gruppo");
   });
 });
+
+describe("un dispositivo che aspetta il sì", () => {
+  it("lo dice con le sue parole, invece di un errore qualunque, e spegne la scrittura", async () => {
+    // È l'errore vero della sessione: chi aspetta non crea e non rientra.
+    const { DispositivoInAttesa } = await import("../mls/sessione.js");
+    const impedimento = impedimentoDi({
+      crittografiaDisponibile: true,
+      erroreChiave: new DispositivoInAttesa(),
+      nomeDestinatario: "Lucia",
+    });
+
+    expect(impedimento).toEqual({ kind: "dispositivo-in-attesa" });
+    expect(siPuoScrivere(impedimento)).toBe(false);
+    const spiegazione = spiegazioneDi(impedimento)!;
+    expect(spiegazione.titolo).toContain("aspetta");
+    expect(spiegazione.cosaFare).toContain("di' di sì");
+    // Non nomina l'altra persona: la mossa è tua, su un altro dispositivo.
+    expect(spiegazione.testo).not.toContain("Lucia");
+  });
+
+  it("la connessione non sicura vince anche su questo", () => {
+    expect(
+      impedimentoDi({
+        crittografiaDisponibile: false,
+        erroreChiave: { code: "dispositivo_in_attesa" },
+        nomeDestinatario: "Lucia",
+      }).kind,
+    ).toBe("connessione-non-sicura");
+  });
+});

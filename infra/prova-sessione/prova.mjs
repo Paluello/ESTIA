@@ -20,7 +20,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { join } from "node:path";
@@ -61,6 +61,9 @@ registerHooks({
 
 const delWeb = (f) => import(pathToFileURL(join(web, "src/mls", f)).href);
 const archivio = await delWeb("archivio.ts");
+const { codiceDi } = await import(
+  pathToFileURL(join(web, "src/screens/impostazioni/codice-dispositivo.ts")).href
+);
 const conversazione = await delWeb("conversazione.ts");
 const finte = await delWeb("finte.ts");
 const contratti = await import(contrattiUrl);
@@ -99,6 +102,62 @@ const casa = {
   dispositivi: [],
   persone: new Map(),
   prossima: 0,
+  /** L'ultima sfida data a ciascuna persona, che si usa una volta. */
+  sfide: new Map(),
+  /** Le prove di possesso arrivate dal nucleo, e quante la Casa avrebbe accettato. */
+  prove: { arrivate: 0, valide: 0 },
+};
+
+/**
+ * Le chiavi tolte da qualcuno: il registro del web non sa revocare, e il
+ * pilota le toglie da ciò che risponde, a chi lo chiede dal filo come a chi lo
+ * chiede dai doppi del web.
+ */
+const revocate = new Set();
+const senzaRevocate = (chiavi) => chiavi.filter((k) => !revocate.has(b64(k)));
+
+/** L'inizio DER di una chiave P-256 non compressa: quello di `apps/core-api`. */
+const SPKI_P256 = Buffer.from("3059301306072a8648ce3d020106082a8648ce3d030107034200", "hex");
+
+/**
+ * `firmaValida` di `apps/core-api/src/dispositivi/service.ts`: la firma ECDSA
+ * P-256, DER, di `messaggio` con la privata di `publicKey`. È così che la Casa
+ * vera controlla la prova che il nucleo firma con OpenMLS.
+ */
+function firmaValida(publicKey, messaggio, firma) {
+  try {
+    const chiave = createPublicKey({
+      format: "der",
+      key: Buffer.concat([SPKI_P256, Buffer.from(publicKey, "base64")]),
+      type: "spki",
+    });
+    return verify(
+      "sha256",
+      Buffer.from(messaggio, "utf8"),
+      { dsaEncoding: "der", key: chiave },
+      Buffer.from(firma, "base64"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Chi chiede dal filo: un dispositivo che ha il sì, e che nessuno ha tolto. */
+function approvato(dispositivo) {
+  if (
+    dispositivo === undefined ||
+    dispositivo.approvatoIl === null ||
+    dispositivo.revokedAt !== null
+  ) {
+    throw new Rifiuto(403, "device_not_approved");
+  }
+}
+
+/** Il dispositivo della persona, com'è nell'elenco: senza la scorta. */
+const comeInElenco = (dispositivo) => {
+  const elencato = { ...dispositivo };
+  delete elencato.pacchetti;
+  return elencato;
 };
 
 /** Le domande che il nucleo ha fatto, per guardarle dalla prova. */
@@ -185,11 +244,22 @@ function registra(utente, chiave) {
   return dispositivo;
 }
 
+/** La revoca: la chiave esce dal registro, per sempre. */
+function revoca(dispositivo) {
+  dispositivo.revokedAt = new Date().toISOString();
+  revocate.add(dispositivo.publicKey);
+}
+
 /** Un `KeyPackage` per ogni dispositivo approvato di quella persona: monouso. */
 function preleva(utente) {
   const presi = [];
   for (const d of casa.dispositivi) {
-    if (d.userId === utente && d.approvatoIl !== null && d.pacchetti.length > 0) {
+    if (
+      d.userId === utente &&
+      d.approvatoIl !== null &&
+      d.revokedAt === null &&
+      d.pacchetti.length > 0
+    ) {
       presi.push({ deviceId: d.id, keyPackage: d.pacchetti.shift() });
     }
   }
@@ -270,7 +340,7 @@ function cercata(corpo) {
  * Una richiesta del nucleo, come la riceverebbe `apps/core-api`: le stesse
  * rotte, gli stessi corpi, gli stessi codici.
  */
-async function rotta(chi, metodo, url, corpo) {
+async function rotta(chi, metodo, url, corpo, telefono) {
   const pezzi = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
   assert.deepEqual(pezzi.slice(0, 2), ["api", "v1"], `rotta fuori dall'API: ${url.pathname}`);
   const [, , zona, ...resto] = pezzi;
@@ -295,31 +365,102 @@ async function rotta(chi, metodo, url, corpo) {
   if (dove === "GET /mls/casa") {
     return conforme(contratti.casaViewSchema, { casa: CASA }, dove);
   }
+  if (dove === "POST /dispositivi/sfida") {
+    const sfida = {
+      scadeIl: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      sfida: randomBytes(32).toString("base64url"),
+    };
+    casa.sfide.set(chi, sfida.sfida);
+    return conforme(contratti.sfidaViewSchema, sfida, dove);
+  }
   if (dove === "POST /dispositivi/chiave") {
     conforme(contratti.registerDeviceKeyRequestSchema, corpo, dove);
     assert.equal(corpo.algorithm, ALGORITMO);
-    const device = { ...registra(chi, corpo.publicKey) };
-    delete device.pacchetti;
-    return conforme(contratti.registerDeviceKeyResponseSchema, { device }, dove);
+    // La prova di possesso: la sfida si consuma, e la firma si controlla come
+    // la controlla la Casa vera.
+    const sfida = casa.sfide.get(chi);
+    casa.sfide.delete(chi);
+    if (corpo.prova !== undefined) {
+      casa.prove.arrivate += 1;
+      if (
+        sfida !== undefined &&
+        firmaValida(
+          corpo.publicKey,
+          contratti.messaggioDiProvaChiave(sfida, corpo.publicKey),
+          corpo.prova,
+        )
+      ) {
+        casa.prove.valide += 1;
+      }
+    }
+    const registrato = registra(chi, corpo.publicKey);
+    if (telefono !== undefined) telefono.dispositivo = registrato;
+    return conforme(
+      contratti.registerDeviceKeyResponseSchema,
+      { device: comeInElenco(registrato) },
+      dove,
+    );
   }
   if (dove === "POST /dispositivi/key-packages") {
     conforme(contratti.publishKeyPackagesRequestSchema, corpo, dove);
-    // La sessione è quella dell'ultimo dispositivo che questa persona ha registrato.
-    const dispositivo = casa.dispositivi.findLast((d) => d.userId === chi);
+    // I KeyPackage vanno al dispositivo della sessione che li pubblica.
+    const dispositivo = telefono?.dispositivo;
     if (dispositivo === undefined) throw new Rifiuto(404, "no_device_key");
     dispositivo.pacchetti.push(...corpo.keyPackages);
     return { count: corpo.keyPackages.length };
   }
+  if (dove === "GET /dispositivi") {
+    const suoi = casa.dispositivi.filter((d) => d.userId === chi).map(comeInElenco);
+    return conforme(contratti.dispositiviResponseSchema, { dispositivi: suoi }, dove);
+  }
+  if (dove === "GET /auth/sessions") {
+    // Il no della Casa chiude anche la sessione: un revocato non c'è più.
+    const aperte = casa.dispositivi
+      .filter((d) => d.userId === chi && d.revokedAt === null)
+      .map((d) => ({
+        createdAt: d.createdAt,
+        current: d === telefono?.dispositivo,
+        deviceLabel: `Telefono ${d.id}`,
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        id: d.sessionId,
+        lastSeenAt: new Date().toISOString(),
+      }));
+    return conforme(contratti.sessionListSchema, { sessions: aperte }, dove);
+  }
+  if (
+    metodo === "POST" &&
+    zona === "dispositivi" &&
+    resto.length === 2 &&
+    ["approva", "rifiuta"].includes(resto[1])
+  ) {
+    // Il sì e il no (`…/:id/approva`, `…/:id/rifiuta`): soltanto da un
+    // dispositivo che ha il sì, e soltanto per un dispositivo proprio.
+    approvato(telefono?.dispositivo);
+    const d = casa.dispositivi.find((x) => x.id === resto[0] && x.userId === chi);
+    if (d === undefined) throw new Rifiuto(404, "device_not_found");
+    if (resto[1] === "approva") {
+      if (d.approvatoIl === null) {
+        d.approvatoIl = new Date().toISOString();
+        istanza.ammetti(nomeDi(chi), daB64(d.publicKey));
+      }
+      return conforme(contratti.registerDeviceKeyResponseSchema, { device: comeInElenco(d) }, dove);
+    }
+    revoca(d);
+    return { ok: true };
+  }
   if (dove === "POST /dispositivi/miei/key-packages") {
     conforme(contratti.mieiKeyPackagesRequestSchema, corpo, dove);
+    approvato(telefono?.dispositivo);
     const presi = casa.dispositivi
-      .filter((d) => d.userId === chi && d.approvatoIl !== null)
+      .filter((d) => d.userId === chi && d.approvatoIl !== null && d.revokedAt === null)
       .filter((d) => corpo.chiaviDiFirma.includes(d.publicKey) && d.pacchetti.length > 0)
       .map((d) => ({ deviceId: d.id, keyPackage: d.pacchetti.shift() }));
     return conforme(contratti.keyPackagesMlsViewSchema, { keyPackages: presi }, dove);
   }
   if (metodo === "GET" && zona === "mls" && resto[0] === "chiavi" && resto.length === 3) {
-    const chiavi = await vista.chiaviDiFirmaDi({ casa: resto[1], username: resto[2] });
+    const chiavi = senzaRevocate(
+      await vista.chiaviDiFirmaDi({ casa: resto[1], username: resto[2] }),
+    );
     return conforme(
       contratti.chiaviDiFirmaViewSchema,
       { chiavi: chiavi.map((k) => ({ algorithm: ALGORITMO, publicKey: b64(k) })) },
@@ -497,17 +638,17 @@ async function rotta(chi, metodo, url, corpo) {
   }
 }
 
-async function servi(chi, { metodo, percorso, corpo }) {
+async function servi(chi, { metodo, percorso, corpo }, telefono) {
   viste.push(`${metodo} ${percorso.split("?")[0]}`);
   try {
     // Come sul canale del dispositivo: chi manda un corpo manda JSON.
     const letto = corpo === null ? undefined : JSON.parse(corpo);
     assert.equal(
       letto === undefined,
-      metodo === "GET" || metodo === "DELETE" || percorso.endsWith("/uscita"),
+      metodo === "GET" || metodo === "DELETE" || /\/(uscita|sfida|approva|rifiuta)$/.test(percorso),
       `${metodo} ${percorso}`,
     );
-    const risposta = await rotta(chi, metodo, new URL(percorso, "http://casa"), letto);
+    const risposta = await rotta(chi, metodo, new URL(percorso, "http://casa"), letto, telefono);
     // Le rotte che rispondono 204, come quelle vere, non hanno corpo.
     if (risposta === undefined) return { corpo: "", stato: 204 };
     return { corpo: JSON.stringify(risposta), stato: 200 };
@@ -548,7 +689,7 @@ class Telefono {
       assert.ok(!done, `il nucleo di ${this.nome} si è chiuso durante ${cmd}`);
       const r = JSON.parse(value);
       if (r.chiedi !== undefined) {
-        this.p.stdin.write(JSON.stringify(await servi(this.id, r.chiedi)) + "\n");
+        this.p.stdin.write(JSON.stringify(await servi(this.id, r.chiedi, this)) + "\n");
         continue;
       }
       if (r.errore !== undefined) throw new Error(`nucleo di ${this.nome}, ${cmd}: ${r.errore}`);
@@ -598,7 +739,12 @@ class Browser {
     const sua = istanza.per(this.id);
     // La stessa cronologia che il pilota dà al telefono: senza le ritirate.
     const cronologia = async (...args) => senzaRitirate(await sua.cronologia(...args));
-    this.ctx = { deposito: finte.depositoFinto(), io: this.io, istanza: { ...sua, cronologia } };
+    const chiaviDiFirmaDi = async (membro) => senzaRevocate(await sua.chiaviDiFirmaDi(membro));
+    this.ctx = {
+      deposito: finte.depositoFinto(),
+      io: this.io,
+      istanza: { ...sua, chiaviDiFirmaDi, cronologia },
+    };
     this.dispositivo = registra(this.id, b64(this.io.chiaveDiFirma));
     for (let i = 0; i < 5; i += 1) {
       this.dispositivo.pacchetti.push(pacchettoSulFilo(await this.io.pubblica()));
@@ -687,12 +833,27 @@ async function dalTelefonoAlBrowser() {
 
   const io = await anna.apre();
   assert.deepEqual(
-    { ...io, dispositivo: undefined },
-    { approvato: true, casa: CASA, dispositivo: undefined, id: "u-anna", username: "anna" },
+    { ...io, codice: undefined, dispositivo: undefined },
+    {
+      approvato: true,
+      casa: CASA,
+      codice: undefined,
+      dispositivo: undefined,
+      id: "u-anna",
+      username: "anna",
+    },
   );
   assert.ok(viste.includes("POST /api/v1/dispositivi/chiave"));
   assert.ok(viste.includes("POST /api/v1/dispositivi/key-packages"));
   fatto("il telefono si presenta alla Casa: chi è, la chiave di firma, i KeyPackage");
+
+  // La prova di possesso: una sfida, e la firma di OpenMLS che la Casa
+  // controlla con la crittografia di Node, come `apps/core-api`.
+  assert.ok(viste.includes("POST /api/v1/dispositivi/sfida"));
+  assert.deepEqual(casa.prove, { arrivate: 1, valide: 1 });
+  // Il codice da confrontare è quello che il web calcola dalla stessa chiave.
+  assert.equal(io.codice, codiceDi(anna.dispositivo.publicKey));
+  fatto("il telefono prova di avere la chiave, e il suo codice è quello del web");
 
   const conv = (await anna.chiedi("creaDiretta", { username: "bruno" })).id;
   assert.equal(await anna.chiedi("apriConversazione", { conv }), "pronta");
@@ -1011,15 +1172,168 @@ async function unTelefonoEsce({ anna, bruno, carla }) {
 }
 
 /* ================================================================== */
+/* 5. Un secondo telefono: il sì e la revoca dal telefono               */
+/* ================================================================== */
+
+async function unSecondoTelefono({ anna, bruno }) {
+  const conv = [...casa.conversazioni.values()].find(
+    (c) => c.tipo === "diretta" && c.membri.includes(anna.id) && c.membri.includes(bruno.id),
+  ).id;
+  const nuovo = new Telefono("anna");
+  const io = await nuovo.apre();
+  assert.equal(io.approvato, false);
+  assert.equal(io.codice, codiceDi(nuovo.dispositivo.publicKey));
+  await assert.rejects(nuovo.chiedi("apriConversazione", { conv }), /DispositivoInAttesa/);
+  fatto("un secondo telefono aspetta il sì, e non crea né rientra");
+
+  const elenco = await anna.chiedi("dispositivi");
+  assert.deepEqual(
+    elenco.map((d) => [d.questo, d.stato, d.id]),
+    [
+      [true, "approvato", anna.dispositivo.id],
+      [false, "in-attesa", io.dispositivo],
+    ],
+  );
+  assert.equal(elenco[1].codice, io.codice);
+  assert.equal(elenco[1].etichetta, `Telefono ${io.dispositivo}`);
+  // Chi aspetta non dice di sì, nemmeno a sé.
+  await assert.rejects(
+    nuovo.chiedi("approvaDispositivo", { id: io.dispositivo }),
+    /device_not_approved/,
+  );
+  fatto("il primo telefono vede la richiesta con lo stesso codice, e chi aspetta non si approva");
+
+  const prima = await anna.chiedi("epoch", { conv });
+  await anna.chiedi("approvaDispositivo", { id: io.dispositivo });
+  assert.equal(await anna.chiedi("epoch", { conv }), prima + 1);
+  // Il browser applica il commit di OpenMLS: la foglia nuova si autentica
+  // nel registro, e l'albero è d'accordo con le persone.
+  const diBruno = await bruno.legge(conv);
+  assert.deepEqual(diBruno.confronto, { assenti: [], estranei: [] });
+  assert.deepEqual(
+    (await anna.chiedi("membri", { conv })).map((m) => [m.membro, m.dispositivi]),
+    [
+      [anna.chi, 2],
+      [bruno.chi, 1],
+    ],
+  );
+  assert.equal((await nuovo.chiedi("dispositivi"))[0].stato, "approvato");
+  assert.equal((await nuovo.aggiorna(conv)).apertura, "pronta");
+  assert.ok(testi(await nuovo.legge(conv)).includes("ciao dal browser"));
+  await attimo();
+  await nuovo.scrive(conv, "dal telefono nuovo");
+  const letto = await bruno.legge(conv);
+  assert.equal(frasi(letto).at(-1), "dal telefono nuovo");
+  assert.equal(letto.righe.at(-1).mittente, anna.chi);
+  fatto("al sì il telefono entra subito: il browser applica il commit e legge il nuovo");
+
+  await anna.chiedi("revocaDispositivo", { id: io.dispositivo });
+  assert.equal(await anna.chiedi("epoch", { conv }), prima + 2);
+  assert.equal(
+    (await anna.chiedi("dispositivi")).find((d) => d.id === io.dispositivo).stato,
+    "revocato",
+  );
+  await bruno.legge(conv);
+  await attimo();
+  const idDopo = await bruno.scrive(conv, "il telefono revocato non lo legge");
+  assert.equal((await nuovo.aggiorna(conv)).apertura, "tolto");
+  assert.equal(
+    testi((await anna.aggiorna(conv)).nuovi).at(-1),
+    "il telefono revocato non lo legge",
+  );
+  const voce = (await istanza.per(bruno.id).cronologia(conv)).righe.find((r) => r.id === idDopo);
+  assert.equal(
+    archivio.rileggiLegata(bruno.sessioni.get(conv).catena, voce.voce, legame(conv, voce))?.testo,
+    JSON.stringify({ t: "il telefono revocato non lo legge", v: 1 }),
+  );
+  fatto("alla revoca il telefono esce: il browser applica il commit, e il seguito non lo legge");
+  nuovo.chiudi();
+}
+
+/* ================================================================== */
+/* 6. Il sì dato dal browser: allineaMieiDispositivi del web            */
+/* ================================================================== */
+
+async function ilSiDalBrowser({ carla, dario }) {
+  const conv = diretta(dario.id, carla.id).id;
+  const telefono = new Telefono("dario");
+  const io = await telefono.apre();
+  assert.equal(io.approvato, false);
+
+  // Il browser di Dario dice di sì (la rotta la prova la Casa vera) e rimette
+  // d'accordo le sue foglie con `allineaMieiDispositivi`.
+  const suo = telefono.dispositivo;
+  suo.approvatoIl = new Date().toISOString();
+  istanza.ammetti("dario", daB64(suo.publicKey));
+  const prendi = async (chiavi) =>
+    casa.dispositivi
+      .filter((d) => d.userId === dario.id && d.approvatoIl !== null && d.revokedAt === null)
+      .filter((d) => chiavi.some((k) => b64(k) === d.publicKey) && d.pacchetti.length > 0)
+      .map((d) => pacchettoPerIlWeb(d.pacchetti.shift()));
+  const allinea = async () => {
+    await dario.legge(conv);
+    dario.sessioni.set(
+      conv,
+      await conversazione.allineaMieiDispositivi(
+        dario.ctx,
+        dario.sessioni.get(conv),
+        { id: dario.id, membro: dario.membro },
+        prendi,
+      ),
+    );
+  };
+  await allinea();
+
+  // Il telefono di Carla applica il commit di ts-mls: la foglia nuova si
+  // autentica dal registro, e il telefono di Dario entra dal suo invito.
+  await carla.aggiorna(conv);
+  assert.deepEqual(
+    (await carla.chiedi("membri", { conv })).map((m) => [m.membro, m.dispositivi]),
+    [
+      [dario.chi, 2],
+      [carla.chi, 1],
+    ],
+  );
+  assert.equal((await telefono.aggiorna(conv)).apertura, "pronta");
+  assert.ok(testi(await telefono.legge(conv)).includes("ti scrivo dal browser"));
+  await attimo();
+  await telefono.scrive(conv, "Dario dal telefono");
+  assert.equal(testi((await carla.aggiorna(conv)).nuovi).at(-1), "Dario dal telefono");
+  fatto("il sì dato dal browser: ts-mls aggiunge il telefono, e il telefono di Carla lo applica");
+
+  // La revoca: il browser toglie la foglia, e il telefono di Carla applica.
+  revoca(suo);
+  await allinea();
+  await carla.aggiorna(conv);
+  assert.deepEqual(
+    (await carla.chiedi("membri", { conv })).map((m) => m.dispositivi),
+    [1, 1],
+  );
+  assert.equal((await telefono.aggiorna(conv)).apertura, "tolto");
+  await attimo();
+  await carla.scrive(conv, "senza il telefono di Dario");
+  assert.equal(frasi(await dario.legge(conv)).at(-1), "senza il telefono di Dario");
+  fatto("e la revoca dal browser: la foglia esce, e il telefono di Carla continua");
+  telefono.chiudi();
+}
+
+/* ================================================================== */
 
 try {
   const { anna, bruno } = await dalTelefonoAlBrowser();
   const { carla, dario } = await dalBrowserAlTelefono();
   await unGruppo({ anna, bruno, carla, dario });
   await unTelefonoEsce({ anna, bruno, carla });
+  await unSecondoTelefono({ anna, bruno });
+  await ilSiDalBrowser({ carla, dario });
 } finally {
   for (const p of ponti) p.chiudi();
 }
+
+// Ogni volta che il nucleo ha registrato la sua chiave l'ha provata, e la
+// prova è una che la Casa vera accetta.
+assert.ok(casa.prove.arrivate >= 4);
+assert.equal(casa.prove.valide, casa.prove.arrivate);
 
 // Il nucleo non ha chiesto niente che la Casa vera non abbia: ogni rotta che
 // ha usato si ritrova, con il suo metodo, fra quelle che `apps/core-api`
