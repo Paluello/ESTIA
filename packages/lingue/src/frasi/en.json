@@ -1367,5 +1367,12 @@
   "app_messaggi.chi": "Who do you want to write to?",
   "app_messaggi.chi.aiuto": "Their username. If they live in another Home, write username@ followed by that Home's key.",
   "app_messaggi.comincia": "Start",
-  "app_messaggi.non_approvato": "This device isn't approved for your chats yet. Approve it from a device where you're already signed in, then come back here."
+  "app_messaggi.non_approvato": "This device isn't approved for your chats yet. Approve it from a device where you're already signed in, then come back here.",
+  "app_messaggi.ritira": "Retract",
+  "app_messaggi.ritira.titolo": "Retract this message?",
+  "app_messaggi.ritira.testo": "It disappears from the conversation for everyone, and your home keeps no copy. Anyone who has already read it has read it: retracting it does not take back what someone has already seen.",
+  "app_messaggi.ritira.errore": "The message was not retracted. Try again.",
+  "app_messaggi.citato_assente": "The message this replies to is no longer here",
+  "app_messaggi.nuova_o_gruppo": "New conversation or new group",
+  "app_messaggi.gruppo.chi.aiuto": "Type the username and tap Add. If they live in another Home, type name@ followed by that Home's key."
 }

@@ -1367,5 +1367,12 @@
   "app_messaggi.chi": "A chi vuoi scrivere?",
   "app_messaggi.chi.aiuto": "Il suo nome utente. Se abita in un'altra Casa, scrivi nome@ seguito dalla chiave di quella Casa.",
   "app_messaggi.comincia": "Comincia",
-  "app_messaggi.non_approvato": "Questo dispositivo non è ancora approvato per le tue chat. Approvalo da un dispositivo dove sei già dentro, poi torna qui."
+  "app_messaggi.non_approvato": "Questo dispositivo non è ancora approvato per le tue chat. Approvalo da un dispositivo dove sei già dentro, poi torna qui.",
+  "app_messaggi.ritira": "Ritira",
+  "app_messaggi.ritira.titolo": "Ritirare questo messaggio?",
+  "app_messaggi.ritira.testo": "Sparisce dalla conversazione per tutti, e la tua casa non ne tiene una copia. Chi l'ha già letto l'ha letto: ritirarlo non toglie ciò che qualcuno ha già visto.",
+  "app_messaggi.ritira.errore": "Il messaggio non è stato ritirato. Riprova.",
+  "app_messaggi.citato_assente": "Il messaggio a cui risponde non è più qui",
+  "app_messaggi.nuova_o_gruppo": "Nuova conversazione o nuovo gruppo",
+  "app_messaggi.gruppo.chi.aiuto": "Scrivi il nome utente e premi Aggiungi. Se abita in un'altra Casa, scrivi nome@ seguito dalla chiave di quella Casa."
 }

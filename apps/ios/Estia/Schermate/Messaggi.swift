@@ -1,18 +1,28 @@
 // Le conversazioni cifrate (ADR 0038, 0043, 0052), sopra le `Sessioni` del
 // nucleo: l'app chiede e mostra, il nucleo fa MLS e l'archivio. Nessuna
 // chiave passa di qui.
+//
+// Qui l'elenco e la conversazione aperta, con la risposta e il ritiro. Il
+// gruppo (crearlo, chi c'è, aggiungere, togliere, uscire) sta in Gruppi.swift.
 
 import SwiftUI
+import UIKit
 
 struct Messaggi: View {
     @EnvironmentObject private var casa: Casa
     @State private var conversazioni: [Conversazione] = []
     @State private var io: Io?
     @State private var stato: Stato = .carico
-    @State private var nuova = false
+    @State private var foglio: Foglio?
     @State private var percorso: [String] = []
 
     enum Stato: Equatable { case carico, pronto, errore }
+
+    /// Che cosa si comincia: una conversazione a due, o un gruppo.
+    enum Foglio: String, Identifiable {
+        case diretta, gruppo
+        var id: String { rawValue }
+    }
 
     var body: some View {
         NavigationStack(path: $percorso) {
@@ -48,25 +58,36 @@ struct Messaggi: View {
             .toolbar {
                 if io?.approvato == true {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { nuova = true } label: {
+                        Menu {
+                            Button { foglio = .diretta } label: {
+                                Label(Frasi.t("app_messaggi.nuova"), systemImage: "person")
+                            }
+                            Button { foglio = .gruppo } label: {
+                                Label(Frasi.t("gruppi.nuovo.voce"), systemImage: "person.3")
+                            }
+                        } label: {
                             Image(systemName: "square.and.pencil")
                         }
-                        .accessibilityLabel(Frasi.t("app_messaggi.nuova"))
+                        .accessibilityLabel(Frasi.t("app_messaggi.nuova_o_gruppo"))
                     }
                 }
             }
             .navigationDestination(for: String.self) { id in
                 if let c = conversazioni.first(where: { $0.id == id }) {
-                    SchermataConversazione(conversazione: c, io: io)
+                    SchermataConversazione(
+                        conversazione: c,
+                        io: io,
+                        cambiata: { await carica() },
+                        uscita: { esce(da: c.id) }
+                    )
                 }
             }
-            .sheet(isPresented: $nuova) {
-                NuovaConversazione { creata in
-                    nuova = false
-                    if !conversazioni.contains(where: { $0.id == creata.id }) {
-                        conversazioni.insert(creata, at: 0)
-                    }
-                    percorso = [creata.id]
+            .sheet(item: $foglio) { quale in
+                switch quale {
+                case .diretta:
+                    NuovaConversazione { creata in apri(creata) }
+                case .gruppo:
+                    NuovoGruppo(io: io) { creato in apri(creato) }
                 }
             }
             .refreshable { await carica() }
@@ -88,6 +109,21 @@ struct Messaggi: View {
             stato = .errore
         }
     }
+
+    private func apri(_ creata: Conversazione) {
+        foglio = nil
+        if !conversazioni.contains(where: { $0.id == creata.id }) {
+            conversazioni.insert(creata, at: 0)
+        }
+        percorso = [creata.id]
+    }
+
+    /// Si è usciti da un gruppo: si torna all'elenco, dove non c'è più.
+    private func esce(da id: String) {
+        percorso = []
+        conversazioni.removeAll { $0.id == id }
+        Task { await carica() }
+    }
 }
 
 /// Il nome da mostrare: quello del gruppo, oppure l'altra persona.
@@ -96,6 +132,39 @@ func nomeConversazione(_ conversazione: Conversazione, io: Io?) -> String {
     let altri = conversazione.membri.filter { $0.id != io?.id }
     if altri.isEmpty { return Frasi.t("messaggi.te_stesso") }
     return altri.map(\.nome).joined(separator: ", ")
+}
+
+/// `nome` o `nome@chiave-della-casa`, com'è scritto, nella forma che la Casa
+/// vuole. `nil` se non c'è un nome.
+func personaDaInvitare(_ testo: String) -> PersonaDaInvitare? {
+    let pulito = testo
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+    let parti = pulito.split(separator: "@", maxSplits: 1).map(String.init)
+    guard let username = parti.first, !username.isEmpty else { return nil }
+    return PersonaDaInvitare(username: username, casa: parti.count > 1 ? parti[1] : nil)
+}
+
+/// Il codice con cui la Casa ha detto di no (`no_device_available`, …), se è
+/// stata lei: il nucleo lo passa come `casa <stato>: <codice>`.
+func codiceDellaCasa(_ errore: Error) -> String? {
+    guard let errore = errore as? ErroreNucleo, case let .Casa(message) = errore,
+          let due = message.range(of: ": ")
+    else { return nil }
+    return String(message[due.upperBound...])
+}
+
+/// Vetro di sistema su iOS 26, materiale sottile prima.
+struct Vetro<Forma: Shape>: ViewModifier {
+    let forma: Forma
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular, in: forma)
+        } else {
+            content.background(.thinMaterial, in: forma)
+        }
+    }
 }
 
 private struct RigaConversazione: View {
@@ -107,10 +176,18 @@ private struct RigaConversazione: View {
         HStack(spacing: 12) {
             Iniziale(nome: nome, chiave: conversazione.id)
             VStack(alignment: .leading, spacing: 2) {
-                Text(nome)
-                    .font(Tema.corpo(.body, peso: conversazione.nonLetti > 0 ? .semibold : .regular))
-                    .foregroundStyle(Tema.testo)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if conversazione.gruppo {
+                        Image(systemName: "person.3.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Tema.testoTenue)
+                            .accessibilityHidden(true)
+                    }
+                    Text(nome)
+                        .font(Tema.corpo(.body, peso: conversazione.nonLetti > 0 ? .semibold : .regular))
+                        .foregroundStyle(Tema.testo)
+                        .lineLimit(1)
+                }
                 if let quando = conversazione.ultimoMessaggioIl.flatMap(Date.daISO) {
                     Text(quando, format: .relative(presentation: .numeric))
                         .font(Tema.corpo(.footnote))
@@ -132,11 +209,23 @@ private struct RigaConversazione: View {
     }
 }
 
+/// Il messaggio a cui una nuvoletta risponde, come lo si mostra sopra il testo.
+struct Citazione: Equatable {
+    let id: String
+    /// `nil` quando il messaggio citato non è fra quelli caricati.
+    let autore: String?
+    let testo: String
+}
+
 /// Una conversazione aperta: la cronologia, e sotto il campo per scrivere.
 struct SchermataConversazione: View {
     @EnvironmentObject private var casa: Casa
     let conversazione: Conversazione
     let io: Io?
+    /// Chi c'è è cambiato: l'elenco si ricarica.
+    let cambiata: () async -> Void
+    /// Questa persona è uscita dal gruppo.
+    let uscita: () -> Void
 
     @State private var messaggi: [Messaggio] = []
     @State private var ultimaPagina: Set<String> = []
@@ -146,6 +235,10 @@ struct SchermataConversazione: View {
     @State private var testo = ""
     @State private var invio = false
     @State private var errore: String?
+    @State private var risponde: Messaggio?
+    @State private var daRitirare: Messaggio?
+    @State private var info = false
+    @FocusState private var scrivendo: Bool
 
     private var altro: String {
         conversazione.membri.first { $0.id != io?.id }?.nome ?? Frasi.t("messaggi.questa_persona")
@@ -173,6 +266,8 @@ struct SchermataConversazione: View {
         }
     }
 
+    private var spento: Bool { blocco != nil || apertura != .pronta }
+
     var body: some View {
         ScrollViewReader { lettore in
             ScrollView {
@@ -186,14 +281,31 @@ struct SchermataConversazione: View {
                             .padding(.top, 32)
                     }
                     ForEach(messaggi, id: \.id) { m in
-                        Nuvoletta(messaggio: m, conversazione: conversazione, gruppo: conversazione.gruppo)
-                            .id(m.id)
+                        Nuvoletta(
+                            messaggio: m,
+                            gruppo: conversazione.gruppo,
+                            mittente: m.mio ? Frasi.t("messaggi.tu") : nomeDi(m.mittente),
+                            nomeDi: nomeDi,
+                            citazione: citazione(di: m),
+                            puoRispondere: !spento,
+                            puoRitirare: m.mio && apertura == .pronta,
+                            rispondi: {
+                                withAnimation(.snappy) { risponde = m }
+                                scrivendo = true
+                            },
+                            ritira: { daRitirare = m },
+                            vaiA: { id in
+                                withAnimation { lettore.scrollTo(id, anchor: .center) }
+                            }
+                        )
+                        .id(m.id)
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
             .defaultScrollAnchor(.bottom)
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: messaggi.last?.id) { _, ultimo in
                 guard let ultimo else { return }
                 withAnimation { lettore.scrollTo(ultimo, anchor: .bottom) }
@@ -202,22 +314,116 @@ struct SchermataConversazione: View {
         .background(Tema.sfondo)
         .navigationTitle(nomeConversazione(conversazione, io: io))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if conversazione.gruppo && apertura != .tolto {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { info = true } label: {
+                        Image(systemName: "person.2")
+                    }
+                    .accessibilityLabel(Frasi.t("gruppi.membri.voce"))
+                }
+            }
+        }
+        .sheet(isPresented: $info) {
+            InfoGruppo(
+                conversazione: conversazione,
+                io: io,
+                cambiata: cambiata,
+                uscita: {
+                    info = false
+                    uscita()
+                }
+            )
+        }
+        .confirmationDialog(
+            Frasi.t("app_messaggi.ritira.titolo"),
+            isPresented: Binding(get: { daRitirare != nil }, set: { if !$0 { daRitirare = nil } }),
+            titleVisibility: .visible,
+            presenting: daRitirare
+        ) { m in
+            Button(Frasi.t("app_messaggi.ritira"), role: .destructive) {
+                Task { await ritira(m) }
+            }
+            Button(Frasi.t("comune.annulla"), role: .cancel) {}
+        } message: { _ in
+            Text(Frasi.t("app_messaggi.ritira.testo"))
+        }
         .safeAreaInset(edge: .bottom) { campo }
         .task { await giri() }
     }
 
+    private func nomeDi(_ membro: String?) -> String {
+        guard let membro else { return Frasi.t("messaggi.interlocutore") }
+        let persona = conversazione.membri.first { "\($0.username)@\($0.casa)" == membro }
+        if let nome = persona?.nome, !nome.isEmpty { return nome }
+        return persona?.username ?? membro
+    }
+
+    private func anteprima(_ m: Messaggio) -> String {
+        switch m.stato {
+        case .letto: return m.testo ?? ""
+        case .nonSiApre: return Frasi.t("messaggi.non_si_apre.titolo")
+        case .nonDisponibile: return Frasi.t("messaggi.non_disponibile.titolo")
+        }
+    }
+
+    private func citazione(di m: Messaggio) -> Citazione? {
+        guard let id = m.risponde else { return nil }
+        guard let citato = messaggi.first(where: { $0.id == id }) else {
+            return Citazione(id: id, autore: nil, testo: Frasi.t("app_messaggi.citato_assente"))
+        }
+        return Citazione(
+            id: id,
+            autore: citato.mio ? Frasi.t("messaggi.tu") : nomeDi(citato.mittente),
+            testo: anteprima(citato)
+        )
+    }
+
     @ViewBuilder private var campo: some View {
-        let spento = blocco != nil || apertura != .pronta
         VStack(spacing: 6) {
             if let errore {
                 Text(errore)
                     .font(Tema.corpo(.footnote))
                     .foregroundStyle(Tema.pericolo)
             }
+            if let citato = risponde {
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Tema.accento)
+                        .frame(width: 3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Frasi.t("messaggi.risposta_a", [
+                            "nome": citato.mio ? Frasi.t("messaggi.tu") : nomeDi(citato.mittente),
+                        ]))
+                        .font(Tema.corpo(.caption, peso: .semibold))
+                        .foregroundStyle(Tema.testoAccento)
+                        Text(anteprima(citato))
+                            .font(Tema.corpo(.footnote))
+                            .foregroundStyle(Tema.testoTenue)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        withAnimation(.snappy) { risponde = nil }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Tema.testoTenue)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Frasi.t("messaggi.annulla_risposta"))
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Tema.superficie2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(Frasi.t("messaggi.scrivi_segnaposto"), text: $testo, axis: .vertical)
                     .font(Tema.corpo())
                     .lineLimit(1...5)
+                    .focused($scrivendo)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(Tema.superficie, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -235,9 +441,7 @@ struct SchermataConversazione: View {
                 .accessibilityLabel(Frasi.t("comune.invia"))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
+        .modifier(FondoDelCampo())
     }
 
     /// Un giro subito, poi ogni dieci secondi finché la schermata è aperta:
@@ -272,6 +476,7 @@ struct SchermataConversazione: View {
         for m in a.nuovi { perId[m.id] = m }
         messaggi = perId.values.sorted { ($0.creatoIl, $0.id) < ($1.creatoIl, $1.id) }
         ultimaPagina = Set(a.pagina)
+        if let citato = risponde, ritirati.contains(citato.id) { risponde = nil }
     }
 
     private func invia() async {
@@ -282,12 +487,53 @@ struct SchermataConversazione: View {
         defer { invio = false }
         do {
             let sessioni = try await casa.sessioniPronte()
-            let mandato = try await sessioni.invia(conversazione: conversazione.id, testo: daMandare, risponde: nil)
+            let mandato = try await sessioni.invia(
+                conversazione: conversazione.id,
+                testo: daMandare,
+                risponde: risponde?.id
+            )
             testo = ""
+            withAnimation(.snappy) { risponde = nil }
             messaggi.removeAll { $0.id == mandato.id }
             messaggi.append(mandato)
         } catch {
             errore = Frasi.t("messaggi.errore_invio")
+        }
+    }
+
+    /// Il ritiro: la voce esce dall'archivio della propria casa, e da qui.
+    private func ritira(_ m: Messaggio) async {
+        errore = nil
+        do {
+            let sessioni = try await casa.sessioniPronte()
+            try await sessioni.ritira(conversazione: conversazione.id, messaggio: m.id)
+            withAnimation(.snappy) {
+                messaggi.removeAll { $0.id == m.id }
+                if risponde?.id == m.id { risponde = nil }
+            }
+            ultimaPagina.remove(m.id)
+        } catch {
+            errore = Frasi.t("app_messaggi.ritira.errore")
+        }
+    }
+}
+
+/// Il fondo del campo per scrivere: su iOS 26 un pannello di vetro che
+/// galleggia sopra la cronologia, prima la barra di sistema.
+private struct FondoDelCampo: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+        } else {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.bar)
         }
     }
 }
@@ -332,23 +578,26 @@ private struct Riquadro: View {
 
 private struct Nuvoletta: View {
     let messaggio: Messaggio
-    let conversazione: Conversazione
     let gruppo: Bool
-
-    private func nome(_ membro: String?) -> String {
-        guard let membro else { return Frasi.t("messaggi.interlocutore") }
-        return conversazione.membri.first { "\($0.username)@\($0.casa)" == membro }?.nome ?? membro
-    }
+    /// Chi l'ha scritto, già detto come va mostrato.
+    let mittente: String
+    let nomeDi: (String?) -> String
+    let citazione: Citazione?
+    let puoRispondere: Bool
+    let puoRitirare: Bool
+    let rispondi: () -> Void
+    let ritira: () -> Void
+    let vaiA: (String) -> Void
 
     var body: some View {
         if let evento = messaggio.evento {
-            let chi = messaggio.mio ? Frasi.t("messaggi.tu") : nome(messaggio.mittente)
-            let di = nome(evento.chi)
+            let di = nomeDi(evento.chi)
             Text(
                 evento.tipo == .uscita
                     ? Frasi.t("gruppi.evento.uscita", ["nome": di])
-                    : Frasi.t(evento.tipo == .ingresso ? "gruppi.evento.ingresso" : "gruppi.evento.rimozione",
-                              ["chi": chi, "nome": di])
+                    : evento.tipo == .ingresso
+                    ? Frasi.t("gruppi.evento.ingresso", ["chi": mittente, "nome": di])
+                    : Frasi.t("gruppi.evento.rimozione", ["chi": mittente, "nome": di])
             )
             .font(Tema.corpo(.footnote))
             .foregroundStyle(Tema.testoTenue)
@@ -360,9 +609,14 @@ private struct Nuvoletta: View {
                 if messaggio.mio { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 4) {
                     if gruppo, !messaggio.mio {
-                        Text(nome(messaggio.mittente))
+                        Text(mittente)
                             .font(Tema.corpo(.caption, peso: .semibold))
                             .foregroundStyle(Tema.testoAccento)
+                    }
+                    if let citazione {
+                        Button { vaiA(citazione.id) } label: { citato(citazione) }
+                            .buttonStyle(.plain)
+                            .disabled(citazione.autore == nil)
                     }
                     contenuto
                     HStack(spacing: 4) {
@@ -383,10 +637,61 @@ private struct Nuvoletta: View {
                     messaggio.mio ? Tema.accento : Tema.superficie,
                     in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                 )
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contextMenu { azioni }
                 if !messaggio.mio { Spacer(minLength: 48) }
             }
             .accessibilityElement(children: .combine)
+            .accessibilityActions { azioni }
         }
+    }
+
+    /// Le azioni su una nuvoletta: dal menu del tocco lungo, e da VoiceOver.
+    @ViewBuilder private var azioni: some View {
+        if puoRispondere {
+            Button(action: rispondi) {
+                Label(Frasi.t("commento.rispondi"), systemImage: "arrowshape.turn.up.left")
+            }
+        }
+        if messaggio.stato == .letto, let testo = messaggio.testo, !testo.isEmpty {
+            Button {
+                UIPasteboard.general.string = testo
+            } label: {
+                Label(Frasi.t("comune.copia"), systemImage: "doc.on.doc")
+            }
+        }
+        if puoRitirare {
+            Button(role: .destructive, action: ritira) {
+                Label(Frasi.t("app_messaggi.ritira"), systemImage: "trash")
+            }
+        }
+    }
+
+    private func citato(_ citazione: Citazione) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(messaggio.mio ? Tema.sopraAccento.opacity(0.6) : Tema.accento)
+                .frame(width: 3)
+            VStack(alignment: .leading, spacing: 1) {
+                if let autore = citazione.autore {
+                    Text(autore)
+                        .font(Tema.corpo(.caption, peso: .semibold))
+                }
+                Text(citazione.testo)
+                    .font(Tema.corpo(.footnote))
+                    .italic(citazione.autore == nil)
+                    .lineLimit(2)
+            }
+            .foregroundStyle(messaggio.mio ? Tema.sopraAccento.opacity(0.85) : Tema.testoTenue)
+            Spacer(minLength: 0)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            (messaggio.mio ? Tema.sopraAccento.opacity(0.1) : Tema.superficie2),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
     }
 
     @ViewBuilder private var contenuto: some View {
@@ -442,7 +747,7 @@ private struct NuovaConversazione: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(Frasi.t("app_messaggi.comincia")) { Task { await comincia() } }
-                        .disabled(inCorso || chi.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(inCorso || personaDaInvitare(chi) == nil)
                 }
             }
         }
@@ -450,17 +755,13 @@ private struct NuovaConversazione: View {
     }
 
     private func comincia() async {
-        let pulito = chi.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-        let parti = pulito.split(separator: "@", maxSplits: 1).map(String.init)
-        guard let username = parti.first, !username.isEmpty else { return }
+        guard let persona = personaDaInvitare(chi) else { return }
         inCorso = true
         errore = nil
         defer { inCorso = false }
         do {
             let sessioni = try await casa.sessioniPronte()
-            let conversazione = try await sessioni.creaDiretta(
-                con: PersonaDaInvitare(username: username, casa: parti.count > 1 ? parti[1] : nil)
-            )
+            let conversazione = try await sessioni.creaDiretta(con: persona)
             creata(conversazione)
         } catch {
             errore = Frasi.t("messaggi.errore_avvio")
