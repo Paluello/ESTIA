@@ -24,6 +24,10 @@ pub enum ErroreNucleo {
     /// Non dice quale dei tre, perché la Casa non lo dice.
     #[error("codice non accettato")]
     CodiceNonAccettato,
+    /// La Casa ha chiuso una domanda con invito: l'invito è scaduto, già
+    /// usato, revocato o sbagliato, e non dice quale.
+    #[error("invito non accettato")]
+    InvitoNonAccettato,
     /// Il dispositivo non è ancora entrato in una Casa.
     #[error("nessuna Casa")]
     NessunaCasa,

@@ -12,7 +12,7 @@ struct EstiaApp: App {
                 .task { await casa.avvia() }
                 // Il QR inquadrato con la fotocamera apre `estia://ingresso?...`.
                 .onOpenURL { url in
-                    if url.scheme == "estia", url.host == "ingresso" {
+                    if url.scheme == "estia", url.host == "ingresso" || url.host == "invito" {
                         casa.collegamentoArrivato = url.absoluteString
                     }
                 }
@@ -31,6 +31,8 @@ struct Radice: View {
                 .background(Tema.sfondo)
         case .ingresso:
             SchermataIngresso()
+        case .inAttesa:
+            SchermataInAttesa()
         case .dentro:
             Dentro()
         case let .guasto(motivo):

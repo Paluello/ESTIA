@@ -128,9 +128,19 @@ pub struct CollegamentoIngresso {
 
 impl CollegamentoIngresso {
     pub fn leggi(testo: &str) -> Result<Self> {
+        Self::leggi_con(testo, "estia://ingresso?")
+    }
+
+    /// Il QR d'invito, `estia://invito?...`: stessa forma, e il codice è
+    /// quello dell'invito. Serve a chi non è ancora membro.
+    pub fn leggi_invito(testo: &str) -> Result<Self> {
+        Self::leggi_con(testo, "estia://invito?")
+    }
+
+    fn leggi_con(testo: &str, prefisso: &str) -> Result<Self> {
         let testo = testo.trim();
-        let Some(domanda) = testo.strip_prefix("estia://ingresso?") else {
-            bail!("non è un collegamento d'ingresso ESTIA");
+        let Some(domanda) = testo.strip_prefix(prefisso) else {
+            bail!("non è un collegamento ESTIA di questo tipo");
         };
         let (mut casa, mut codice, mut ticket) = (None, None, None);
         for coppia in domanda.split('&') {
@@ -260,6 +270,11 @@ mod prove {
 
         assert!(CollegamentoIngresso::leggi("https://esempio.it").is_err());
         assert!(CollegamentoIngresso::leggi("estia://ingresso?casa=a").is_err());
+        let invito =
+            CollegamentoIngresso::leggi_invito("estia://invito?casa=a&codice=K7Q2").unwrap();
+        assert_eq!(invito.codice, "K7Q2");
+        assert!(CollegamentoIngresso::leggi_invito("estia://ingresso?casa=a&codice=b").is_err());
+        assert!(CollegamentoIngresso::leggi("estia://invito?casa=a&codice=b").is_err());
         assert!(CollegamentoIngresso::leggi("estia://ingresso?casa=a&codice=%2").is_err());
     }
 }

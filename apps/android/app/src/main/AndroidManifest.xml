@@ -34,6 +34,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="estia" android:host="ingresso" />
+                <!-- e quello d'invito, per chi non è ancora membro, estia://invito?... -->
+                <data android:scheme="estia" android:host="invito" />
             </intent-filter>
         </activity>
     </application>
