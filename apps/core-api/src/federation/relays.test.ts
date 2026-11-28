@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SettingsRepository } from "../backup/settings.js";
 import {
   canonicalRelayUrl,
+  parseRelaySuggestion,
   plannedRelayMap,
   readAdoptedRelays,
   RelayWatch,
@@ -46,6 +47,7 @@ function adopted(...urls: string[]): AdoptedRelay[] {
 class FakeTarget implements RelayMapTarget {
   maps: string[][] = [];
   n0: string[] | undefined = N0;
+  homeRelay: string | undefined;
   n0RelayUrls() {
     return this.n0;
   }
@@ -203,5 +205,70 @@ describe("RelayWatch", () => {
     fail = false;
     await relayWatch.check();
     expect(target.maps).toEqual([N0]);
+  });
+});
+
+describe("il relay suggerito da una Casa collegata (ADR 0045 §3)", () => {
+  it("dal filo si prende solo un relay https con un gestore, ripulito", () => {
+    expect(
+      parseRelaySuggestion({ url: "https://Relay.Circolo.example", gestore: " Luca " }),
+    ).toEqual({ url: CIRCOLO, gestore: "Luca" });
+
+    for (const value of [
+      undefined,
+      "https://relay.circolo.example/",
+      { url: "http://relay.circolo.example/", gestore: "Luca" },
+      { url: CIRCOLO, gestore: "  " },
+      { url: CIRCOLO, gestore: "x".repeat(121) },
+      { url: CIRCOLO },
+    ]) {
+      expect(parseRelaySuggestion(value)).toBeUndefined();
+    }
+  });
+
+  it("suggerisce il relay in uso solo se è adottato, con il nome di chi lo gestisce", () => {
+    const settings = new MemorySettings();
+    writeAdoptedRelays(settings, adopted(CIRCOLO), "2026-11-28T00:00:00.000Z");
+    const target = new FakeTarget();
+    const relayWatch = new RelayWatch({ settings, target });
+
+    expect(relayWatch.daSuggerire()).toBeUndefined();
+    target.homeRelay = N0[0];
+    expect(relayWatch.daSuggerire()).toBeUndefined();
+    target.homeRelay = CIRCOLO;
+    expect(relayWatch.daSuggerire()).toEqual({ url: CIRCOLO, gestore: `chi gestisce ${CIRCOLO}` });
+  });
+
+  it("mostra i suggerimenti delle Case ancora collegate, tranne i relay già adottati", () => {
+    const settings = new MemorySettings();
+    writeAdoptedRelays(settings, adopted(BIBLIOTECA), "2026-11-28T00:00:00.000Z");
+    const collegate = new Set(["marco", "anna"]);
+    const relayWatch = new RelayWatch({
+      settings,
+      target: new FakeTarget(),
+      collegata: (key) => collegate.has(key),
+    });
+
+    relayWatch.suggerito({
+      publicKey: "marco",
+      casa: "Casa di Marco",
+      relay: { url: CIRCOLO, gestore: "Luca" },
+    });
+    relayWatch.suggerito({
+      publicKey: "anna",
+      casa: "Casa di Anna",
+      relay: { url: BIBLIOTECA, gestore: "Bea" },
+    });
+    expect(relayWatch.view().suggeriti).toEqual([
+      { url: CIRCOLO, gestore: "Luca", casa: "Casa di Marco" },
+    ]);
+    expect(readAdoptedRelays(settings).map((relay) => relay.url)).toEqual([BIBLIOTECA]);
+
+    collegate.delete("marco");
+    expect(relayWatch.view().suggeriti).toEqual([]);
+
+    collegate.add("marco");
+    relayWatch.suggerito({ publicKey: "marco", casa: "Casa di Marco" });
+    expect(relayWatch.view().suggeriti).toEqual([]);
   });
 });

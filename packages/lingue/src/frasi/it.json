@@ -1353,5 +1353,9 @@
   "relay.adotto": "Adotto…",
   "relay.adottato": "Relay adottato. La tua Casa lo usa da adesso, se risponde.",
   "relay.adotta_fallito": "Non sono riuscito ad adottare il relay.",
-  "relay.carica_fallito": "Non sono riuscito a leggere i relay della Casa."
+  "relay.carica_fallito": "Non sono riuscito a leggere i relay della Casa.",
+  "relay.suggeriti.titolo": "Suggeriti dalle Case collegate",
+  "relay.suggerito": "{casa} usa questo relay",
+  "relay.suggerito.nota": "Gestito da {gestore}, secondo {casa}. Lo adotti solo se lo vuoi tu: non succede da solo.",
+  "relay.adotta_suggerito": "Adotta il relay di {gestore}"
 }

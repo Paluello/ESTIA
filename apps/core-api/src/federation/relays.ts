@@ -168,6 +168,42 @@ export function plannedRelayMap(options: {
   return anyHealthy ? [...adopted] : [...new Set([...adopted, ...n0])];
 }
 
+/**
+ * Un relay che una Casa collegata dice di usare ([ADR 0045](../../../../docs/adr/0045-la-rete-dei-relay-della-comunita.md) §3).
+ *
+ * Arriva con la risposta a `presentazione`, cioè con il battito, e si tiene
+ * **solo in memoria**: è un suggerimento, non un fatto da conservare, e dopo un
+ * riavvio torna da solo al primo giro. Non si adotta mai da qui: il pannello lo
+ * mostra e l'amministratore, se vuole, lo adotta con un gesto.
+ */
+export interface RelaySuggestion {
+  url: string;
+  gestore: string;
+  /** Il nome che la Casa amica dà a sé stessa: dichiarato, mai verificato (ADR 0020 §5). */
+  casa: string;
+}
+
+/** Quanto può essere lungo il nome di chi gestisce un relay suggerito. */
+export const MAX_GESTORE_LENGTH = 120;
+
+/**
+ * Il relay suggerito da un'altra Casa, letto dal filo, o `undefined` se non è
+ * un suggerimento accettabile. Chi suggerisce è un'altra istanza: niente di
+ * quello che manda si prende così com'è.
+ */
+export function parseRelaySuggestion(value: unknown): { url: string; gestore: string } | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.url !== "string" || typeof candidate.gestore !== "string") return undefined;
+  if (candidate.url.length > 512) return undefined;
+
+  const url = canonicalRelayUrl(candidate.url);
+  const gestore = candidate.gestore.trim();
+  if (url === undefined || gestore === "" || gestore.length > MAX_GESTORE_LENGTH) return undefined;
+
+  return { url, gestore };
+}
+
 /** Che cosa il controllo dei relay sa di sé, per il pannello. */
 export interface RelayStatus {
   url: string;
@@ -221,7 +257,10 @@ export class RelayWatch {
   readonly #ping: RelayPing;
   readonly #now: () => Date;
   readonly #timeoutMs: number;
+  readonly #collegata: (publicKey: string) => boolean;
   readonly #status = new Map<string, { risponde: boolean; controllatoIl: string }>();
+  /** I suggerimenti delle Case collegate, per chiave pubblica di chi suggerisce. */
+  readonly #suggeriti = new Map<string, RelaySuggestion>();
   #applied: string[] | undefined;
   #timer: ReturnType<typeof setInterval> | undefined;
   #running: Promise<void> | undefined;
@@ -234,12 +273,18 @@ export class RelayWatch {
     ping?: RelayPing;
     now?: () => Date;
     timeoutMs?: number;
+    /**
+     * Se una Casa è ancora collegata. Un suggerimento di chi è stata bloccata o
+     * tolta smette di comparire subito, non al riavvio.
+     */
+    collegata?: (publicKey: string) => boolean;
   }) {
     this.#settings = options.settings;
     this.#target = options.target;
     this.#ping = options.ping ?? pingRelay;
     this.#now = options.now ?? (() => new Date());
     this.#timeoutMs = options.timeoutMs ?? 10_000;
+    this.#collegata = options.collegata ?? (() => true);
   }
 
   public start(): void {
@@ -263,10 +308,43 @@ export class RelayWatch {
     }));
   }
 
+  /**
+   * Il relay che questa Casa fa sapere alle Case collegate, se ne usa uno
+   * adottato: quello attraverso cui si fa trovare adesso, con il nome di chi
+   * lo gestisce. Su n0 non suggerisce niente: n0 ce l'hanno già tutte.
+   */
+  public daSuggerire(): { url: string; gestore: string } | undefined {
+    const home = this.#target.homeRelay;
+    if (home === undefined) return undefined;
+    const url = canonicalRelayUrl(home);
+    const adottato = readAdoptedRelays(this.#settings).find((relay) => relay.url === url);
+
+    return adottato === undefined ? undefined : { url: adottato.url, gestore: adottato.gestore };
+  }
+
+  /**
+   * Ciò che una Casa collegata ha detto del suo relay all'ultima presentazione.
+   * `relay` assente vuol dire che non ne suggerisce più uno.
+   */
+  public suggerito(input: {
+    publicKey: string;
+    casa: string;
+    relay?: { url: string; gestore: string } | undefined;
+  }): void {
+    if (input.relay === undefined) {
+      this.#suggeriti.delete(input.publicKey);
+
+      return;
+    }
+
+    this.#suggeriti.set(input.publicKey, { ...input.relay, casa: input.casa });
+  }
+
   /** Che cosa mostra il pannello (`CommunityRelaysView`). */
   public view(): {
     attivi: boolean;
     relays: (AdoptedRelay & { risponde?: boolean; controllatoIl?: string })[];
+    suggeriti: RelaySuggestion[];
     inUso?: string;
     ripiegoSuN0: boolean;
     massimo: number;
@@ -277,10 +355,16 @@ export class RelayWatch {
       ...this.#status.get(relay.url),
     }));
     const inUso = n0 === undefined ? undefined : this.#target.homeRelay;
+    const adottati = new Set(relays.map((relay) => relay.url));
+    const suggeriti = [...this.#suggeriti]
+      .filter(([key, suggestion]) => this.#collegata(key) && !adottati.has(suggestion.url))
+      .map(([, suggestion]) => suggestion)
+      .sort((a, b) => a.casa.localeCompare(b.casa) || a.url.localeCompare(b.url));
 
     return {
       attivi: n0 !== undefined,
       relays,
+      suggeriti,
       ...(inUso === undefined ? {} : { inUso }),
       ripiegoSuN0:
         n0 !== undefined &&

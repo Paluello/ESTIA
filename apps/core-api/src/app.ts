@@ -629,8 +629,11 @@ export async function buildApp(
   const relayWatch = new RelayWatch({
     settings: settingsRepository,
     target: endpoint,
+    collegata: (publicKey) => remoteInstanceRepository.findByKey(publicKey)?.state === "collegata",
     ...(options.now === undefined ? {} : { now: () => new Date(options.now?.() ?? Date.now()) }),
   });
+  // Le Case collegate si dicono il relay che usano con il battito (§3).
+  federation.useRelays(relayWatch);
   endpoint.onOpen(() => void relayWatch.check());
   relayWatch.start();
   app.decorate("relayWatch", relayWatch);

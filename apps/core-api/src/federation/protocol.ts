@@ -863,6 +863,14 @@ export interface PresentazioneResponse {
   ok: true;
   nome: string;
   stato: RelationshipView;
+  /**
+   * Il relay della comunità che chi risponde usa, e chi lo gestisce
+   * ([ADR 0045] §3). Solo verso una Casa **collegata**, e solo se ne usa uno
+   * adottato. È un suggerimento: chi lo riceve lo mostra all'amministratore e
+   * non lo adotta mai da solo. Campo facoltativo, quindi `estia/1` resta
+   * `estia/1`: una Casa che non lo conosce lo ignora.
+   */
+  relay?: { url: string; gestore: string };
 }
 
 export interface CollegamentoResponse {

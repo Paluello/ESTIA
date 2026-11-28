@@ -13,7 +13,13 @@ import { RelayComunita } from "./RelayComunita.js";
  * all'amministratore **prima** che adotti, e senza quel nome non si adotta.
  */
 
-const VUOTA: CommunityRelaysView = { attivi: true, massimo: 8, relays: [], ripiegoSuN0: false };
+const VUOTA: CommunityRelaysView = {
+  attivi: true,
+  massimo: 8,
+  relays: [],
+  ripiegoSuN0: false,
+  suggeriti: [],
+};
 
 beforeAll(() => {
   impostaLinguaDellaCasa("it");
@@ -76,5 +82,27 @@ describe("RelayComunita", () => {
     render(<RelayComunita token="t" />);
     expect(await screen.findByText(/Nessuno dei relay adottati risponde/)).toBeTruthy();
     expect(screen.getByText("Gestito da Luca · non risponde")).toBeTruthy();
+  });
+
+  it("mostra il relay suggerito da una Casa collegata, e lo adotta solo con un gesto", async () => {
+    vi.spyOn(api, "communityRelays").mockResolvedValue({
+      ...VUOTA,
+      suggeriti: [
+        { casa: "Casa di Marco", gestore: "Luca", url: "https://relay.circolo.example/" },
+      ],
+    });
+    const adotta = vi.spyOn(api, "adoptCommunityRelay").mockResolvedValue(VUOTA);
+
+    render(<RelayComunita token="t" />);
+    expect(await screen.findByText(/Casa di Marco usa questo relay/)).toBeTruthy();
+    expect(screen.getByText(/Luca potrà vedere quali Case parlano con la tua/)).toBeTruthy();
+    expect(adotta).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Adotta il relay di Luca" }));
+    expect(await screen.findByText(/Relay adottato/)).toBeTruthy();
+    expect(adotta).toHaveBeenCalledWith("t", {
+      gestore: "Luca",
+      url: "https://relay.circolo.example/",
+    });
   });
 });
