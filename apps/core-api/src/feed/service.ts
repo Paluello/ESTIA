@@ -57,12 +57,14 @@ export interface FeedMediaPort {
   /**
    * I byte di un'immagine **se** appartiene a questo autore. Stessa assenza
    * per «non c'è» e per «c'è ma non è sua»: altrimenti la federazione
-   * indovinerebbe gli id (ADR 0020 §1).
+   * indovinerebbe gli id (ADR 0020 §1). `postServito` dice se il post a cui
+   * l'immagine è attaccata si serve fuori: altrimenti stessa assenza.
    */
   readOwnedBy(
     id: string,
     ownerId: string,
     variant: "original" | "thumbnail",
+    postServito?: (postId: string) => boolean,
   ): Promise<{ bytes: Uint8Array; mediaType: string; byteSize: number } | undefined>;
   releasePost(postId: string): Promise<void>;
 }
