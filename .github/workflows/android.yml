@@ -1,0 +1,123 @@
+name: android
+
+# L'app Android in Jetpack Compose (apps/android, ADR 0051), sopra il nucleo
+# Rust. Un APK firmato come quello di `app.yml`: con i segreti
+# ANDROID_KEYSTORE_* se ci sono, altrimenti con una chiave usa e getta. Su main
+# si aggiunge alla pre-release «app-anteprima» come estia-android-nativa.apk,
+# accanto all'APK Tauri, che resta l'anteprima finché questa non fa anche i
+# messaggi (ADR 0051 §8).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/android/**"
+      - "apps/nucleo/**"
+      - "packages/lingue/src/frasi/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "apps/android/**"
+      - "apps/nucleo/**"
+      - "packages/lingue/src/frasi/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Frasi dell'app nella tabella
+        working-directory: apps/android
+        run: node scripts/controlla-frasi.mjs
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/nucleo
+          key: android-app
+
+      - name: Nucleo e legami
+        working-directory: apps/android
+        # ANDROID_NDK_LATEST_HOME è una variabile dell'immagine del runner.
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          ./scripts/prepara.sh
+
+      - name: Build dell'APK
+        working-directory: apps/android
+        run: gradle --no-daemon assembleRelease
+
+      - name: Firma
+        working-directory: apps/android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          strumenti="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          non_firmato="app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -f "$non_firmato"
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/estia.jks"
+            alias="$KEY_ALIAS"; password="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::Nessun segreto ANDROID_KEYSTORE_BASE64: firmo con una chiave usa e getta. Per aggiornare l'app bisogna disinstallarla prima."
+            password="$(openssl rand -hex 16)"; alias=estia
+            keytool -genkeypair -keystore "$RUNNER_TEMP/estia.jks" -alias "$alias" \
+              -keyalg RSA -keysize 3072 -validity 365 -storepass "$password" \
+              -dname "CN=ESTIA anteprima" -noprompt
+          fi
+          "$strumenti/zipalign" -f -P 16 4 "$non_firmato" "$RUNNER_TEMP/allineato.apk"
+          "$strumenti/apksigner" sign --ks "$RUNNER_TEMP/estia.jks" --ks-key-alias "$alias" \
+            --ks-pass "pass:$password" --out "$GITHUB_WORKSPACE/estia-android-nativa.apk" "$RUNNER_TEMP/allineato.apk"
+          "$strumenti/apksigner" verify "$GITHUB_WORKSPACE/estia-android-nativa.apk"
+          rm -f "$RUNNER_TEMP/estia.jks"
+          ls -l "$GITHUB_WORKSPACE/estia-android-nativa.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: estia-android-nativa-apk
+          path: estia-android-nativa.apk
+          retention-days: 14
+
+      - name: Nella pre-release «app-anteprima»
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # La pre-release la crea e la tiene `app.yml`: qui si aggiunge l'APK.
+          if gh release view app-anteprima >/dev/null 2>&1; then
+            gh release upload app-anteprima estia-android-nativa.apk --clobber
+          else
+            echo "::warning::La pre-release app-anteprima non c'è ancora: l'APK resta tra gli artefatti."
+          fi

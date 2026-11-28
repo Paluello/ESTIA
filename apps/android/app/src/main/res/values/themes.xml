@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Solo la finestra: il resto lo disegna Compose con Material 3. -->
+    <style name="Tema.Estia" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/sfondo</item>
+    </style>
+    <color name="sfondo">#FBFAF6</color>
+    <color name="accento">#EDB03A</color>
+    <color name="sopra_accento">#221803</color>
+</resources>

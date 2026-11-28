@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+# Generati da scripts/prepara.sh
+app/src/generato/
+app/src/main/jniLibs/
+app/src/main/assets/frasi/
