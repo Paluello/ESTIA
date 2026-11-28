@@ -223,6 +223,18 @@ describe("il profilo e la sua presenza", () => {
     });
   });
 
+  it("cerca `_` e `%` come lettere, non come «qualunque cosa»", async () => {
+    await withTempDataDir(async (dataDir) => {
+      const via = await casa(dataDir);
+
+      via.aggiungi("anna", "Anna");
+      via.aggiungi("marco_b", "Marco");
+
+      expect(via.profiles.searchLocal("_").map((p) => p.username)).toEqual(["marco_b"]);
+      expect(via.profiles.searchLocal("%")).toEqual([]);
+    });
+  });
+
   it("rifiuta una descrizione più lunga del limite invece di tagliarla", async () => {
     await withTempDataDir(async (dataDir) => {
       const via = await casa(dataDir);
