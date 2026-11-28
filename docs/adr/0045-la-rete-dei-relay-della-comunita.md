@@ -129,6 +129,13 @@ La riga del relay della comunità è il prezzo vero di questa decisione, ed è i
 3. **Il livello 1 del §6**: il binding lascia attiva la mappatura delle porte, e su quale porta.
 4. **Il primo Nodo pubblico**, ospitato da qualcuno, collegato a due Case vere.
 
+**Esito delle verifiche 1-3, il 2026-11-27**, nel [laboratorio dei relay](../../infra/relay-lab/README.md) su GitHub Actions ([risultati](../../infra/relay-lab/results/2026-11-27.md)). Nessuna cambia la decisione; la prima cambia come si costruisce il §2.
+
+1. **Sì.** Due Case su reti separate, ognuna con un relay diverso, si raggiungono: chi chiama apre il relay dell'altro anche se non è nella propria mappa, con l'indirizzo completo e con la sola chiave via scoperta di n0, e nei due casi misti con i relay di n0. Ma iroh sceglie il relay principale **per latenza**, non per ordine: «n0 sempre in fondo» non si ottiene mettendolo in coda alla mappa. La Casa tiene n0 fuori dalla mappa finché un relay adottato risponde, e lo aggiunge quando nessuno risponde.
+2. **A metà.** La banda in ingresso per client si limita (`limits.client.rx`). Il ritmo di connessioni nuove no: iroh-relay 1.5.0 legge `accept_conn_limit` e non lo applica. Un tetto di connessioni simultanee o di banda totale non esiste. Il §4 regge con i soli limiti di banda; il resto va fuori dal contenitore, e la [guida all'operatore](../NODO_PUBBLICO.md) lo dice.
+3. **Sì.** Il binding prova UPnP, PCP e NAT-PMP e chiede la porta su cui l'endpoint è legato, con porta esterna scelta dal router. `core-api` oggi non fissa quella porta, quindi cambia a ogni avvio: al livello 1 non importa, il livello 2 avrà bisogno di una porta fissa in configurazione.
+4. Aperta: è del proprietario.
+
 ## Documenti aggiornati
 
 - [ADR 0018](0018-federazione-fra-istanze-estia.md): annotata in testa, il 2026-10-07, che §«I relay pubblici di n0 sono accettati» è riaperta qui.
