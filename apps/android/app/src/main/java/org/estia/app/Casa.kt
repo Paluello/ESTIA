@@ -8,6 +8,8 @@ import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +24,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.estia.nucleo.Collegamento
+import org.estia.nucleo.DomandaDiEntrare
 import org.estia.nucleo.Sessioni
 
 @Serializable
@@ -49,6 +52,12 @@ class ErroreCasa(val stato: Int?, val codice: String?) : Exception("casa: $stato
 sealed interface Fase {
     data object Avvio : Fase
     data object Ingresso : Fase
+
+    /**
+     * Ha chiesto di entrare con un invito, e l'amministratore non ha ancora
+     * deciso: appena dice di sì, questa chiave è dentro.
+     */
+    data object InAttesa : Fase
     data object Dentro : Fase
 
     /** La cassaforte non si apre: le chiavi non avrebbero dove stare. */
@@ -80,11 +89,16 @@ class Casa(applicazione: Application) : AndroidViewModel(applicazione) {
                 cassaforte = aperta
                 val aperto = Collegamento.apri(aperta)
                 collegamento = aperto
-                if (aperto.casa() == null) {
-                    _fase.value = Fase.Ingresso
-                } else {
-                    _fase.value = Fase.Dentro
-                    aggiornaUtente()
+                when {
+                    aperto.casa() != null -> {
+                        _fase.value = Fase.Dentro
+                        aggiornaUtente()
+                    }
+                    aperto.inAttesa() != null -> {
+                        _fase.value = Fase.InAttesa
+                        aspetta()
+                    }
+                    else -> _fase.value = Fase.Ingresso
                 }
             } catch (e: Exception) {
                 _fase.value = Fase.Guasto(e.message ?: e.javaClass.simpleName)
@@ -98,6 +112,55 @@ class Casa(applicazione: Application) : AndroidViewModel(applicazione) {
         _utente.value = runCatching { json.decodeFromString(Utente.serializer(), ingresso.utente) }.getOrNull()
         _fase.value = Fase.Dentro
         aggiornaUtente()
+    }
+
+    /**
+     * La domanda con il QR d'invito (`estia://invito`), per chi non è ancora
+     * membro. Se la Casa la registra si aspetta l'amministratore.
+     */
+    suspend fun chiediDiEntrare(testo: String, username: String, password: String, nome: String, messaggio: String) {
+        val aperto = collegamento ?: throw ErroreCasa(null, null)
+        aperto.chiediDiEntrare(
+            testo.trim(),
+            DomandaDiEntrare(
+                username = username,
+                password = password,
+                nome = nome.ifBlank { null },
+                messaggio = messaggio.ifBlank { null },
+            ),
+            "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+        )
+        _fase.value = Fase.InAttesa
+        aspetta()
+    }
+
+    /** Se l'amministratore ha già detto di sì. Non dice mai di no: la Casa non lo dice. */
+    suspend fun controllaRichiesta() {
+        val aperto = collegamento ?: return
+        if (_fase.value != Fase.InAttesa) return
+        val ingresso = runCatching { aperto.controllaRichiesta() }.getOrNull() ?: return
+        _utente.value = runCatching { json.decodeFromString(Utente.serializer(), ingresso.utente) }.getOrNull()
+        _fase.value = Fase.Dentro
+        aggiornaUtente()
+    }
+
+    fun smettiDiAspettare() {
+        runCatching { collegamento?.dimenticaRichiesta() }
+        attesa?.cancel()
+        _fase.value = Fase.Ingresso
+    }
+
+    private var attesa: Job? = null
+
+    /** Riprova ogni venti secondi finché la fase resta «in attesa». */
+    private fun aspetta() {
+        attesa?.cancel()
+        attesa = viewModelScope.launch {
+            while (_fase.value == Fase.InAttesa) {
+                delay(20_000)
+                controllaRichiesta()
+            }
+        }
     }
 
     fun esci() {

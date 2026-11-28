@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.estia.app.Casa
@@ -53,6 +55,12 @@ fun SchermataIngresso(casa: Casa) {
     var collegamento by rememberSaveable { mutableStateOf("") }
     var inCorso by remember { mutableStateOf(false) }
     var errore by remember { mutableStateOf<String?>(null) }
+    var username by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var nome by rememberSaveable { mutableStateOf("") }
+    var messaggio by rememberSaveable { mutableStateOf("") }
+    // Un QR d'invito: chi non è ancora membro chiede di entrare.
+    val conInvito = collegamento.trim().startsWith("estia://invito?")
     val ambito = rememberCoroutineScope()
     val arrivato by casa.collegamentoArrivato.collectAsState()
 
@@ -61,6 +69,26 @@ fun SchermataIngresso(casa: Casa) {
         inCorso = true
         errore = null
         ambito.launch {
+            if (conInvito) {
+                try {
+                    casa.chiediDiEntrare(collegamento, username, password, nome, messaggio)
+                } catch (e: ErroreNucleo.InvitoNonAccettato) {
+                    errore = Frasi.t("ingresso_app.invito.non_accettato")
+                } catch (e: ErroreNucleo.Formato) {
+                    errore = Frasi.t("ingresso_app.invito.non_accettato")
+                } catch (e: ErroreNucleo.Casa) {
+                    errore = when (codiceDellaCasa(e)) {
+                        "username_taken" -> Frasi.t("errori.username_taken")
+                        "invite_requests_full" -> Frasi.t("errori.invite_requests_full")
+                        else -> Frasi.t("ingresso_app.invito.non_accettato")
+                    }
+                } catch (e: Exception) {
+                    errore = Frasi.t("ingresso_app.non_raggiungibile")
+                } finally {
+                    inCorso = false
+                }
+                return@launch
+            }
             try {
                 casa.entra(collegamento)
             } catch (e: ErroreNucleo.CodiceNonAccettato) {
@@ -80,7 +108,8 @@ fun SchermataIngresso(casa: Casa) {
         val testo = arrivato ?: return@LaunchedEffect
         collegamento = testo
         casa.collegamentoArrivato.value = null
-        collega()
+        // Un QR d'invito aspetta il modulo; quello d'ingresso entra subito.
+        if (!testo.trim().startsWith("estia://invito?")) collega()
     }
 
     Box(
@@ -111,12 +140,12 @@ fun SchermataIngresso(casa: Casa) {
             }
 
             Text(
-                Frasi.t("ingresso_app.titolo"),
+                Frasi.t(if (conInvito) "ingresso_app.invito.titolo" else "ingresso_app.titolo"),
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                Frasi.t("ingresso_app.spiegazione"),
+                Frasi.t(if (conInvito) "ingresso_app.invito.spiegazione" else "ingresso_app.spiegazione"),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -136,6 +165,43 @@ fun SchermataIngresso(casa: Casa) {
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            if (conInvito) {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text(Frasi.t("ingresso_app.invito.username")) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(Frasi.t("ingresso_app.invito.password")) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = nome,
+                    onValueChange = { nome = it },
+                    label = { Text(Frasi.t("ingresso_app.invito.nome")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = messaggio,
+                    onValueChange = { messaggio = it },
+                    label = { Text(Frasi.t("ingresso_app.invito.messaggio")) },
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
             errore?.let {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
@@ -149,14 +215,77 @@ fun SchermataIngresso(casa: Casa) {
 
             Button(
                 onClick = { collega() },
-                enabled = !inCorso && collegamento.isNotBlank(),
+                enabled = !inCorso && collegamento.isNotBlank() &&
+                    (!conInvito || (username.isNotBlank() && password.length >= 12)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    if (inCorso) Frasi.t("ingresso_app.collego") else Frasi.t("ingresso_app.collega"),
+                    when {
+                        conInvito && inCorso -> Frasi.t("ingresso_app.invito.invio")
+                        conInvito -> Frasi.t("ingresso_app.invito.chiedi")
+                        inCorso -> Frasi.t("ingresso_app.collego")
+                        else -> Frasi.t("ingresso_app.collega")
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(vertical = 6.dp),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Dopo la domanda con invito: l'amministratore deve ancora decidere. L'app
+ * riprova da sola; da qui si può controllare subito o smettere di aspettare.
+ */
+@Composable
+fun SchermataInAttesa(casa: Casa) {
+    var controllo by remember { mutableStateOf(false) }
+    val ambito = rememberCoroutineScope()
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Text(
+                Frasi.t("ingresso_app.attesa.titolo"),
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                Frasi.t("ingresso_app.attesa.testo"),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = {
+                    controllo = true
+                    ambito.launch {
+                        casa.controllaRichiesta()
+                        controllo = false
+                    }
+                },
+                enabled = !controllo,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    Frasi.t("ingresso_app.attesa.controlla"),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+            TextButton(onClick = { casa.smettiDiAspettare() }, modifier = Modifier.fillMaxWidth()) {
+                Text(Frasi.t("ingresso_app.attesa.annulla"))
             }
         }
     }

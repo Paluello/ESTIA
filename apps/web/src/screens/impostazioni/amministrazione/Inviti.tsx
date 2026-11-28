@@ -39,7 +39,9 @@ export function Inviti(): React.ReactElement {
   const [etichetta, setEtichetta] = useState("");
   const [riutilizzabile, setRiutilizzabile] = useState(false);
   /** Il codice appena creato: si vede una volta sola, e non sopravvive al gesto dopo. */
-  const [appena, setAppena] = useState<{ code: string; joinUrl: string } | undefined>();
+  const [appena, setAppena] = useState<
+    { code: string; joinUrl: string; qr?: string } | undefined
+  >();
   /** Messaggio di esito riuscito, dopo. */
   const [nota, setNota] = useState<string | undefined>();
   /** Tenuto separato da `nota`: un fallimento non deve avere la faccia di un esito. */
@@ -104,7 +106,11 @@ export function Inviti(): React.ReactElement {
         });
 
         // Mostrato una volta sola: l'istanza ne conserva solo l'impronta.
-        setAppena({ code: creato.code, joinUrl: creato.joinUrl });
+        setAppena({
+          code: creato.code,
+          joinUrl: creato.joinUrl,
+          ...(creato.qr === undefined ? {} : { qr: creato.qr }),
+        });
         setEtichetta("");
       },
       t("inviti.creato"),
@@ -141,7 +147,13 @@ export function Inviti(): React.ReactElement {
 
       {errore !== undefined && <Alert tone="error">{errore}</Alert>}
 
-      {appena !== undefined && <InviteLink code={appena.code} joinUrl={appena.joinUrl} />}
+      {appena !== undefined && (
+        <InviteLink
+          code={appena.code}
+          joinUrl={appena.joinUrl}
+          {...(appena.qr === undefined ? {} : { qr: appena.qr })}
+        />
+      )}
 
       {/* Quando c'è un link appena creato l'esito è già quello, e ripeterlo in
           una seconda scatola sarebbe rumore: qui resta la voce di tutti gli

@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.estia.app.aspetto.EstiaTema
 import org.estia.app.schermate.Dentro
+import org.estia.app.schermate.SchermataInAttesa
 import org.estia.app.schermate.SchermataIngresso
 
 class MainActivity : ComponentActivity() {
@@ -44,7 +45,7 @@ class MainActivity : ComponentActivity() {
     /** Il QR inquadrato con la fotocamera apre `estia://ingresso?...`. */
     private fun ricevi(intent: Intent?) {
         val dati = intent?.data ?: return
-        if (dati.scheme == "estia" && dati.host == "ingresso") {
+        if (dati.scheme == "estia" && (dati.host == "ingresso" || dati.host == "invito")) {
             casa.collegamentoArrivato.value = dati.toString()
         }
     }
@@ -59,6 +60,7 @@ private fun Radice(casa: Casa) {
             contentAlignment = Alignment.Center,
         ) { CircularProgressIndicator() }
         Fase.Ingresso -> SchermataIngresso(casa)
+        Fase.InAttesa -> SchermataInAttesa(casa)
         Fase.Dentro -> Dentro(casa)
         is Fase.Guasto -> Box(
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp),

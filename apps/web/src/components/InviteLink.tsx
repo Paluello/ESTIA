@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { inviteLinkFor, isLocalOnlyHost } from "../invite-link.js";
 import { useT } from "../lingua.js";
-import { Alert, Button } from "../ui/index.js";
+import { Alert, Button, QrCode } from "../ui/index.js";
 
 /**
  * The link an administrator actually sends to somebody.
@@ -16,6 +16,11 @@ export interface InviteLinkProps {
   code: string;
   /** Full URL from the instance; preferred over the browser origin. */
   joinUrl?: string;
+  /**
+   * Il QR d'invito per l'app (`estia://invito?...`), che l'istanza dà solo a
+   * rete accesa: chi lo inquadra chiede di entrare da fuori casa, senza link.
+   */
+  qr?: string;
 }
 
 function hostnameOf(url: string): string {
@@ -26,7 +31,7 @@ function hostnameOf(url: string): string {
   }
 }
 
-export function InviteLink({ code, joinUrl }: InviteLinkProps): React.ReactElement {
+export function InviteLink({ code, joinUrl, qr }: InviteLinkProps): React.ReactElement {
   const { t, tc } = useT();
   const [copied, setCopied] = useState(false);
   const link = inviteLinkFor(code, joinUrl);
@@ -63,6 +68,12 @@ export function InviteLink({ code, joinUrl }: InviteLinkProps): React.ReactEleme
           </Button>
         </div>
         <p className="field__hint">{t("invito.link.poi")}</p>
+        {qr !== undefined && (
+          <div className="qr-riquadro">
+            <QrCode size={220} title={t("invito.qr.titolo")} value={qr} />
+            <p className="muted qr-riquadro__nota">{t("invito.qr.nota")}</p>
+          </div>
+        )}
       </Alert>
 
       {/* Detto qui perché è qui che si scopre: un link a localhost sembra

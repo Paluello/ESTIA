@@ -10,6 +10,15 @@ struct SchermataIngresso: View {
     @State private var collegamento = ""
     @State private var inCorso = false
     @State private var errore: String?
+    @State private var username = ""
+    @State private var password = ""
+    @State private var nome = ""
+    @State private var messaggio = ""
+
+    /// Un QR d'invito: chi non è ancora membro chiede di entrare.
+    private var conInvito: Bool {
+        collegamento.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("estia://invito?")
+    }
 
     var body: some View {
         ScrollView {
@@ -21,11 +30,11 @@ struct SchermataIngresso: View {
                     .background(Tema.accento, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .accessibilityHidden(true)
 
-                Text(Frasi.t("ingresso_app.titolo"))
+                Text(Frasi.t(conInvito ? "ingresso_app.invito.titolo" : "ingresso_app.titolo"))
                     .font(Tema.titolo())
                     .foregroundStyle(Tema.testo)
 
-                Text(Frasi.t("ingresso_app.spiegazione"))
+                Text(Frasi.t(conInvito ? "ingresso_app.invito.spiegazione" : "ingresso_app.spiegazione"))
                     .font(Tema.corpo())
                     .foregroundStyle(Tema.testoTenue)
 
@@ -41,6 +50,22 @@ struct SchermataIngresso: View {
                         .padding(12)
                         .background(Tema.superficie, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Tema.bordo))
+                }
+
+                if conInvito {
+                    campo("ingresso_app.invito.username", testo: $username)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(Frasi.t("ingresso_app.invito.password"))
+                            .font(Tema.corpo(.subheadline, peso: .semibold))
+                            .foregroundStyle(Tema.testo)
+                        SecureField("", text: $password)
+                            .textContentType(.newPassword)
+                            .padding(12)
+                            .background(Tema.superficie, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Tema.bordo))
+                    }
+                    campo("ingresso_app.invito.nome", testo: $nome)
+                    campo("ingresso_app.invito.messaggio", testo: $messaggio)
                 }
 
                 if let errore {
@@ -63,17 +88,37 @@ struct SchermataIngresso: View {
             guard let arrivato else { return }
             collegamento = arrivato
             casa.collegamentoArrivato = nil
-            Task { await collega() }
+            // Un QR d'invito aspetta il modulo; quello d'ingresso entra subito.
+            if !conInvito { Task { await collega() } }
+        }
+    }
+
+    private func campo(_ chiave: String, testo: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(Frasi.t(chiave))
+                .font(Tema.corpo(.subheadline, peso: .semibold))
+                .foregroundStyle(Tema.testo)
+            TextField("", text: testo)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(12)
+                .background(Tema.superficie, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Tema.bordo))
         }
     }
 
     @ViewBuilder private var pulsante: some View {
-        let etichetta = Text(inCorso ? Frasi.t("ingresso_app.collego") : Frasi.t("ingresso_app.collega"))
+        let etichetta = Text(
+            conInvito
+                ? Frasi.t(inCorso ? "ingresso_app.invito.invio" : "ingresso_app.invito.chiedi")
+                : Frasi.t(inCorso ? "ingresso_app.collego" : "ingresso_app.collega")
+        )
             .font(Tema.corpo(.headline, peso: .semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
         let azione = { Task { await collega() } }
         let spento = inCorso || collegamento.trimmingCharacters(in: .whitespaces).isEmpty
+            || (conInvito && (username.isEmpty || password.count < 12))
         if #available(iOS 26, *) {
             Button(action: { _ = azione() }) { etichetta }
                 .buttonStyle(.glassProminent)
@@ -94,6 +139,25 @@ struct SchermataIngresso: View {
         inCorso = true
         errore = nil
         defer { inCorso = false }
+        if conInvito {
+            do {
+                try await casa.chiediDiEntrare(
+                    collegamento, username: username, password: password, nome: nome, messaggio: messaggio
+                )
+            } catch ErroreNucleo.InvitoNonAccettato, ErroreNucleo.Formato {
+                errore = Frasi.t("ingresso_app.invito.non_accettato")
+            } catch let ErroreNucleo.Casa(message) {
+                // Il nucleo passa `casa <stato>: <codice>`, e il codice ha la sua frase.
+                switch message.components(separatedBy: ": ").last {
+                case "username_taken": errore = Frasi.t("errori.username_taken")
+                case "invite_requests_full": errore = Frasi.t("errori.invite_requests_full")
+                default: errore = Frasi.t("ingresso_app.invito.non_accettato")
+                }
+            } catch {
+                errore = Frasi.t("ingresso_app.non_raggiungibile")
+            }
+            return
+        }
         do {
             try await casa.entra(collegamento)
         } catch ErroreNucleo.CodiceNonAccettato, ErroreNucleo.Formato {
@@ -102,5 +166,53 @@ struct SchermataIngresso: View {
         } catch {
             errore = Frasi.t("ingresso_app.non_raggiungibile")
         }
+    }
+}
+
+/// Dopo la domanda con invito: l'amministratore deve ancora decidere. L'app
+/// riprova da sola; da qui si può controllare subito o smettere di aspettare.
+struct SchermataInAttesa: View {
+    @EnvironmentObject private var casa: Casa
+    @State private var controllo = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 34))
+                .foregroundStyle(Tema.sopraAccento)
+                .frame(width: 64, height: 64)
+                .background(Tema.accento, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .accessibilityHidden(true)
+            Text(Frasi.t("ingresso_app.attesa.titolo"))
+                .font(Tema.titolo())
+                .foregroundStyle(Tema.testo)
+            Text(Frasi.t("ingresso_app.attesa.testo"))
+                .font(Tema.corpo())
+                .foregroundStyle(Tema.testoTenue)
+            Button {
+                Task {
+                    controllo = true
+                    await casa.controllaRichiesta()
+                    controllo = false
+                }
+            } label: {
+                Text(Frasi.t("ingresso_app.attesa.controlla"))
+                    .font(Tema.corpo(.headline, peso: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Tema.accento)
+            .foregroundStyle(Tema.sopraAccento)
+            .disabled(controllo)
+            Button(Frasi.t("ingresso_app.attesa.annulla")) { casa.smettiDiAspettare() }
+                .font(Tema.corpo(.callout))
+                .foregroundStyle(Tema.testoTenue)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(24)
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Tema.sfondo)
     }
 }

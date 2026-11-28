@@ -66,6 +66,15 @@ pub struct Risposta {
     pub corpo: Vec<u8>,
 }
 
+/// Che cosa ha risposto la Casa a una domanda con invito valido.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EsitoRichiesta {
+    /// La richiesta aspetta l'amministratore: il suo id.
+    Inviata(String),
+    /// L'invito vale, la richiesta no: il codice, come dalla rotta HTTP.
+    Rifiutata(String),
+}
+
 pub struct Rete {
     endpoint: Endpoint,
     connessione: Mutex<Option<Connection>>,
@@ -134,6 +143,50 @@ impl Rete {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         Ok((casa, utente))
+    }
+
+    /// La domanda con invito di chi non è ancora membro, sullo stesso ALPN
+    /// dell'ingresso. Un invito che non vale chiude senza rispondere: è
+    /// `invito non accettato`, come il codice sbagliato.
+    pub async fn chiedi_con_invito(
+        &self,
+        collegamento: &CollegamentoIngresso,
+        invito: serde_json::Value,
+        etichetta: &str,
+    ) -> Result<(Casa, EsitoRichiesta)> {
+        let casa = Casa {
+            chiave: collegamento.casa.clone(),
+            ticket: collegamento.ticket.clone(),
+        };
+        let connessione = self.collega(&casa, ALPN_INGRESSO).await?;
+        let (mut invio, mut ricezione) = connessione.open_bi().await.context("stream rifiutato")?;
+        let domanda = serde_json::json!({ "invito": invito, "etichetta": etichetta });
+        invio.write_all(&serde_json::to_vec(&domanda)?).await?;
+        invio.finish()?;
+        let grezzo =
+            tokio::time::timeout(ATTESA_RISPOSTA, ricezione.read_to_end(TETTO_INTESTAZIONE))
+                .await
+                .map_err(|_| anyhow!("la Casa non ha risposto"))?
+                .map_err(|_| anyhow!("invito non accettato"))?;
+        connessione.close(0u32.into(), b"");
+        let risposta: serde_json::Value =
+            serde_json::from_slice(&grezzo).map_err(|_| anyhow!("invito non accettato"))?;
+        let testo = |campo: &str| {
+            risposta
+                .get(campo)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        let esito = match (
+            testo("esito").as_deref(),
+            testo("richiestaId"),
+            testo("codice"),
+        ) {
+            (Some("richiesta"), Some(id), _) => EsitoRichiesta::Inviata(id),
+            (Some("rifiutata"), _, Some(codice)) => EsitoRichiesta::Rifiutata(codice),
+            _ => bail!("invito non accettato"),
+        };
+        Ok((casa, esito))
     }
 
     /// Una richiesta dell'API dei membri. Riusa la connessione; se è caduta ne

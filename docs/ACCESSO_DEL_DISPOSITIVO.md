@@ -108,13 +108,14 @@ Chi non è ancora membro, e non ha né un browser in casa né qualcuno dentro co
 3. Se l'invito vale, la Casa registra la richiesta come quella fatta dal browser, si ricorda **da quale chiave** è arrivata (tabella `richieste_dispositivo`, migrazione 37) e risponde `{"esito": "richiesta", "richiestaId"}`. Se l'invito vale ma la richiesta no, risponde `{"esito": "rifiutata", "codice": "username_taken"}` (o `invite_requests_full`), come la rotta HTTP. Se l'invito non vale, la connessione si chiude e basta.
 4. L'amministratore approva come sempre. **Nella stessa transazione** che crea l'account, quella chiave viene legata a una sessione nuova del nuovo membro: da quel momento l'app parla su `estia/dispositivo/1`. Prima, e dopo un rifiuto, la stessa chiave non apre niente.
 
+Il pannello web mostra il QR d'invito accanto al link. Le app iOS e Android leggono `estia://invito` (anche dalla fotocamera di sistema), chiedono nome utente e password, e poi aspettano in una schermata propria riprovando ogni venti secondi (`Collegamento::chiedi_di_entrare` e `controlla_richiesta` nel nucleo): appena la chiave apre `GET /api/v1/auth/me`, l'app è dentro.
+
 Un invito fa chiedere, non entrare: la decisione resta all'amministratore ([ADR 0003](adr/0003-primo-contatto-in-rete-locale.md), requisito 3). Ogni domanda valida costa un hash di password e le chiavi iroh non costano niente, quindi la Casa ne accetta al più venti ogni dieci minuti, da tutte le chiavi insieme. Una domanda nuova dalla stessa chiave sostituisce quella vecchia.
 
 ## Che cosa manca, detto per intero
 
 - **La rimozione subito, non alla lettura.** Oggi la foglia di un dispositivo revocato esce dalle conversazioni man mano che un altro dispositivo della persona le apre. Farlo per tutte al momento della revoca vuole una coda di lavoro sul client.
 - **Le app native** devono fare lo stesso allineamento delle foglie: la Casa è pronta.
-- **Il QR d'invito nel pannello web.** `POST /api/v1/admin/invites` restituisce già `qr`, ma il pannello mostra ancora soltanto il link; e l'app deve saper leggere `estia://invito` e riprovare finché la richiesta non è decisa.
 - **Le prove sul campo**, nell'ordine di ADR 0044 e fatte dal proprietario: Milano–Campello su dati mobili, la misura dall'esterno che non c'è nessuna porta web, il tempo effettivo di perdita dell'accesso dopo una revoca.
 - **Un invito creato dall'app porta in `joinUrl` un indirizzo `localhost`.** Fuori casa non c'è una porta web da aprire, quindi da lì vale il `qr`. `GET /api/v1/connection` invece dal 2026-11-28 risponde `dispositivo`.
 - **Il corpo come `number[]`.** Il binding Node di iroh legge e scrive array di numeri: per un'immagine da qualche MiB è memoria sprecata, non un errore. Se pesa, si spezza il corpo in più scritture.
