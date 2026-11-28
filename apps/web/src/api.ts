@@ -37,6 +37,7 @@ import type {
   CronologiaPage,
   KeyPackageMlsView,
   KeyPackagesMlsView,
+  MieiKeyPackagesRequest,
   FederationView,
   FollowRequest,
   FollowsView,
@@ -730,6 +731,10 @@ export const api = {
       `/api/v1/mls/key-packages/${encodeURIComponent(casa)}/${encodeURIComponent(username)}`,
       { token },
     ),
+
+  /** I KeyPackage di altri dispositivi propri, per chiave di firma (ADR 0040). */
+  mieiKeyPackages: (token: string, body: MieiKeyPackagesRequest): Promise<KeyPackagesMlsView> =>
+    request("/api/v1/dispositivi/miei/key-packages", { body, method: "POST", token }),
 
   getArchivio: (token: string, id: string, dopo?: string): Promise<ArchivioPage> => {
     const coda = dopo === undefined ? "" : `?dopo=${encodeURIComponent(dopo)}`;

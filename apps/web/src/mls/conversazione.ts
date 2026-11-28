@@ -11,7 +11,15 @@
  * Chi scrive deposita nella propria casa; chi legge chiede alla propria istanza
  * la cronologia ricomposta dalle custodie, e la decifra qui, in memoria.
  */
-import { confronta, epochDi, scriviIdentita, type Confronto, type Membro } from "./gruppo.js";
+import {
+  confronta,
+  diChiE,
+  epochDi,
+  foglieDi,
+  scriviIdentita,
+  type Confronto,
+  type Membro,
+} from "./gruppo.js";
 import {
   aggiungiFoglie,
   aggiungiMembro,
@@ -236,6 +244,69 @@ export async function allinea(
   const allineata = await cambiaMembri(ctx, sessione, { escono: daTogliere });
   return { confronto: confronta(allineata.stato, attesi), sessione: allineata };
 }
+
+/**
+ * Rimette d'accordo **le proprie foglie** con il registro della propria casa:
+ * è il «sì» e la revoca di [ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)
+ * che arrivano dentro le conversazioni.
+ *
+ * - Un dispositivo approvato che nell'albero non c'è **entra**: `prendi` ne
+ *   preleva la chiave d'ingresso, per chiave di firma.
+ * - Una foglia mia la cui chiave il registro non riconosce più — revocata,
+ *   scaduta — **esce**, e la catena ruota: il telefono rubato non legge il
+ *   seguito.
+ *
+ * Il registro della propria casa è l'autorità su di sé, quindi qui si toglie
+ * con certezza. Un dispositivo che nel registro non c'è — perché aspetta, o
+ * perché è lui quello revocato — non tocca niente: non è lui a decidere.
+ */
+export async function allineaMieiDispositivi(
+  ctx: Contesto,
+  sessione: Sessione,
+  io: { id: string; membro: Membro },
+  prendi: (chiaviDiFirma: readonly Uint8Array[]) => Promise<readonly KeyPackage[]>,
+): Promise<Sessione> {
+  if (sessione.tolto === true) {
+    return sessione;
+  }
+
+  const registro = await ctx.istanza.chiaviDiFirmaDi(io.membro);
+  const nelRegistro = (k: Uint8Array): boolean => registro.some((r) => stessiByte(r, k));
+  const mie = foglieDi(sessione.stato, io.membro);
+  const questa = mie.find((f) => f.indice === sessione.stato.privatePath.leafIndex);
+  if (questa === undefined || !nelRegistro(questa.chiaveDiFirma)) {
+    return sessione;
+  }
+
+  let attuale = sessione;
+  const vecchie = mie.filter((f) => f !== questa && !nelRegistro(f.chiaveDiFirma));
+  if (vecchie.length > 0) {
+    attuale = await togliFoglie(ctx, attuale, io.membro, {
+      soloChiavi: vecchie.map((f) => f.chiaveDiFirma),
+    });
+  }
+
+  const mancanti = registro.filter((r) => !mie.some((f) => stessiByte(f.chiaveDiFirma, r)));
+  if (mancanti.length === 0) {
+    return attuale;
+  }
+
+  // Si fa entrare soltanto ciò che si è chiesto: una chiave d'ingresso che
+  // firma con un'altra chiave, o che nomina un'altra persona, resta fuori.
+  const chi = scriviIdentita(io.membro);
+  const ingressi = (await prendi(mancanti))
+    .filter((kp) => mancanti.some((m) => stessiByte(m, kp.leafNode.signaturePublicKey)))
+    .filter((kp) => {
+      const suo = diChiE(kp);
+      return suo !== undefined && scriviIdentita(suo) === chi;
+    })
+    .map((keyPackage): Ingresso => ({ destinatario: io.id, keyPackage }));
+
+  return ingressi.length === 0 ? attuale : aggiungiFoglie(ctx, attuale, io.membro, ingressi);
+}
+
+const stessiByte = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, i) => byte === b[i]);
 
 /**
  * Fa entrare una persona nel gruppo MLS, con tutte le chiavi d'ingresso che si

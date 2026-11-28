@@ -373,6 +373,41 @@ export class DispositiviService {
       .map((res) => ({ deviceId: res.device.id, keyPackage: res.keyPackage.keyPackage }));
   }
 
+  /**
+   * I KeyPackage degli **altri dispositivi di chi chiede**, scelti per chiave
+   * di firma: è il «sì» di [ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)
+   * che arriva nelle conversazioni. Un dispositivo già approvato trova nel
+   * registro una chiave sua che nell'albero non c'è, e preleva soltanto quella:
+   * le scorte degli altri restano intatte.
+   *
+   * Solo da un dispositivo approvato: uno che aspetta non fa entrare nessuno.
+   */
+  claimMieiKeyPackages(
+    userId: string,
+    sessionId: string,
+    chiaviDiFirma: readonly string[],
+  ): KeyPackageMlsView[] {
+    const chiChiede = this.repo.getDeviceKeyBySessionId(sessionId);
+    if (chiChiede === undefined || chiChiede.approvatoIl === null) {
+      throw new DomainError("device_not_approved", 403);
+    }
+
+    const cercate = chiaviDiFirma.map((k) => Buffer.from(k, "base64"));
+    const cercata = (publicKey: string): boolean => {
+      const sua = Buffer.from(publicKey, "base64");
+      return cercate.some((k) => k.length > 0 && k.equals(sua));
+    };
+
+    return this.repo
+      .claimKeyPackagesForUser(
+        userId,
+        this.now(),
+        ALGORITMO_MLS,
+        (device) => device.id !== chiChiede.id && cercata(device.publicKey),
+      )
+      .map((res) => ({ deviceId: res.device.id, keyPackage: res.keyPackage.keyPackage }));
+  }
+
   saveBackup(userId: string, req: SaveKeyBackupRequest): KeyBackupView {
     const updatedAt = this.now();
     this.repo.saveKeyBackup({

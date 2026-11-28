@@ -107,6 +107,8 @@ export interface DeviceKeysRepository {
     userId: string,
     consumedAt: string,
     algoritmo: string,
+    /** Solo i dispositivi per cui questo dice di sì. */
+    filtro?: (device: DeviceKeyRecord) => boolean,
   ): Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }>;
   saveKeyBackup(record: {
     userId: string;
@@ -398,8 +400,9 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
     userId: string,
     consumedAt: string,
     algoritmo: string,
+    filtro?: (device: DeviceKeyRecord) => boolean,
   ): Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }> {
-    return this.#preleva(userId, consumedAt, algoritmo, DISPOSITIVI_MAX_PER_PRELIEVO);
+    return this.#preleva(userId, consumedAt, algoritmo, DISPOSITIVI_MAX_PER_PRELIEVO, filtro);
   }
 
   #preleva(
@@ -407,6 +410,7 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
     consumedAt: string,
     algoritmo: string,
     quanti: number,
+    filtro: (device: DeviceKeyRecord) => boolean = () => true,
   ): Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }> {
     const trova = this.db.prepare(
       `SELECT id, device_id, user_id, key_package, created_at FROM key_packages
@@ -420,7 +424,7 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
       if (presi.length >= quanti) {
         break;
       }
-      if (device.algorithm !== algoritmo) {
+      if (device.algorithm !== algoritmo || !filtro(device)) {
         continue;
       }
 
