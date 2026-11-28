@@ -30,6 +30,23 @@ pub enum ErroreNucleo {
     /// OpenMLS ha rifiutato l'operazione.
     #[error("mls: {0}")]
     Mls(String),
+    /// Questo dispositivo non ha ancora la catena d'archivio della
+    /// conversazione: è entrato o rientrato, e il mazzo non è ancora avvolto
+    /// sotto la sua epoch. Finché è così non si scrive.
+    #[error("la cronologia non è ancora arrivata su questo dispositivo")]
+    SenzaArchivio,
+    /// Questo dispositivo non è più nel gruppo della conversazione.
+    #[error("fuori dal gruppo")]
+    FuoriDalGruppo,
+    /// L'archivio non ha sigillato: non dice mai che cosa c'era dentro.
+    #[error("archivio: {0}")]
+    Archivio(String),
+}
+
+impl From<crate::archivio::ErroreArchivio> for ErroreNucleo {
+    fn from(e: crate::archivio::ErroreArchivio) -> Self {
+        ErroreNucleo::Archivio(e.to_string())
+    }
 }
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for ErroreNucleo {

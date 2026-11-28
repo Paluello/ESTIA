@@ -784,6 +784,7 @@ Questo paragrafo resta qui perché è la prova su cui poggiano regole che oggi s
 - [x] Il nucleo Rust (`apps/nucleo`): MLS con OpenMLS, stato nel deposito dell'app, autenticazione delle foglie contro il registro, legami Swift e Kotlin con UniFFI (2026-11-28).
 - [x] Il filo verso la Casa nel nucleo (iroh, dal lato Rust di `apps/app`), con una Casa finta in rete locale nei test (2026-11-28).
 - [x] L'app del PC usa `apps/nucleo` invece della copia di `filo.rs` e `rete.rs` (2026-11-28).
+- [x] L'archivio della conversazione nel nucleo (`apps/nucleo/src/archivio.rs`): catena, mazzo e voci legate uguali byte per byte al client web, con la catena nello stato del nucleo e nessuna chiave oltre il confine di UniFFI; [`infra/prova-archivio`](../infra/prova-archivio) lo prova in CI contro `archivio.ts` e `sessione.ts` veri, con la serratura derivata da OpenMLS e da `ts-mls` (2026-11-28). Manca chi lo usa: le app non hanno ancora le conversazioni.
 - [x] L'app iPhone in SwiftUI (`apps/ios`): ingresso con il QR, bacheca della Casa, profilo; build per il simulatore in CI (2026-11-28). Manca la prova su un iPhone vero.
 - [x] L'app Android in Compose (`apps/android`): ingresso con il QR, bacheca della Casa, profilo; APK firmato in CI (2026-11-28). Manca la prova su un telefono vero.
 

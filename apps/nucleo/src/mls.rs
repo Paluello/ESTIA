@@ -9,7 +9,10 @@
 //!   controllo lo fa questo modulo prima di applicare un commit o di entrare;
 //! - il Welcome e il punto di rientro portano l'albero con sé;
 //! - la serratura del mazzo d'archivio è l'exporter con `estia archive wrap v1`
-//!   (S2), e non esce da qui.
+//!   (S2), e non esce da qui;
+//! - la catena d'archivio sta qui dentro, accanto allo stato del gruppo: a
+//!   ogni rimozione guadagna la chiave derivata dall'epoch nuova con
+//!   `estia archive chain v1` (ADR 0052 §2), come in `sessione.ts`.
 //!
 //! Lo stato vive in una `MemoryStorage` di OpenMLS che, dopo ogni operazione,
 //! si scrive intera nel [`Deposito`] dell'app. Per le conversazioni di un
@@ -17,7 +20,7 @@
 //! solo. Un `StorageProvider` che scrive per chiave è un'ottimizzazione che si
 //! fa quando la misura la chiede.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
 
 use openmls::prelude::tls_codec::{Deserialize, Serialize};
@@ -26,16 +29,28 @@ use openmls_basic_credential::SignatureKeyPair;
 use openmls_memory_storage::MemoryStorage;
 use openmls_rust_crypto::RustCrypto;
 use openmls_traits::OpenMlsProvider;
+use zeroize::Zeroizing;
 
+use crate::archivio::{self, Catena, Legame, VoceCifrata, VoceRiletta, LUNGHEZZA_CHIAVE};
 use crate::deposito::{Deposito, Registro};
 use crate::errore::{formato, mls};
 use crate::ErroreNucleo;
 
 pub const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256;
+/// L'etichetta con cui si deriva la serratura del mazzo d'archivio (S2).
+/// Etichetta, contesto vuoto e 32 byte sono quelli di `serraturaArchivio` in
+/// `gruppo.ts`: i due lati devono derivare gli stessi byte.
 const ETICHETTA_ARCHIVIO: &str = "estia archive wrap v1";
+/// L'etichetta con cui si deriva la chiave che la catena guadagna a ogni
+/// rimozione (ADR 0052 §2): `chiaveDiRotazione` in `gruppo.ts`.
+const ETICHETTA_ROTAZIONE: &str = "estia archive chain v1";
 /// Il nome sotto cui il nucleo scrive il proprio stato nel deposito.
 const NOME_STATO: &str = "nucleo/mls";
-const VERSIONE_STATO: &[u8] = b"estia-nucleo-mls-1";
+/// La versione 2 aggiunge in coda le catene d'archivio. Uno stato della
+/// versione 1 si legge ancora: le sue conversazioni non hanno una catena, e la
+/// ricevono dal mazzo.
+const VERSIONE_STATO: &[u8] = b"estia-nucleo-mls-2";
+const VERSIONE_STATO_1: &[u8] = b"estia-nucleo-mls-1";
 
 /* ---------- il fornitore: RustCrypto e una MemoryStorage nostra ---------- */
 
@@ -103,6 +118,25 @@ pub enum Ricevuto {
     Uscito,
 }
 
+/// Il mazzo d'archivio com'è avvolto, e l'epoch della serratura che lo apre.
+/// È il blob che si deposita presso la casa che ordina: per lei è opaco.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct MazzoAvvolto {
+    pub mazzo: String,
+    pub epoch: u64,
+}
+
+/// Ciò che l'istanza dichiara accanto a una voce d'archivio: con la
+/// conversazione, è il legame con cui la voce si deve aprire (ADR 0052 §1).
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct Dichiarato {
+    pub id: String,
+    /// `username@casa` di chi l'istanza dice che ha scritto.
+    pub mittente: String,
+    /// La data com'è arrivata, carattere per carattere.
+    pub creato_il: String,
+}
+
 /* ---------- lo stato di un dispositivo ---------- */
 
 struct Stato {
@@ -110,6 +144,10 @@ struct Stato {
     membro: String,
     firma: SignatureKeyPair,
     conversazioni: BTreeSet<String>,
+    /// La catena d'archivio delle conversazioni di cui questo dispositivo ha
+    /// aperto il mazzo. Chi manca non è un guasto: è entrato o rientrato, e
+    /// aspetta il mazzo avvolto sotto la sua epoch. Finché manca non si scrive.
+    catene: BTreeMap<String, Catena>,
 }
 
 /// L'identità MLS di questo dispositivo e le sue conversazioni.
@@ -150,6 +188,18 @@ fn config_ingresso() -> MlsGroupJoinConfig {
         .build()
 }
 
+/// Le chiavi di firma delle foglie, com'è l'albero adesso.
+fn chiavi_delle_foglie(gruppo: &MlsGroup) -> Vec<Vec<u8>> {
+    gruppo.members().map(|m| m.signature_key).collect()
+}
+
+/// Fra due alberi consecutivi, qualche foglia è stata tolta? Si guarda la
+/// **chiave di firma**, non il posto, come `qualcunoTolto` in `gruppo.ts`: un
+/// rientro con la stessa chiave sostituisce la foglia e non toglie nessuno.
+fn qualcuno_tolto(prima: &[Vec<u8>], dopo: &[Vec<u8>]) -> bool {
+    prima.iter().any(|chiave| !dopo.contains(chiave))
+}
+
 fn sul_filo(m: &MlsMessageOut) -> Result<Vec<u8>, ErroreNucleo> {
     m.tls_serialize_detached().map_err(formato)
 }
@@ -168,8 +218,48 @@ impl Stato {
         .ok_or_else(|| ErroreNucleo::ConversazioneSconosciuta(id.to_string()))
     }
 
+    /// Un segreto dell'epoch corrente, dall'exporter di MLS: contesto vuoto e
+    /// 32 byte, come `mlsExporter` sul web. Non esce dal nucleo.
+    fn deriva(
+        &self,
+        gruppo: &MlsGroup,
+        etichetta: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, ErroreNucleo> {
+        gruppo
+            .export_secret(self.fornitore.crypto(), etichetta, &[], LUNGHEZZA_CHIAVE)
+            .map(Zeroizing::new)
+            .map_err(mls)
+    }
+
+    /// Dopo un commit, proprio o applicato: se ha tolto qualcuno, la catena
+    /// guadagna la chiave di **questa** epoch, la stessa per tutti quelli che
+    /// restano (ADR 0052 §2). Si chiama commit per commit, perché la chiave è
+    /// di quest'epoch e non della prossima. Chi non ha la catena non aggiunge
+    /// niente: la riceverà intera dal mazzo.
+    fn dopo_un_commit(
+        &mut self,
+        conversazione: &str,
+        prima: &[Vec<u8>],
+        gruppo: &MlsGroup,
+    ) -> Result<(), ErroreNucleo> {
+        if !qualcuno_tolto(prima, &chiavi_delle_foglie(gruppo)) {
+            return Ok(());
+        }
+        let Some(catena) = self.catene.get(conversazione) else {
+            return Ok(());
+        };
+        let nuova = self.deriva(gruppo, ETICHETTA_ROTAZIONE)?;
+        let ruotata = archivio::catena_ruotata(catena, Some(nuova.to_vec()))?;
+        self.catene.insert(conversazione.to_string(), ruotata);
+        Ok(())
+    }
+
     /* Il formato del deposito: versione, membro, chiave pubblica di firma,
-     * conversazioni, poi la MemoryStorage intera. Tutto con lunghezze u32. */
+     * conversazioni, la MemoryStorage intera, e dalla versione 2 le catene
+     * d'archivio (conversazione, poi le sue chiavi). Tutto con lunghezze u32.
+     *
+     * Le catene stanno in chiaro dentro questo blob, come le chiavi di MLS che
+     * gli stanno accanto: è l'app a sigillarlo nella sua cassaforte (S6). */
 
     fn scrivi(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -189,6 +279,14 @@ impl Stato {
         for (k, v) in valori.iter() {
             campo(k);
             campo(v);
+        }
+        campo(&(self.catene.len() as u32).to_be_bytes());
+        for (conversazione, catena) in &self.catene {
+            campo(conversazione.as_bytes());
+            campo(&(catena.lunghezza() as u32).to_be_bytes());
+            for chiave in catena.chiavi() {
+                campo(chiave);
+            }
         }
         out
     }
@@ -211,7 +309,8 @@ impl Stato {
         let numero = |b: Vec<u8>| -> Result<usize, ErroreNucleo> {
             Ok(u32::from_be_bytes(b.try_into().map_err(|_| rotto())?) as usize)
         };
-        if campo()? != VERSIONE_STATO {
+        let versione = campo()?;
+        if versione != VERSIONE_STATO && versione != VERSIONE_STATO_1 {
             return Err(rotto());
         }
         let membro = String::from_utf8(campo()?).map_err(|_| rotto())?;
@@ -224,6 +323,17 @@ impl Stato {
         for _ in 0..numero(campo()?)? {
             let k = campo()?;
             valori.insert(k, campo()?);
+        }
+        let mut catene = BTreeMap::new();
+        if versione == VERSIONE_STATO {
+            for _ in 0..numero(campo()?)? {
+                let conversazione = String::from_utf8(campo()?).map_err(|_| rotto())?;
+                let mut chiavi = Vec::new();
+                for _ in 0..numero(campo()?)? {
+                    chiavi.push(campo()?);
+                }
+                catene.insert(conversazione, Catena::da_chiavi(chiavi));
+            }
         }
         let fornitore = Fornitore {
             crypto: RustCrypto::default(),
@@ -242,6 +352,7 @@ impl Stato {
             membro,
             firma,
             conversazioni,
+            catene,
         })
     }
 }
@@ -280,11 +391,11 @@ impl Dispositivo {
     fn con_gruppo<T>(
         &self,
         conversazione: &str,
-        f: impl FnOnce(&Stato, &mut MlsGroup) -> Result<T, ErroreNucleo>,
+        f: impl FnOnce(&mut Stato, &mut MlsGroup) -> Result<T, ErroreNucleo>,
     ) -> Result<T, ErroreNucleo> {
-        let stato = self.stato.lock().unwrap();
+        let mut stato = self.stato.lock().unwrap();
         let mut gruppo = stato.gruppo(conversazione)?;
-        let esito = f(&stato, &mut gruppo)?;
+        let esito = f(&mut stato, &mut gruppo)?;
         self.salva(&stato)?;
         Ok(esito)
     }
@@ -323,6 +434,7 @@ impl Dispositivo {
                     membro,
                     firma,
                     conversazioni: BTreeSet::new(),
+                    catene: BTreeMap::new(),
                 }
             }
         };
@@ -375,8 +487,18 @@ impl Dispositivo {
         Ok(pacchetti)
     }
 
+    /// Crea la conversazione, e con lei la sua catena d'archivio: il mazzo
+    /// nasce qui e soltanto qui, perché chi crea il gruppo è l'unico che non
+    /// trova una cronologia da rispettare.
     pub fn crea_conversazione(&self, conversazione: String) -> Result<(), ErroreNucleo> {
         let mut stato = self.stato.lock().unwrap();
+        // Rifarla sostituirebbe la catena, e con lei la cronologia.
+        if stato.conversazioni.contains(&conversazione) {
+            return Err(ErroreNucleo::Formato(
+                "questa conversazione esiste già".into(),
+            ));
+        }
+        let catena = archivio::catena_nuova()?;
         MlsGroup::new_with_group_id(
             &stato.fornitore,
             &stato.firma,
@@ -385,6 +507,7 @@ impl Dispositivo {
             credenziale(&stato),
         )
         .map_err(mls)?;
+        stato.catene.insert(conversazione.clone(), catena);
         stato.conversazioni.insert(conversazione);
         self.salva(&stato)
     }
@@ -416,7 +539,8 @@ impl Dispositivo {
         })
     }
 
-    /// Toglie un membro, tutte le sue foglie.
+    /// Toglie un membro, tutte le sue foglie. La catena d'archivio guadagna
+    /// una chiave che chi esce non ottiene: non leggerà il seguito.
     pub fn rimuovi(
         &self,
         conversazione: String,
@@ -431,10 +555,13 @@ impl Dispositivo {
             if foglie.is_empty() {
                 return Err(ErroreNucleo::NonAutenticato(membro.clone()));
             }
+            let prima = chiavi_delle_foglie(gruppo);
             let (commit, _, _) = gruppo
                 .remove_members(&stato.fornitore, &stato.firma, &foglie)
                 .map_err(mls)?;
             gruppo.merge_pending_commit(&stato.fornitore).map_err(mls)?;
+            // Chi è stato tolto tiene le chiavi che aveva, e non ottiene questa.
+            stato.dopo_un_commit(&conversazione, &prima, gruppo)?;
             Ok(EsitoCommit {
                 commit: sul_filo(&commit)?,
                 epoch: gruppo.epoch().as_u64(),
@@ -475,6 +602,9 @@ impl Dispositivo {
         }
         let gruppo = in_attesa.into_group(&stato.fornitore).map_err(mls)?;
         let nome = String::from_utf8(gruppo.group_id().as_slice().to_vec()).map_err(formato)?;
+        // Chi entra non ha la catena, e una rimasta da prima non è più quella:
+        // arriva dal mazzo, con `apri_mazzo`.
+        stato.catene.remove(&nome);
         stato.conversazioni.insert(nome.clone());
         self.salva(&stato)?;
         Ok(nome)
@@ -517,6 +647,10 @@ impl Dispositivo {
             self.autentica(&m.credential, &m.signature_key)?;
         }
         let nome = String::from_utf8(gruppo.group_id().as_slice().to_vec()).map_err(formato)?;
+        // Si torna nel gruppo, non ancora nella cronologia (S3): il mazzo è
+        // avvolto sotto l'epoch di prima, e si riapre quando un altro membro
+        // applica questo commit e lo riavvolge.
+        stato.catene.remove(&nome);
         stato.conversazioni.insert(nome.clone());
         self.salva(&stato)?;
         Ok(EsitoRientro {
@@ -541,6 +675,7 @@ impl Dispositivo {
             .try_into_protocol_message()
             .map_err(formato)?;
         self.con_gruppo(&conversazione, |stato, gruppo| {
+            let prima = chiavi_delle_foglie(gruppo);
             let elaborato = gruppo
                 .process_message(&stato.fornitore, messaggio)
                 .map_err(mls)?;
@@ -563,6 +698,13 @@ impl Dispositivo {
                     gruppo
                         .merge_staged_commit(&stato.fornitore, *in_attesa)
                         .map_err(mls)?;
+                    if uscito {
+                        // Chi è stato tolto non legge il seguito e non scrive:
+                        // come sul web, la catena non resta su questo dispositivo.
+                        stato.catene.remove(&conversazione);
+                    } else {
+                        stato.dopo_un_commit(&conversazione, &prima, gruppo)?;
+                    }
                     Ok(if uscito {
                         Ricevuto::Uscito
                     } else {
@@ -607,14 +749,352 @@ impl Dispositivo {
     }
 }
 
+/* ---------- l'archivio ---------- */
+
+/// L'archivio della conversazione (ADR 0037, ADR 0052), visto dall'interfaccia.
+///
+/// L'interfaccia porta le buste: deposita le voci e il mazzo presso l'istanza
+/// e li va a riprendere. Non riceve mai una chiave, né la catena, né la
+/// serratura: si aprono e si chiudono qui dentro. Le regole sono quelle di
+/// `apps/web/src/mls/sessione.ts`, e chi le applica è il nucleo:
+///
+/// - la catena nasce con `crea_conversazione`, ruota da sola a ogni rimozione
+///   (in `rimuovi` e in `applica`), e si perde quando si viene tolti;
+/// - chi entra o rientra non ce l'ha finché non apre un mazzo con `apri_mazzo`;
+/// - **dopo ogni cambio di epoch** l'app chiede `mazzo_avvolto` e lo deposita.
+///   Chi non conosce la catena riceve `None` e non deposita niente:
+///   riavvolgere un mazzo che non si conosce lo sostituirebbe.
+#[uniffi::export]
+impl Dispositivo {
+    /// Questo dispositivo ha aperto il mazzo della conversazione? Finché è
+    /// `false` non si scrive, e le voci non si aprono.
+    pub fn ha_archivio(&self, conversazione: String) -> bool {
+        self.stato
+            .lock()
+            .unwrap()
+            .catene
+            .contains_key(&conversazione)
+    }
+
+    /// Il mazzo avvolto sotto l'epoch corrente, da depositare presso
+    /// l'istanza. `None` se questo dispositivo non conosce la catena, o non è
+    /// più nel gruppo.
+    pub fn mazzo_avvolto(
+        &self,
+        conversazione: String,
+    ) -> Result<Option<MazzoAvvolto>, ErroreNucleo> {
+        let stato = self.stato.lock().unwrap();
+        let gruppo = stato.gruppo(&conversazione)?;
+        let Some(catena) = stato.catene.get(&conversazione) else {
+            return Ok(None);
+        };
+        if !gruppo.is_active() {
+            return Ok(None);
+        }
+        let serratura = stato.deriva(&gruppo, ETICHETTA_ARCHIVIO)?;
+        Ok(Some(MazzoAvvolto {
+            mazzo: archivio::avvolgi(catena, &serratura)?,
+            epoch: gruppo.epoch().as_u64(),
+        }))
+    }
+
+    /// Apre il mazzo che l'istanza custodisce, con la serratura dell'epoch in
+    /// cui si è. Dice se, dopo, questo dispositivo ha la catena.
+    ///
+    /// Un mazzo di un'altra epoch, o che non si apre, non cambia niente e non
+    /// è un errore: è il dispositivo appena rientrato, che aspetta che un
+    /// altro lo riavvolga. **Non si crea mai un mazzo nuovo qui.**
+    ///
+    /// Chi la catena ce l'ha già la cambia soltanto se quella trovata la
+    /// **allunga**: così arriva una chiave aggiunta a mano da un altro, e un
+    /// mazzo riavvolto da chi era rimasto indietro non toglie chiavi a nessuno.
+    pub fn apri_mazzo(
+        &self,
+        conversazione: String,
+        avvolto: MazzoAvvolto,
+    ) -> Result<bool, ErroreNucleo> {
+        let mut stato = self.stato.lock().unwrap();
+        let gruppo = stato.gruppo(&conversazione)?;
+        let nota = stato.catene.contains_key(&conversazione);
+        if !gruppo.is_active() || gruppo.epoch().as_u64() != avvolto.epoch {
+            return Ok(nota);
+        }
+        let serratura = stato.deriva(&gruppo, ETICHETTA_ARCHIVIO)?;
+        let Ok(trovata) = archivio::svolgi(&avvolto.mazzo, &serratura) else {
+            return Ok(nota);
+        };
+        if trovata.lunghezza() == 0 {
+            return Ok(nota);
+        }
+        let si_adotta = match stato.catene.get(&conversazione) {
+            None => true,
+            Some(mia) => mia.e_allungata_da(&trovata),
+        };
+        if si_adotta {
+            stato.catene.insert(conversazione, trovata);
+            self.salva(&stato)?;
+        }
+        Ok(true)
+    }
+
+    /// Ricifra un testo per l'archivio della propria casa: è tutto l'invio
+    /// (ADR 0043 §2). La voce è legata a questa conversazione, all'`id` e alla
+    /// data che l'app deposita con lei, e a chi scrive.
+    ///
+    /// **Chi scrive lo dice la propria foglia, non un parametro**: è
+    /// l'identità che il gruppo ha autenticato, ed è quella che la casa
+    /// dichiarerà accanto alla voce.
+    ///
+    /// Senza catena non si scrive: una voce chiusa con una chiave che nessun
+    /// altro ha sarebbe un messaggio che nessuno legge, mostrato come mandato.
+    pub fn archivia(
+        &self,
+        conversazione: String,
+        testo: String,
+        id: String,
+        creato_il: String,
+    ) -> Result<VoceCifrata, ErroreNucleo> {
+        let stato = self.stato.lock().unwrap();
+        let gruppo = stato.gruppo(&conversazione)?;
+        let io = gruppo
+            .own_leaf_node()
+            .filter(|_| gruppo.is_active())
+            .ok_or(ErroreNucleo::FuoriDalGruppo)?;
+        let mittente = String::from_utf8(io.credential().serialized_content().to_vec())
+            .map_err(|_| ErroreNucleo::FuoriDalGruppo)?;
+        let catena = stato
+            .catene
+            .get(&conversazione)
+            .ok_or(ErroreNucleo::SenzaArchivio)?;
+        Ok(archivio::archivia_legata(
+            catena,
+            &testo,
+            &Legame {
+                conversazione_id: conversazione,
+                id,
+                mittente,
+                creato_il,
+            },
+        )?)
+    }
+
+    /// Rilegge una voce della cronologia. `dichiarato` è ciò che l'istanza
+    /// dice della voce; manca per il pregresso senza autore attestato.
+    ///
+    /// `None` quando la voce non si apre: perché questo dispositivo non ha la
+    /// chiave, o perché ciò che l'istanza dichiara non è ciò che chi ha
+    /// scritto ha sigillato. È uno stato da mostrare, mai un testo. Con
+    /// `legata: false` la voce è di prima del legame, e mittente e orario
+    /// restano la parola dell'istanza.
+    pub fn rileggi(
+        &self,
+        conversazione: String,
+        voce: VoceCifrata,
+        dichiarato: Option<Dichiarato>,
+    ) -> Option<VoceRiletta> {
+        let stato = self.stato.lock().unwrap();
+        let catena = stato.catene.get(&conversazione)?;
+        let legame = dichiarato.map(|d| Legame {
+            conversazione_id: conversazione.clone(),
+            id: d.id,
+            mittente: d.mittente,
+            creato_il: d.creato_il,
+        });
+        archivio::rileggi_legata(catena, &voce, legame.as_ref())
+    }
+}
+
 impl Dispositivo {
     /// La serratura del mazzo d'archivio (S2). Non è esportata a Swift e
-    /// Kotlin: il mazzo si apre qui dentro, quando il nucleo avrà l'archivio.
+    /// Kotlin: il mazzo si apre e si chiude qui dentro, con `apri_mazzo` e
+    /// `mazzo_avvolto`.
     pub fn serratura_archivio(&self, conversazione: &str) -> Result<Vec<u8>, ErroreNucleo> {
         let stato = self.stato.lock().unwrap();
-        stato
-            .gruppo(conversazione)?
-            .export_secret(stato.fornitore.crypto(), ETICHETTA_ARCHIVIO, &[], 32)
-            .map_err(mls)
+        let gruppo = stato.gruppo(conversazione)?;
+        Ok(stato.deriva(&gruppo, ETICHETTA_ARCHIVIO)?.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod prove {
+    //! Ciò che dell'archivio si vede soltanto da dentro: il formato dello
+    //! stato, e che cosa succede alla catena davanti a un mazzo diverso.
+
+    use super::*;
+
+    #[derive(Default)]
+    struct DepositoInMemoria(Mutex<HashMap<String, Vec<u8>>>);
+
+    impl Deposito for DepositoInMemoria {
+        fn leggi(&self, nome: String) -> Result<Option<Vec<u8>>, ErroreNucleo> {
+            Ok(self.0.lock().unwrap().get(&nome).cloned())
+        }
+        fn scrivi(&self, nome: String, dati: Vec<u8>) -> Result<(), ErroreNucleo> {
+            self.0.lock().unwrap().insert(nome, dati);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RegistroInMemoria(Mutex<HashMap<String, Vec<Vec<u8>>>>);
+
+    impl Registro for RegistroInMemoria {
+        fn chiavi_di_firma(&self, membro: String) -> Result<Vec<Vec<u8>>, ErroreNucleo> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .get(&membro)
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    const C: &str = "conv-1";
+
+    fn dispositivo(
+        registro: &Arc<RegistroInMemoria>,
+        membro: &str,
+    ) -> (Arc<Dispositivo>, Arc<DepositoInMemoria>) {
+        let deposito = Arc::new(DepositoInMemoria::default());
+        let d = Dispositivo::apri(membro.into(), deposito.clone(), registro.clone()).unwrap();
+        registro
+            .0
+            .lock()
+            .unwrap()
+            .entry(membro.into())
+            .or_default()
+            .push(d.chiave_di_firma());
+        (d, deposito)
+    }
+
+    fn catena_di(d: &Dispositivo) -> Vec<Vec<u8>> {
+        d.stato.lock().unwrap().catene[C].chiavi().to_vec()
+    }
+
+    fn impone(d: &Dispositivo, chiavi: Vec<Vec<u8>>) {
+        d.stato
+            .lock()
+            .unwrap()
+            .catene
+            .insert(C.into(), Catena::da_chiavi(chiavi));
+    }
+
+    #[test]
+    fn uno_stato_della_versione_1_si_apre_e_aspetta_il_mazzo() {
+        let registro = Arc::new(RegistroInMemoria::default());
+        let (anna, deposito) = dispositivo(&registro, "anna@casa");
+        anna.crea_conversazione(C.into()).unwrap();
+
+        // Lo stato com'era prima delle catene: la versione 1, senza la coda.
+        let vecchio = {
+            let mut stato = anna.stato.lock().unwrap();
+            stato.catene.clear();
+            let mut byte = stato.scrivi();
+            byte.truncate(byte.len() - 8);
+            let dove = 4 + VERSIONE_STATO.len() - 1;
+            assert_eq!(byte[dove], b'2');
+            byte[dove] = b'1';
+            byte
+        };
+        drop(anna);
+        deposito.scrivi(NOME_STATO.into(), vecchio).unwrap();
+
+        let riaperta =
+            Dispositivo::apri("anna@casa".into(), deposito.clone(), registro.clone()).unwrap();
+        assert_eq!(riaperta.conversazioni(), vec![C.to_string()]);
+        assert_eq!(riaperta.epoch(C.into()).unwrap(), 0);
+        // Niente catena, e nessuna inventata: arriverà da un mazzo.
+        assert!(!riaperta.ha_archivio(C.into()));
+        assert_eq!(riaperta.mazzo_avvolto(C.into()).unwrap(), None);
+        // Riaprendo, lo stato è stato riscritto nella versione nuova.
+        let scritto = deposito.leggi(NOME_STATO.into()).unwrap().unwrap();
+        assert_eq!(&scritto[4..4 + VERSIONE_STATO.len()], VERSIONE_STATO);
+    }
+
+    #[test]
+    fn uno_stato_troncato_o_di_un_altra_versione_non_si_apre() {
+        let registro = Arc::new(RegistroInMemoria::default());
+        let (anna, deposito) = dispositivo(&registro, "anna@casa");
+        anna.crea_conversazione(C.into()).unwrap();
+        let buono = deposito.leggi(NOME_STATO.into()).unwrap().unwrap();
+
+        let mut troncato = buono.clone();
+        troncato.truncate(buono.len() - 5);
+        let mut altra = buono.clone();
+        altra[4 + VERSIONE_STATO.len() - 1] = b'3';
+        for rotto in [troncato, altra] {
+            assert!(matches!(
+                Stato::leggi(&rotto),
+                Err(ErroreNucleo::Deposito(_))
+            ));
+        }
+        assert!(Stato::leggi(&buono).is_ok());
+    }
+
+    #[test]
+    fn un_mazzo_allunga_la_catena_e_non_la_accorcia_mai() {
+        let registro = Arc::new(RegistroInMemoria::default());
+        let (anna, _) = dispositivo(&registro, "anna@casa");
+        let (bruno, _) = dispositivo(&registro, "bruno@casa");
+        anna.crea_conversazione(C.into()).unwrap();
+        let e = anna
+            .aggiungi(C.into(), bruno.nuovi_pacchetti(1).unwrap().remove(0))
+            .unwrap();
+        bruno.entra(e.welcome).unwrap();
+        let mazzo = |d: &Dispositivo| d.mazzo_avvolto(C.into()).unwrap().unwrap();
+        assert!(bruno.apri_mazzo(C.into(), mazzo(&anna)).unwrap());
+        let prima = catena_di(&anna);
+        assert_eq!(catena_di(&bruno), prima);
+
+        // bruno ha una chiave in più (una rotazione a mano, dal web): anna,
+        // che ha la catena di prima, la riceve dal mazzo.
+        let allungata = vec![prima[0].clone(), vec![7; 32]];
+        impone(&bruno, allungata.clone());
+        assert!(anna.apri_mazzo(C.into(), mazzo(&bruno)).unwrap());
+        assert_eq!(catena_di(&anna), allungata);
+
+        // Un mazzo rimasto indietro non le toglie niente.
+        impone(&bruno, prima.clone());
+        assert!(anna.apri_mazzo(C.into(), mazzo(&bruno)).unwrap());
+        assert_eq!(catena_di(&anna), allungata);
+
+        // E nemmeno uno che dice un'altra cosa allo stesso posto, o uno vuoto.
+        impone(&bruno, vec![prima[0].clone(), vec![9; 32], vec![9; 32]]);
+        assert!(anna.apri_mazzo(C.into(), mazzo(&bruno)).unwrap());
+        assert_eq!(catena_di(&anna), allungata);
+        impone(&bruno, vec![]);
+        assert!(anna.apri_mazzo(C.into(), mazzo(&bruno)).unwrap());
+        assert_eq!(catena_di(&anna), allungata);
+    }
+
+    #[test]
+    fn un_mazzo_vuoto_non_e_una_catena() {
+        let registro = Arc::new(RegistroInMemoria::default());
+        let (anna, _) = dispositivo(&registro, "anna@casa");
+        let (bruno, _) = dispositivo(&registro, "bruno@casa");
+        anna.crea_conversazione(C.into()).unwrap();
+        let e = anna
+            .aggiungi(C.into(), bruno.nuovi_pacchetti(1).unwrap().remove(0))
+            .unwrap();
+        bruno.entra(e.welcome).unwrap();
+        impone(&anna, vec![]);
+        let vuoto = anna.mazzo_avvolto(C.into()).unwrap().unwrap();
+        assert!(!bruno.apri_mazzo(C.into(), vuoto).unwrap());
+        assert!(!bruno.ha_archivio(C.into()));
+    }
+
+    #[test]
+    fn le_due_etichette_non_danno_lo_stesso_segreto() {
+        let registro = Arc::new(RegistroInMemoria::default());
+        let (anna, _) = dispositivo(&registro, "anna@casa");
+        anna.crea_conversazione(C.into()).unwrap();
+        let stato = anna.stato.lock().unwrap();
+        let gruppo = stato.gruppo(C).unwrap();
+        let serratura = stato.deriva(&gruppo, ETICHETTA_ARCHIVIO).unwrap();
+        let rotazione = stato.deriva(&gruppo, ETICHETTA_ROTAZIONE).unwrap();
+        assert_eq!(serratura.len(), 32);
+        assert_eq!(rotazione.len(), 32);
+        assert_ne!(*serratura, *rotazione);
     }
 }

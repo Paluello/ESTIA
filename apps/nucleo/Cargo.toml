@@ -26,6 +26,12 @@ openmls_rust_crypto = "=0.6.0"
 openmls_basic_credential = "=0.6.0"
 openmls_memory_storage = "=0.6.0"
 openmls_traits = "=0.6.0"
+# L'archivio (src/archivio.rs): le stesse primitive RustCrypto che OpenMLS usa
+# già, MIT o Apache-2.0.
+aes-gcm = "0.10"
+base64 = "0.22"
+getrandom = "0.2"
+zeroize = "1"
 thiserror = "2"
 uniffi = { version = "0.29", features = ["tokio"] }
 # Il filo verso la Casa, le stesse versioni di apps/app (ADR 0044).
