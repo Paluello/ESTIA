@@ -455,8 +455,14 @@ export const api = {
       { token },
     ),
 
-  getPublicComment: (_instanceKey: string, commentId: string): Promise<{ body: string }> =>
-    request<{ body: string }>(`/api/v1/public/comments/${encodeURIComponent(commentId)}`),
+  getPublicComment: (
+    token: string,
+    _instanceKey: string,
+    commentId: string,
+  ): Promise<{ body: string }> =>
+    request<{ body: string }>(`/api/v1/public/comments/${encodeURIComponent(commentId)}`, {
+      token,
+    }),
 
   notifiche: (
     token: string,

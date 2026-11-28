@@ -375,11 +375,29 @@ export class FeedService {
     return [...locale, ...remote].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
-  public getPublicComment(commentId: string): { body: string } | undefined {
+  /**
+   * Il testo di un commento, per un membro che lo può leggere.
+   *
+   * Era senza sessione e senza controllo del post: bastava l'id, che viaggia
+   * nei puntatori della federazione, per leggere il testo di qualunque
+   * commento, anche sotto un post solo per la casa (revisione interna,
+   * 2026-11-27). Un commento sotto un post di qui segue il permesso del post;
+   * uno sotto un post di un'altra casa lo leggono i membri di qui.
+   */
+  public getPublicComment(
+    caller: AuthenticatedUser,
+    commentId: string,
+  ): { body: string } | undefined {
     const comment = this.comments.find(commentId);
     if (comment === undefined || comment.deletedAt !== null || comment.hiddenAt !== null) {
       return undefined;
     }
+
+    const postDiQui = this.posts.findForModeration(comment.postId, caller.id) !== undefined;
+    if (postDiQui && this.posts.find(comment.postId, caller) === undefined) {
+      return undefined;
+    }
+
     return { body: comment.body };
   }
 

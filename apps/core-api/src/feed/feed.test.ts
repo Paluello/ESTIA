@@ -757,6 +757,34 @@ describe("il permesso di leggere un post", () => {
     });
   });
 
+  /**
+   * Revisione interna, 2026-11-27: il testo di un commento si leggeva per id
+   * senza sessione e senza guardare il post.
+   */
+  it("non dà il testo di un commento per id a chi non ha sessione o non può leggere il post", async () => {
+    await withFeed(async ({ app, token }) => {
+      const riservato = (await post(app, token.anna, "Solo per chi mi segue.", "followers")).json();
+      const commento = (
+        await app.inject({
+          headers: bearer(token.anna),
+          method: "POST",
+          payload: { body: "Un commento riservato" },
+          url: `/api/v1/posts/${riservato.id}/comments`,
+        })
+      ).json();
+      const url = `/api/v1/public/comments/${commento.id}`;
+
+      expect((await app.inject({ method: "GET", url })).statusCode).toBe(401);
+      expect(
+        (await app.inject({ headers: bearer(token.marco), method: "GET", url })).statusCode,
+      ).toBe(404);
+
+      const suo = await app.inject({ headers: bearer(token.anna), method: "GET", url });
+      expect(suo.statusCode).toBe(200);
+      expect(suo.json().body).toBe("Un commento riservato");
+    });
+  });
+
   it("lo concede a chi l'autore ha accettato, e all'autore", async () => {
     await withFeed(async ({ app, token }) => {
       const riservato = (await post(app, token.anna, "Solo per chi mi segue.", "followers")).json();

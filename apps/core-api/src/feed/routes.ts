@@ -381,6 +381,7 @@ export function registerFeedRoutes(
   app.get<{ Params: { id: string }; Reply: { body: string } | ErrorResponse }>(
     "/api/v1/public/comments/:id",
     {
+      preHandler: asMember,
       schema: {
         params: idParamSchema,
         response: {
@@ -395,7 +396,7 @@ export function registerFeedRoutes(
       },
     },
     async (request) => {
-      const comment = services.feed.getPublicComment(request.params.id);
+      const comment = services.feed.getPublicComment(request.caller!.user, request.params.id);
       if (comment === undefined) {
         throw new DomainError("comment_not_found", 404);
       }

@@ -23,6 +23,7 @@ const deposito = inApp() ? depositoCassaforte : depositoIndexedDb;
 import {
   dimentica,
   esisteIdentita,
+  materialeDiAltri,
   preparaDispositivo,
   ripristinaDaPassphrase,
   salvaSottoPassphrase,
@@ -66,8 +67,19 @@ async function contestoDispositivo(token: string): Promise<ContestoDispositivo> 
   return { anagrafe: anagrafeSuApi(token), casa, cassetto };
 }
 
+/**
+ * Svuota il cassetto e lo stato dei gruppi se sono di un'altra persona o di
+ * un'altra casa. Si guarda a ogni accesso, prima di leggere qualunque cosa.
+ */
+async function scartaSeDiAltri(dispositivo: ContestoDispositivo, username: string): Promise<void> {
+  if (await materialeDiAltri(dispositivo.cassetto, { casa: dispositivo.casa, username })) {
+    await dimentica(dispositivo.cassetto, deposito);
+  }
+}
+
 async function prepara(token: string, username: string): Promise<ContestoChat> {
   const dispositivo = await contestoDispositivo(token);
+  await scartaSeDiAltri(dispositivo, username);
   const pronto = await preparaDispositivo(dispositivo, username);
 
   return {
@@ -94,6 +106,8 @@ export async function statoAllAccesso(
   token: string,
   username: string,
 ): Promise<"pronto" | "da-ripristinare"> {
+  await scartaSeDiAltri(await contestoDispositivo(token), username);
+
   if (await esisteIdentita(cassetto)) {
     await contestoChat(token, username);
     return "pronto";
