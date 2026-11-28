@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { InstanceEndpoint } from "../federation/endpoint.js";
+import { InstanceEndpoint, type IrohConnection } from "../federation/endpoint.js";
 
 import { NetworkProbe } from "./probe.js";
 
@@ -200,4 +200,49 @@ describe("the network probe", () => {
       await probe.close();
     }
   }, 30_000);
+});
+
+/**
+ * Revisione interna, 2026-11-27: anybody can dial the probe, connected or not,
+ * and a connection that never opened a stream stayed open with no end.
+ */
+describe("the probe's limits", () => {
+  function silent(): IrohConnection & { closed: boolean } {
+    const state = { closed: false };
+
+    return Object.assign(state, {
+      acceptBi: () => new Promise<never>(() => undefined),
+      close: () => {
+        state.closed = true;
+      },
+      openBi: () => new Promise<never>(() => undefined),
+      paths: () => [],
+      remoteId: () => ({ toString: () => "chiunque" }),
+    });
+  }
+
+  it("closes a connection that never asks for its echo", async () => {
+    const probe = new NetworkProbe(new InstanceEndpoint(aKey()), { timeoutMs: 20 });
+    const connection = silent();
+
+    await probe.serve(connection);
+
+    expect(connection.closed).toBe(true);
+  });
+
+  it("closes at once what goes beyond the probes it serves together", async () => {
+    const probe = new NetworkProbe(new InstanceEndpoint(aKey()), {
+      concurrent: 2,
+      timeoutMs: 200,
+    });
+    const first = [silent(), silent()];
+    const served = first.map((connection) => probe.serve(connection));
+    const third = silent();
+
+    await probe.serve(third);
+
+    expect(third.closed).toBe(true);
+    expect(first.every((connection) => !connection.closed)).toBe(true);
+    await Promise.all(served);
+  });
 });
