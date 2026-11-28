@@ -5,6 +5,7 @@ import { detto, frase } from "../frasi.js";
 
 import type { AlpnService, InstanceEndpoint, IrohConnection } from "./endpoint.js";
 import { RemoteBudgets, type BudgetLevel } from "./limits.js";
+import { parseRelaySuggestion } from "./relays.js";
 import {
   MAX_BACHECA_BYTES,
   MAX_BACHECA_NAMES,
@@ -360,6 +361,19 @@ export interface SegnalazioniDirectory {
   replicaPerLaRete(): { testo: string; mese: string } | undefined;
 }
 
+/**
+ * I relay della comunità visti dalla federazione (ADR 0045 §3): che cosa
+ * suggerire alle Case collegate, e dove mettere ciò che suggeriscono loro.
+ */
+export interface RelaySuggestions {
+  daSuggerire(): { url: string; gestore: string } | undefined;
+  suggerito(input: {
+    publicKey: string;
+    casa: string;
+    relay?: { url: string; gestore: string } | undefined;
+  }): void;
+}
+
 export interface FederationServiceOptions {
   remotes: RemoteInstanceRepository;
   /** Absent until profiles exist; then the two request types start answering. */
@@ -425,6 +439,7 @@ export class FederationService implements AlpnService {
   #boards: BoardDirectory | undefined;
   #messaggi: MessaggiDirectory | undefined;
   #segnalazioni: SegnalazioniDirectory | undefined;
+  #relays: RelaySuggestions | undefined;
 
   /** Open connections by remote key, so that blocking can close them at once. */
   readonly #open = new Map<string, Set<IrohConnection>>();
@@ -464,6 +479,11 @@ export class FederationService implements AlpnService {
 
   public useMessaggi(messaggi: MessaggiDirectory): void {
     this.#messaggi = messaggi;
+  }
+
+  /** Come gli altri: la mappa dei relay nasce dopo di qui. */
+  public useRelays(relays: RelaySuggestions): void {
+    this.#relays = relays;
   }
 
   // --- Chi è chi -----------------------------------------------------------
@@ -636,7 +656,16 @@ export class FederationService implements AlpnService {
         this.#remotes.markSeen({ at, declaredName: request.nome, publicKey: remoteKey });
       }
 
-      return { nome: this.#instanceName(), ok: true, stato: view };
+      // Il relay si dice solo a chi è collegata: a una sconosciuta direbbe
+      // dove cercare questa Casa, che è più di quanto ADR 0020 le conceda.
+      const relay = view === "collegata" ? this.#relays?.daSuggerire() : undefined;
+
+      return {
+        nome: this.#instanceName(),
+        ok: true,
+        stato: view,
+        ...(relay === undefined ? {} : { relay }),
+      };
     }
 
     if (request.tipo === "collegamento") {
@@ -2607,12 +2636,22 @@ export class FederationService implements AlpnService {
       const at = this.#now().toISOString();
 
       // Keyed by who answered, not by what was typed.
-      if (this.#remotes.findByKey(remoteKey) !== undefined) {
+      const record = this.#remotes.findByKey(remoteKey);
+      if (record !== undefined) {
         this.#remotes.markSeen({
           at,
           publicKey: remoteKey,
           via,
           ...(declaredName === undefined ? {} : { declaredName }),
+        });
+      }
+
+      // Il suggerimento di un relay conta solo da una Casa collegata (§3).
+      if (this.#relays !== undefined && record?.state === "collegata") {
+        this.#relays.suggerito({
+          publicKey: remoteKey,
+          casa: declaredName ?? record.declaredName,
+          relay: parseRelaySuggestion((response as { relay?: unknown }).relay),
         });
       }
 

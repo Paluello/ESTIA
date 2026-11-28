@@ -3555,10 +3555,22 @@ export interface CommunityRelayView {
   controllatoIl?: string;
 }
 
+export interface CommunityRelaySuggestion {
+  url: string;
+  gestore: string;
+  /** Il nome che la Casa amica dà a sé stessa: dichiarato, mai verificato. */
+  casa: string;
+}
+
 export interface CommunityRelaysView {
   /** False quando la rete non è su «internet»: lì non si usano relay. */
   attivi: boolean;
   relays: CommunityRelayView[];
+  /**
+   * I relay che le Case collegate dicono di usare, e che questa non ha ancora
+   * adottato (ADR 0045 §3). Si adottano con un gesto, mai da soli.
+   */
+  suggeriti: CommunityRelaySuggestion[];
   /** Il relay attraverso cui la Casa si fa trovare adesso, se c'è. */
   inUso?: string;
   /** True quando nessun adottato risponde e la Casa sta usando n0. */
@@ -3582,10 +3594,23 @@ const communityRelaySchema = {
 export const communityRelaysViewSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["attivi", "relays", "ripiegoSuN0", "massimo"],
+  required: ["attivi", "relays", "suggeriti", "ripiegoSuN0", "massimo"],
   properties: {
     attivi: { type: "boolean" },
     relays: { type: "array", items: communityRelaySchema },
+    suggeriti: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url", "gestore", "casa"],
+        properties: {
+          url: { type: "string" },
+          gestore: { type: "string" },
+          casa: { type: "string" },
+        },
+      },
+    },
     inUso: { type: "string" },
     ripiegoSuN0: { type: "boolean" },
     massimo: { type: "integer", minimum: 1 },

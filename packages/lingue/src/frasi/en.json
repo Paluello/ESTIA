@@ -1353,5 +1353,9 @@
   "relay.adotto": "Adopting…",
   "relay.adottato": "Relay adopted. Your House uses it from now on, if it answers.",
   "relay.adotta_fallito": "I could not adopt the relay.",
-  "relay.carica_fallito": "I could not read your House's relays."
+  "relay.carica_fallito": "I could not read your House's relays.",
+  "relay.suggeriti.titolo": "Suggested by connected Houses",
+  "relay.suggerito": "{casa} uses this relay",
+  "relay.suggerito.nota": "Run by {gestore}, according to {casa}. It is adopted only if you choose to: it never happens on its own.",
+  "relay.adotta_suggerito": "Adopt {gestore}'s relay"
 }

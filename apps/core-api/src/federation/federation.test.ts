@@ -152,6 +152,38 @@ describe("il protocollo fra istanze", () => {
     });
   }, 30_000);
 
+  it("una Casa collegata dice il suo relay, una sconosciuta no (ADR 0045 §3)", async () => {
+    await dueCase(async (a, b) => {
+      const ricevuti: Array<{ publicKey: string; casa: string; relay?: unknown }> = [];
+      a.federation.useRelays({
+        daSuggerire: () => undefined,
+        suggerito: (input) => ricevuti.push(input),
+      });
+      b.federation.useRelays({
+        daSuggerire: () => ({ url: "https://relay.circolo.example/", gestore: "Luca" }),
+        suggerito: () => undefined,
+      });
+
+      // Prima del collegamento: a una sconosciuta non si dice dove cercarci.
+      await a.federation.ping(b.endpoint.ticket ?? "");
+      expect(ricevuti).toEqual([]);
+
+      await a.federation.requestConnection(b.endpoint.ticket ?? "");
+      await b.federation.accept(a.endpoint.endpointId ?? "");
+      await a.federation.requestConnection(b.endpoint.ticket ?? "");
+      expect(a.federation.list()[0]?.state).toBe("collegata");
+
+      await a.federation.ping(b.endpoint.ticket ?? "");
+      expect(ricevuti).toEqual([
+        {
+          casa: "Via Milano",
+          publicKey: b.endpoint.endpointId,
+          relay: { gestore: "Luca", url: "https://relay.circolo.example/" },
+        },
+      ]);
+    });
+  }, 30_000);
+
   it("di una sconosciuta non scrive niente su disco", async () => {
     await dueCase(async (a, b) => {
       // Presentarsi è l'unica cosa che una sconosciuta può fare, e non lascia

@@ -1,4 +1,8 @@
-import type { CommunityRelaysView, CommunityRelayView } from "@estia/contracts";
+import type {
+  CommunityRelaySuggestion,
+  CommunityRelaysView,
+  CommunityRelayView,
+} from "@estia/contracts";
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../../api.js";
@@ -18,6 +22,11 @@ import { Alert, Button, ListRow, TextField, type Tone } from "../../../ui/index.
  * **Lo stato si legge senza premere niente**: ogni riga dice se il relay
  * risponde, e in cima c'è quale relay la Casa usa adesso e se è tornata su n0
  * perché tutti tacciono (euristica 1).
+ *
+ * **Un suggerimento resta un suggerimento** (§3): le Case collegate dicono
+ * quale relay usano e chi lo gestisce, la scheda lo mostra con il nome della
+ * Casa, e lo si adotta solo premendo. Lo stesso avviso del modulo sta sopra il
+ * pulsante, perché adottare da qui è adottare come a mano.
  *
  * Senza relay adottati non cambia niente, e la scheda lo dice: è la Casa di
  * sempre, con i relay di n0.
@@ -53,6 +62,22 @@ export function RelayComunita({ token }: { token: string }): React.ReactElement 
       setVista(nuova);
       setIndirizzo("");
       setGestore("");
+      setAvviso({ testo: t("relay.adottato"), tono: "ok" });
+    } catch (causa) {
+      setAvviso({ testo: spiega(causa, t("relay.adotta_fallito")), tono: "error" });
+    } finally {
+      setLavoro(undefined);
+    }
+  };
+
+  const adottaSuggerito = async (suggerito: CommunityRelaySuggestion): Promise<void> => {
+    setAvviso(undefined);
+    setLavoro(`suggerito:${suggerito.url}`);
+
+    try {
+      setVista(
+        await api.adoptCommunityRelay(token, { gestore: suggerito.gestore, url: suggerito.url }),
+      );
       setAvviso({ testo: t("relay.adottato"), tono: "ok" });
     } catch (causa) {
       setAvviso({ testo: spiega(causa, t("relay.adotta_fallito")), tono: "error" });
@@ -124,6 +149,40 @@ export function RelayComunita({ token }: { token: string }): React.ReactElement 
                 title={<code>{relay.url}</code>}
               />
             ))
+          )}
+
+          {vista.suggeriti.length > 0 && vista.relays.length < vista.massimo && (
+            <>
+              <h3 className="gruppo">{t("relay.suggeriti.titolo")}</h3>
+              {vista.suggeriti.map((suggerito) => (
+                <div key={`${suggerito.casa}:${suggerito.url}`}>
+                  <ListRow
+                    icon="globe"
+                    note={t("relay.suggerito.nota", {
+                      casa: suggerito.casa,
+                      gestore: suggerito.gestore,
+                    })}
+                    title={
+                      <>
+                        {t("relay.suggerito", { casa: suggerito.casa })} ·{" "}
+                        <code>{suggerito.url}</code>
+                      </>
+                    }
+                  />
+                  <Alert>{t("relay.prima_di_adottare", { gestore: suggerito.gestore })}</Alert>
+                  <Button
+                    aria-busy={lavoro === `suggerito:${suggerito.url}`}
+                    disabled={occupato}
+                    onClick={() => void adottaSuggerito(suggerito)}
+                    variant="secondary"
+                  >
+                    {lavoro === `suggerito:${suggerito.url}`
+                      ? t("relay.adotto")
+                      : t("relay.adotta_suggerito", { gestore: suggerito.gestore })}
+                  </Button>
+                </div>
+              ))}
+            </>
           )}
 
           {vista.relays.length < vista.massimo && (
