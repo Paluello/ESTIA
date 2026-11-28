@@ -105,6 +105,17 @@ function toRecord(row: Row): ProfileRecord {
   };
 }
 
+/**
+ * Il termine cercato come pezzo di nome: `%` e `_` lì dentro sono lettere da
+ * trovare, non «qualunque cosa». Un nome con il trattino basso si cerca così.
+ */
+function contiene(term: string): string {
+  return `%${term
+    .trim()
+    .toLowerCase()
+    .replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
 export class SqliteProfileRepository implements ProfileRepository {
   public constructor(private readonly database: DatabaseSync) {}
 
@@ -142,10 +153,10 @@ export class SqliteProfileRepository implements ProfileRepository {
   }
 
   public searchMembers(term: string, limit: number): ProfileRecord[] {
-    const like = `%${term.trim().toLowerCase()}%`;
+    const like = contiene(term);
     const rows = this.database
       .prepare(
-        `${SELECT} AND (LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)
+        `${SELECT} AND (LOWER(u.username) LIKE ? ESCAPE '\\' OR LOWER(u.display_name) LIKE ? ESCAPE '\\')
          ORDER BY u.username LIMIT ?`,
       )
       .all(like, like, limit) as Row[];
@@ -156,11 +167,11 @@ export class SqliteProfileRepository implements ProfileRepository {
   public searchPublic(term: string, limit: number): ProfileRecord[] {
     // Chi è in EstiaNet compare in ricerca; privato/pubblico decide i post sul
     // profilo, non l'elenco (ADR 0018).
-    const like = `%${term.trim().toLowerCase()}%`;
+    const like = contiene(term);
     const rows = this.database
       .prepare(
         `${SELECT} AND p.presence IN ('presente_privato', 'presente_pubblico')
-                   AND (LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)
+                   AND (LOWER(u.username) LIKE ? ESCAPE '\\' OR LOWER(u.display_name) LIKE ? ESCAPE '\\')
          ORDER BY u.username LIMIT ?`,
       )
       .all(like, like, limit) as Row[];

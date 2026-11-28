@@ -215,6 +215,24 @@ describe("uploading an image", () => {
     );
   });
 
+  it("does not let uploads sent together slip past the quota", async () => {
+    const photo = await encodeJpegForTests(samplePixels(400, 300));
+
+    // Revisione interna, 2026-11-27: the quota was read before the thumbnail
+    // was made, so several uploads in flight together all saw the same space.
+    await withInstance(
+      async ({ app, anna, dataDir }) => {
+        const answers = await Promise.all(
+          Array.from({ length: 5 }, () => uploadRaw(app, anna, photo)),
+        );
+
+        expect(answers.filter((answer) => answer.statusCode === 201)).toHaveLength(1);
+        expect(storedFiles(dataDir)).toHaveLength(2);
+      },
+      { quotaBytesPerUser: photo.byteLength + 1 },
+    );
+  });
+
   it("counts each member's images separately", async () => {
     const photo = await encodeJpegForTests(samplePixels(400, 300));
 
