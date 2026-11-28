@@ -72,6 +72,7 @@ import { SqliteSegnalazioniRepository } from "./segnalazioni/repository.js";
 import { registerSegnalazioniRoutes } from "./segnalazioni/routes.js";
 import { SegnalazioniService } from "./segnalazioni/service.js";
 import { BattitoDelleIstanze } from "./federation/battito.js";
+import { RelayWatch } from "./federation/relays.js";
 import { SqliteRemoteInstanceRepository } from "./federation/repository.js";
 import { FederationService } from "./federation/service.js";
 import { NetworkProbe } from "./network/probe.js";
@@ -111,6 +112,7 @@ declare module "fastify" {
     messaggiService: MessaggiService;
     dispositiviService: DispositiviService;
     battito: BattitoDelleIstanze;
+    relayWatch: RelayWatch;
   }
 }
 
@@ -620,6 +622,14 @@ export async function buildApp(
       Math.max(config.media.maxBytes, 1024 * 1024),
     ),
   );
+  // La mappa dei relay (ADR 0045 §2): gli adottati, e n0 solo quando tacciono
+  // tutti. Si riapplica a ogni apertura del socket, perché la sonda può
+  // chiuderlo e riaprirlo cambiando modo.
+  const relayWatch = new RelayWatch({ settings: settingsRepository, target: endpoint });
+  endpoint.onOpen(() => void relayWatch.check());
+  relayWatch.start();
+  app.decorate("relayWatch", relayWatch);
+
   const startingProbe = effectiveProbe({
     environment: config.network,
     stored: readStoredProbe(settingsRepository),
@@ -800,6 +810,7 @@ export async function buildApp(
 
   app.addHook("onClose", async (instance) => {
     battito.stop();
+    relayWatch.stop();
     backupSchedule.stop();
     await networkProbe.close();
     database.close();
