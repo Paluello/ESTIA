@@ -18,6 +18,8 @@
  *   caller, which is the mistake SECURITY_BASELINE §2 forbids for headers.
  */
 
+import { idDiVoce, indirizzoValido, istanteValido, nomeValido } from "../messaggi/forma.js";
+
 import type { IrohStream } from "./endpoint.js";
 
 /** The major version, on the wire. Advertise every major still spoken. */
@@ -1199,6 +1201,13 @@ export function leggiSegnaposto(value: unknown): SegnapostoSulFilo | undefined {
     return undefined;
   }
 
+  // Sono campi che finiscono nel database di chi riceve: «un testo corto» non
+  // basta ([`forma.ts`](../messaggi/forma.ts)). Un id è un id, un mittente è
+  // `nome@casa`, una data è un istante.
+  if (!idDiVoce(id) || !indirizzoValido(mittente) || !istanteValido(inviatoIl)) {
+    return undefined;
+  }
+
   if (typeof value.seq !== "number" || !Number.isInteger(value.seq) || value.seq < 1) {
     return undefined;
   }
@@ -1227,7 +1236,11 @@ function parseSegnaposto(
 
   const destinatari = value.destinatari.map((d) => readShortText(d, MAX_NAME_LENGTH));
   const segnaposti = value.segnaposti.map(leggiSegnaposto);
-  if (destinatari.some((d) => d === undefined) || segnaposti.some((v) => v === undefined)) {
+  if (
+    !nomeValido(da) ||
+    destinatari.some((d) => d === undefined || !nomeValido(d)) ||
+    segnaposti.some((v) => v === undefined)
+  ) {
     return { error: errorResponse("malformata", "Destinatari o segnaposto non validi.") };
   }
 

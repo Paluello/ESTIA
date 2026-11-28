@@ -154,6 +154,25 @@ async function seEsiste<T>(chiamata: Promise<T>): Promise<T | undefined> {
 }
 
 /**
+ * Un deposito di stato che l'istanza rifiuta perché **la fila è già più
+ * avanti** (409) non è un guasto: l'istanza accetta mazzo e punto di rientro
+ * solo all'epoch dell'ultimo commit in fila, e fra il momento in cui si è
+ * applicato un commit e quello in cui si deposita ne può arrivare un altro.
+ * Chi l'ha scritto, o il prossimo giro di sincronizzazione di chiunque,
+ * deposita quello giusto — è la ragione per cui lo fa chiunque noti il cambio.
+ */
+async function seNonSuperato(promessa: Promise<unknown>): Promise<void> {
+  try {
+    await promessa;
+  } catch (causa) {
+    if (causa instanceof Error && "status" in causa && causa.status === 409) {
+      return;
+    }
+    throw causa;
+  }
+}
+
+/**
  * L'istanza vera, sulle rotte di [ADR 0038](../../../../docs/adr/0038-mls-si-adotta-e-si-comincia-dal-web.md).
  *
  * `chiaviDiFirmaDi` è la più importante delle sei: è il registro su cui poggia
@@ -225,11 +244,11 @@ export function istanzaSuApi(token: string, casa: string): Istanza {
     },
 
     salvaMazzo: async (conversazioneId, dati) => {
-      await api.saveMazzoArchivio(token, conversazioneId, dati);
+      await seNonSuperato(api.saveMazzoArchivio(token, conversazioneId, dati));
     },
 
     salvaPuntoDiRientro: async (conversazioneId, dati) => {
-      await api.saveGroupInfo(token, conversazioneId, dati);
+      await seNonSuperato(api.saveGroupInfo(token, conversazioneId, dati));
     },
   };
 }

@@ -138,6 +138,24 @@ describe("il mazzo delle chiavi d'archivio", () => {
       url: `/api/v1/conversazioni/${id}/archivio/chiavi`,
     });
 
+  /** Il mazzo si accetta solo all'epoch dell'ultimo commit in fila: la si porta lì. */
+  const avanza = async (
+    app: FastifyInstance,
+    token: string,
+    id: string,
+    epoch: number,
+  ): Promise<void> => {
+    for (let e = 1; e <= epoch; e += 1) {
+      const res = await app.inject({
+        headers: bearer(token),
+        method: "POST",
+        payload: { busta: `C${e}`, epoch: e, tipo: "commit" },
+        url: `/api/v1/conversazioni/${id}/handshake`,
+      });
+      expect(res.statusCode).toBe(200);
+    }
+  };
+
   const leggiMazzo = async (app: FastifyInstance, token: string, id: string) =>
     app.inject({
       headers: bearer(token),
@@ -148,6 +166,7 @@ describe("il mazzo delle chiavi d'archivio", () => {
   it("si deposita e si rilegge identico: l'istanza non sa aprirlo", async () => {
     await withRig(async ({ app, annaToken, brunoToken, conversazioneId }) => {
       const mazzo = "TUFaWk9fQVZWT0xUTw==";
+      await avanza(app, annaToken, conversazioneId, 2);
       expect((await mettiMazzo(app, annaToken, conversazioneId, 2, mazzo)).statusCode).toBe(200);
 
       const letto = await leggiMazzo(app, brunoToken, conversazioneId);
@@ -159,18 +178,27 @@ describe("il mazzo delle chiavi d'archivio", () => {
 
   it("l'epoch non torna indietro, come per il GroupInfo", async () => {
     await withRig(async ({ app, annaToken, brunoToken, conversazioneId }) => {
+      await avanza(app, annaToken, conversazioneId, 7);
       await mettiMazzo(app, annaToken, conversazioneId, 7, "EPOCH_7");
 
       expect((await mettiMazzo(app, brunoToken, conversazioneId, 6, "EPOCH_6")).statusCode).toBe(
         409,
       );
+      // E non salta avanti: un mazzo a un'epoch che la fila non ha visto
+      // resterebbe lì per sempre, e nessuno lo aprirebbe più.
+      for (const epoch of [8, 2 ** 53 - 1]) {
+        expect(
+          (await mettiMazzo(app, brunoToken, conversazioneId, epoch, "FUTURO")).statusCode,
+        ).toBe(409);
+      }
       expect((await leggiMazzo(app, annaToken, conversazioneId)).json().mazzo).toBe("EPOCH_7");
     });
   });
 
   it("chi non è della conversazione non lo tocca", async () => {
     await withRig(async ({ app, annaToken, carlaToken, conversazioneId }) => {
-      await mettiMazzo(app, annaToken, conversazioneId, 1, "MIO");
+      await avanza(app, annaToken, conversazioneId, 1);
+      expect((await mettiMazzo(app, annaToken, conversazioneId, 1, "MIO")).statusCode).toBe(200);
 
       expect((await leggiMazzo(app, carlaToken, conversazioneId)).statusCode).toBe(403);
       expect((await mettiMazzo(app, carlaToken, conversazioneId, 9, "SUO")).statusCode).toBe(403);
