@@ -105,7 +105,7 @@ Un dispositivo che nel registro non c'è non tocca niente: non è lui a decidere
 - **Le app native** devono fare lo stesso allineamento delle foglie: la Casa è pronta.
 - **L'ingresso con un invito**, per chi non è ancora membro e non ha un browser in casa: oggi il QR lo emette solo chi è già dentro.
 - **Le prove sul campo**, nell'ordine di ADR 0044 e fatte dal proprietario: Milano–Campello su dati mobili, la misura dall'esterno che non c'è nessuna porta web, il tempo effettivo di perdita dell'accesso dopo una revoca.
-- **Due rotte che leggono l'indirizzo o l'host rispondono il falso via stream.** `GET /api/v1/connection` dice «loopback» a un'app che sta fuori casa, e un invito creato dall'app porta un indirizzo `localhost`. Nessuna delle due dà accesso a niente; vanno corrette quando l'app le userà.
+- **Un invito creato dall'app porta un indirizzo `localhost`.** Non dà accesso a niente, ma il link non serve: va deciso insieme all'ingresso con invito, perché fuori casa non c'è una porta web da aprire. `GET /api/v1/connection` invece dal 2026-11-28 risponde `dispositivo`.
 - **Il corpo come `number[]`.** Il binding Node di iroh legge e scrive array di numeri: per un'immagine da qualche MiB è memoria sprecata, non un errore. Se pesa, si spezza il corpo in più scritture.
 
 ## Le prove

@@ -28,9 +28,11 @@ const CONNECTION_DETAIL: Readonly<Record<ConnectionOrigin, Chiave>> = {
   loopback: "diagnostica.connessione.loopback",
   overlay: "diagnostica.connessione.overlay",
   public: "diagnostica.connessione.public",
+  dispositivo: "diagnostica.connessione.dispositivo",
 };
 
 import { detto, frase } from "../frasi.js";
+import { contrassegnoDi } from "../dispositivi/canale.js";
 import { classifyAddress } from "./origin.js";
 import type { InstanceService } from "./service.js";
 
@@ -44,7 +46,10 @@ export function registerInstanceRoutes(app: FastifyInstance, service: InstanceSe
     "/api/v1/connection",
     { schema: { response: { 200: connectionViewSchema }, tags: ["instance"] } },
     async (request) => {
-      const origin = classifyAddress(request.ip);
+      // Da un'app ammessa l'indirizzo è quello finto di `app.inject()`:
+      // «loopback» sarebbe falso. Si dice la cosa vera, cioè da dove è entrata.
+      const origin =
+        contrassegnoDi(request) !== undefined ? "dispositivo" : classifyAddress(request.ip);
 
       return { ...detto(frase(CONNECTION_DETAIL[origin])), origin };
     },

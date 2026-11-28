@@ -216,6 +216,11 @@ describe("l'accesso del Dispositivo (ADR 0044)", () => {
       const me = await chiedi(connessione, "GET", "/api/v1/auth/me");
 
       expect(me.stato).toBe(200);
+
+      // Lo stato della connessione dice da dove si è entrati davvero: non
+      // «loopback», che è l'indirizzo finto dell'inject.
+      const connessioneVista = await chiedi(connessione, "GET", "/api/v1/connection");
+      expect(connessioneVista.json()).toMatchObject({ origin: "dispositivo" });
       expect(me.intestazioni["content-type"]).toContain("application/json");
       expect(me.json()).toMatchObject({ username: "alice" });
 

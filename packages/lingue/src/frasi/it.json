@@ -1137,6 +1137,7 @@
   "diagnostica.connessione.loopback": "Stai guardando l'istanza dalla macchina che la ospita.",
   "diagnostica.connessione.overlay": "Stai arrivando da fuori casa, attraverso la rete privata del pilot. I contenuti restano cifrati fino all'istanza, ma chi gestisce quella rete vede che ti sei collegato, quando e da dove.",
   "diagnostica.connessione.public": "Stai arrivando da un indirizzo che non è né della rete di casa né della rete privata del pilot. Può voler dire che l'istanza è raggiungibile da Internet, oppure che fra te e lei c'è un proxy: chi la amministra dovrebbe controllare quale delle due.",
+  "diagnostica.connessione.dispositivo": "Stai arrivando dall'app, con la chiave di questo dispositivo, attraverso una connessione cifrata diretta con la Casa. Nessuna porta web è aperta per farti entrare.",
   "diagnostica.schema.created.one": "Prima di applicare una migrazione l'istanza ha scritto un backup cifrato: {archivio}. È il punto di ritorno di questo aggiornamento.",
   "diagnostica.schema.created.other": "Prima di applicare {n} migrazioni l'istanza ha scritto un backup cifrato: {archivio}. È il punto di ritorno di questo aggiornamento.",
   "diagnostica.schema.not_configured.one": "L'istanza ha applicato una migrazione senza scrivere un backup, perché non ne è configurato nessuno. Le migrazioni vanno solo in avanti: questo aggiornamento non ha un punto di ritorno, e non potrà averlo dopo. Imposta una chiave pubblica in Impostazioni → Backup perché il prossimo ce l'abbia.",
