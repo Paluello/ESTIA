@@ -26,7 +26,7 @@ Ogni rilievo «alto» è stato riprodotto prima di correggerlo. Ogni correzione 
 | Media   | Backup      | Una sessione da amministratore bastava a cambiare la chiave dei backup e a portarsi via il database                             | [#38](https://github.com/Paluello/ESTIA/pull/38) |
 | Media   | Federazione | La chat MLS fra Case non era collegata nell'app, e alcune verifiche sugli epoch e sulle quote mancavano                         | [#20](https://github.com/Paluello/ESTIA/pull/20) |
 | Bassa   | Media       | Le foto restavano un anno nella cache del browser                                                                               | [#14](https://github.com/Paluello/ESTIA/pull/14) |
-| Bassa   | Federazione | Una foto si serviva anche se il suo post era solo per la Casa o nascosto                                                        | [#39](https://github.com/Paluello/ESTIA/pull/39) |
+| Bassa   | Federazione | Una foto si serviva anche se il suo post era solo per la Casa o nascosto                                                        | [#40](https://github.com/Paluello/ESTIA/pull/40) |
 | Bassa   | Operazioni  | Il ripristino da root seguiva link già presenti e aveva tutte le capability                                                     | [#19](https://github.com/Paluello/ESTIA/pull/19) |
 | Bassa   | CI          | I workflow di verifica non limitavano i permessi del token                                                                      | [#14](https://github.com/Paluello/ESTIA/pull/14) |
 
