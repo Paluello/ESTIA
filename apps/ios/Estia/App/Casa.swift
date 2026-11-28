@@ -49,6 +49,9 @@ final class Casa: ObservableObject {
     @Published private(set) var fase: Fase = .avvio
     @Published private(set) var utente: Utente?
     private var collegamento: Collegamento?
+    private var cassaforte: Cassaforte?
+    /// Le conversazioni MLS, aperte la prima volta che servono.
+    private var sessioni: Sessioni?
 
     /// Un collegamento `estia://ingresso` arrivato da fuori (il QR inquadrato
     /// dalla fotocamera di sistema), che la schermata d'ingresso usa subito.
@@ -59,6 +62,7 @@ final class Casa: ObservableObject {
         do {
             let cassaforte = try Cassaforte()
             let collegamento = try await Collegamento.apri(deposito: cassaforte)
+            self.cassaforte = cassaforte
             self.collegamento = collegamento
             fase = collegamento.casa() == nil ? .ingresso : .dentro
             if fase == .dentro { await aggiornaUtente() }
@@ -80,6 +84,7 @@ final class Casa: ObservableObject {
 
     func esci() async {
         try? await collegamento?.dimenticaCasa()
+        sessioni = nil
         utente = nil
         fase = .ingresso
     }
@@ -101,6 +106,16 @@ final class Casa: ObservableObject {
             throw ErroreCasa.risposta(stato: Int(risposta.stato), codice: codice)
         }
         return try JSONDecoder().decode(T.self, from: risposta.corpo)
+    }
+
+    /// Prepara il dispositivo per le conversazioni (identità MLS, chiave di
+    /// firma, KeyPackage) la prima volta, poi restituisce sempre le stesse.
+    func sessioniPronte() async throws -> Sessioni {
+        if let sessioni { return sessioni }
+        guard let collegamento, let cassaforte else { throw ErroreCasa.irraggiungibile }
+        let aperte = try await Sessioni.apri(collegamento: collegamento, deposito: cassaforte)
+        sessioni = aperte
+        return aperte
     }
 
     private func aggiornaUtente() async {

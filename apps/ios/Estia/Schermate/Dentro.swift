@@ -9,6 +9,9 @@ struct Dentro: View {
             Tab(Frasi.t("nav.home"), systemImage: "house") {
                 Bacheca()
             }
+            Tab(Frasi.t("nav.messaggi"), systemImage: "bubble.left.and.bubble.right") {
+                Messaggi()
+            }
             Tab(Frasi.t("nav.profilo"), systemImage: "person.crop.circle") {
                 Profilo()
             }
