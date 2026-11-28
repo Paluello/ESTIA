@@ -132,10 +132,12 @@ async fn si_entra_col_codice_e_si_chiede_alla_casa() {
     ));
 
     // Un codice sbagliato non apre, e non dice perché.
-    assert!(telefono
-        .entra(collegamento_qr(&router, "sbagliato"), "telefono".into())
-        .await
-        .is_err());
+    assert!(matches!(
+        telefono
+            .entra(collegamento_qr(&router, "sbagliato"), "telefono".into())
+            .await,
+        Err(ErroreNucleo::CodiceNonAccettato)
+    ));
     assert_eq!(telefono.casa(), None);
 
     let ingresso = telefono

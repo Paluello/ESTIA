@@ -1,0 +1,67 @@
+name: ios
+
+# L'app iPhone in SwiftUI (apps/ios, ADR 0051), costruita per il simulatore
+# sopra il nucleo Rust. Senza firma: per un telefono vero serve l'account Apple.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/ios/**"
+      - "apps/nucleo/**"
+      - "packages/lingue/src/frasi/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "apps/ios/**"
+      - "apps/nucleo/**"
+      - "packages/lingue/src/frasi/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  simulatore:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Frasi dell'app nella tabella
+        working-directory: apps/ios
+        run: node scripts/controlla-frasi.mjs
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/nucleo
+          key: ios-app
+
+      - name: Nucleo, legami e progetto Xcode
+        working-directory: apps/ios
+        run: |
+          xcodebuild -version
+          ./scripts/prepara.sh --debug
+
+      - name: Build per il simulatore
+        working-directory: apps/ios
+        run: ./scripts/simulatore.sh --solo-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: estia-ios-simulatore
+          path: apps/ios/build/Build/Products/Debug-iphonesimulator/Estia.app
+          retention-days: 7
