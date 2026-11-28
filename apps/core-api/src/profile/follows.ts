@@ -125,6 +125,9 @@ export interface FollowRepository {
    * e nient'altro: non promuove a «collegata» (ADR 0022 §1).
    */
   hasAcceptedWith(instanceKey: string): boolean;
+
+  /** Quante righe di follower vengono da quell'istanza: tutte, e quante in attesa. */
+  countFollowersFrom(instance: string): { totale: number; inAttesa: number };
 }
 
 type FollowerRow = {
@@ -318,6 +321,19 @@ export class SqliteFollowRepository implements FollowRepository {
 
   public removeFollowing(id: string): boolean {
     return Number(this.database.prepare("DELETE FROM following WHERE id = ?").run(id).changes) > 0;
+  }
+
+  public countFollowersFrom(instance: string): { totale: number; inAttesa: number } {
+    const row = this.database
+      .prepare(
+        `SELECT COUNT(*) AS totale,
+                COALESCE(SUM(CASE WHEN state = 'in_attesa' THEN 1 ELSE 0 END), 0) AS in_attesa
+           FROM followers
+          WHERE follower_instance = ?`,
+      )
+      .get(instance) as { totale: number; in_attesa: number };
+
+    return { inAttesa: Number(row.in_attesa), totale: Number(row.totale) };
   }
 
   public hasAcceptedWith(instanceKey: string): boolean {
