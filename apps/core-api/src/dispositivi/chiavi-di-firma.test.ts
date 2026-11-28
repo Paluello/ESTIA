@@ -397,6 +397,69 @@ describe("il prelievo di un KeyPackage MLS", () => {
     });
   });
 
+  it("i propri: per chiave di firma, mai il proprio, e mai da chi aspetta", async () => {
+    await withRig(async ({ app }) => {
+      await app.identityService.createUser({
+        password: "password-lunga-carla",
+        role: "member",
+        username: "carla",
+      });
+      const accedi = async (): Promise<string> =>
+        (await app.identityService.login({ password: "password-lunga-carla", username: "carla" }))
+          .token;
+      const dispositivo = async (token: string, firma: string, kp: string[]): Promise<string> => {
+        const id = (
+          await app.inject({
+            headers: bearer(token),
+            method: "POST",
+            payload: { algorithm: "MLS-P256-v1", publicKey: firma },
+            url: "/api/v1/dispositivi/chiave",
+          })
+        ).json<{ device: { id: string } }>().device.id;
+        await app.inject({
+          headers: bearer(token),
+          method: "POST",
+          payload: { keyPackages: kp },
+          url: "/api/v1/dispositivi/key-packages",
+        });
+        return id;
+      };
+      const miei = (token: string, chiaviDiFirma: string[]) =>
+        app.inject({
+          headers: bearer(token),
+          method: "POST",
+          payload: { chiaviDiFirma },
+          url: "/api/v1/dispositivi/miei/key-packages",
+        });
+
+      const telefono = await accedi();
+      await dispositivo(telefono, "RklSTUFURUxFRk9OTw==", ["KP_TELEFONO"]);
+      const pc = await accedi();
+      const idPc = await dispositivo(pc, "RklSTUFQQw==", ["KP_PC_1", "KP_PC_2"]);
+      const tablet = await accedi();
+      await dispositivo(tablet, "RklSTUFUQUJMRVQ=", ["KP_TABLET"]);
+
+      // Finché il PC aspetta, nessuno lo fa entrare.
+      expect((await miei(telefono, ["RklSTUFQQw=="])).json().keyPackages).toEqual([]);
+
+      await app.inject({
+        headers: bearer(telefono),
+        method: "POST",
+        url: `/api/v1/dispositivi/${idPc}/approva`,
+      });
+
+      const presi = await miei(telefono, ["RklSTUFQQw==", "RklSTUFURUxFRk9OTw=="]);
+      expect(presi.statusCode).toBe(200);
+      // Solo il PC: il proprio KeyPackage non si preleva.
+      expect(presi.json().keyPackages).toEqual([{ deviceId: idPc, keyPackage: "KP_PC_1" }]);
+
+      // Il tablet aspetta: non fa entrare nessuno.
+      const daChiAspetta = await miei(tablet, ["RklSTUFQQw=="]);
+      expect(daChiAspetta.statusCode).toBe(403);
+      expect(daChiAspetta.json()).toMatchObject({ code: "device_not_approved" });
+    });
+  });
+
   it("chi ha soltanto un dispositivo di prima del passaggio non ne consegna uno", async () => {
     await withRig(async ({ app, annaToken }) => {
       const casa = (

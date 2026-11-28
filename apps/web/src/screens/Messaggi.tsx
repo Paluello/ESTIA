@@ -2,10 +2,11 @@ import type { AuthorView, ConversazioneView } from "@estia/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, ApiError } from "../api.js";
-import { base64InBytes } from "../mls/adattatori.js";
+import { base64InBytes, bytesInBase64 } from "../mls/adattatori.js";
 import {
   annuncia,
   apriConversazione,
+  allineaMieiDispositivi,
   faiEntrare,
   faiUscire,
   leggi,
@@ -323,6 +324,9 @@ function SwipeableBubble({
 const ATTESA_MS = 120;
 const MINIMO = 2;
 
+/** Ogni quanto rimettere d'accordo le proprie foglie con il registro. */
+const ALLINEA_DISPOSITIVI_OGNI_MS = 5 * 60 * 1000;
+
 export function Messaggi(): React.ReactElement {
   const { token, user } = useSignedIn();
   useT();
@@ -361,6 +365,8 @@ export function Messaggi(): React.ReactElement {
   const [membriAperti, setMembriAperti] = useState<"elenco" | "conferma-esci" | undefined>();
   /** La sessione MLS della conversazione aperta. Vive in memoria, e si riapre cambiando chat. */
   const sessioneRef = useRef<Sessione | undefined>(undefined);
+  /** Quando si sono rimesse d'accordo le proprie foglie, per conversazione. */
+  const mieFoglieRef = useRef(new Map<string, number>());
   /**
    * Una cosa alla volta sulla sessione. La rilettura periodica, l'invio e i
    * gesti del gruppo partono tutti dallo stesso stato MLS e lo portano avanti:
@@ -584,6 +590,31 @@ export function Messaggi(): React.ReactElement {
             return;
           }
           sessioneRef.current = lettura.sessione;
+
+          // Il «sì» e la revoca dei propri dispositivi (ADR 0040) entrano qui:
+          // al più ogni cinque minuti per conversazione, perché è una domanda
+          // al registro, e senza fermare la lettura se non riesce.
+          const ultima = mieFoglieRef.current.get(id) ?? 0;
+          if (conv.congelata !== true && Date.now() - ultima > ALLINEA_DISPOSITIVI_OGNI_MS) {
+            mieFoglieRef.current.set(id, Date.now());
+            const allineata = await allineaMieiDispositivi(
+              ctx,
+              lettura.sessione,
+              { id: user.id, membro: { casa, username: user.username } },
+              async (chiavi) =>
+                (
+                  await api.mieiKeyPackages(token, {
+                    chiaviDiFirma: chiavi.map((k) => bytesInBase64(k)),
+                  })
+                ).keyPackages
+                  .map((preso) => leggiKeyPackage(base64InBytes(preso.keyPackage)))
+                  .filter((kp): kp is NonNullable<typeof kp> => kp !== undefined),
+            ).catch(() => lettura.sessione);
+            if (guardataRef.current !== id) {
+              return;
+            }
+            sessioneRef.current = allineata;
+          }
           setConfronto(lettura.confronto);
           setTolto(lettura.sessione.tolto === true);
 

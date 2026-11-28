@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { archivia, svolgi } from "./archivio.js";
 import {
   allinea,
+  allineaMieiDispositivi,
   apriConversazione,
   faiEntrare,
   leggi,
@@ -513,5 +514,88 @@ describe("una voce è legata a chi l'ha scritta, dove e quando (ADR 0052 §1)", 
     expect(
       (await cronologia(bruno, sBruno)).righe.map((r) => [r.stato, r.testo, r.attestata]),
     ).toEqual([["letta", "di prima", false]]);
+  });
+});
+
+describe("i propri dispositivi seguono il registro (ADR 0040)", () => {
+  /** Il contesto di Bruno con un registro diverso da quello dell'istanza. */
+  const conRegistro = (ctx: Contesto, registro: readonly Uint8Array[]): Contesto => ({
+    ...ctx,
+    istanza: { ...ctx.istanza, chiaviDiFirmaDi: () => Promise.resolve(registro) },
+  });
+
+  it("il telefono approvato entra, legge, e alla revoca esce con la catena che ruota", async () => {
+    const { istanza, anna, bruno, chiavi, sAnna, sBruno } = await gruppoDiTre();
+    const telefono = await portachiaviFinto("bruno");
+    istanza.ammetti("bruno", telefono.chiaveDiFirma);
+    const ctxTelefono: Contesto = {
+      deposito: depositoFinto(),
+      io: telefono,
+      istanza: istanza.per(id(BRUNO)),
+    };
+
+    const chiesto: Uint8Array[][] = [];
+    const conTelefono = await allineaMieiDispositivi(
+      bruno,
+      sBruno,
+      { id: id(BRUNO), membro: BRUNO },
+      async (chiavi) => {
+        chiesto.push([...chiavi]);
+        return [await telefono.pubblica()];
+      },
+    );
+
+    // Si è chiesta soltanto la chiave che mancava.
+    expect(chiesto).toEqual([[telefono.chiaveDiFirma]]);
+    expect(foglieDi(conTelefono.stato, BRUNO)).toHaveLength(2);
+
+    const sTelefono = await entraDalWelcome(ctxTelefono);
+    const annaInPari = await sincronizza(anna, sAnna);
+    await invia(anna, annaInPari, "ciao a tutti e due", "m1", "2026-11-28T10:00:00.000Z");
+    expect(await testi(ctxTelefono, sTelefono)).toEqual(["ciao a tutti e due"]);
+
+    // Il telefono è revocato: il registro non lo riconosce più.
+    const senza = await allineaMieiDispositivi(
+      conRegistro(bruno, [chiavi.bruno.chiaveDiFirma]),
+      conTelefono,
+      { id: id(BRUNO), membro: BRUNO },
+      () => Promise.reject(new Error("non serve niente")),
+    );
+    expect(foglieDi(senza.stato, BRUNO)).toHaveLength(1);
+    expect(foglieDi(senza.stato, BRUNO)[0]?.chiaveDiFirma).toEqual(chiavi.bruno.chiaveDiFirma);
+    expect(senza.catena!.length).toBeGreaterThan(conTelefono.catena!.length);
+  });
+
+  it("un dispositivo che il registro non riconosce non tocca niente", async () => {
+    const { istanza, bruno, sBruno } = await gruppoDiTre();
+    const prima = istanza.depositati().length;
+
+    const uguale = await allineaMieiDispositivi(
+      conRegistro(bruno, []),
+      sBruno,
+      { id: id(BRUNO), membro: BRUNO },
+      () => Promise.reject(new Error("non si chiede")),
+    );
+
+    expect(uguale).toBe(sBruno);
+    expect(istanza.depositati()).toHaveLength(prima);
+  });
+
+  it("una chiave d'ingresso che non è quella chiesta, o è di un altro, resta fuori", async () => {
+    const { istanza, bruno, chiavi, sBruno } = await gruppoDiTre();
+    const telefono = await portachiaviFinto("bruno");
+    istanza.ammetti("bruno", telefono.chiaveDiFirma);
+    const intruso = await portachiaviFinto("dario");
+    const prima = istanza.depositati().length;
+
+    const uguale = await allineaMieiDispositivi(
+      bruno,
+      sBruno,
+      { id: id(BRUNO), membro: BRUNO },
+      async () => [await intruso.pubblica(), await chiavi.carla.pubblica()],
+    );
+
+    expect(foglieDi(uguale.stato, BRUNO)).toHaveLength(1);
+    expect(istanza.depositati()).toHaveLength(prima);
   });
 });

@@ -90,9 +90,19 @@ Una sessione d'app si allunga a ogni uso: un'app che si fa vedere resta dentro, 
 
 `GET /api/v1/mls/key-packages/:casa/:username` consegna un KeyPackage per **ciascun** dispositivo approvato e vivo del membro, fino a dieci, e li consuma. Fra Case la domanda `chiavi` porta `tutti: true`; una Casa che non lo conosce ne manda uno solo, ed è ancora una risposta giusta. Il client web la usa quando apre una conversazione e quando fa entrare qualcuno in un gruppo, così telefono e PC della stessa persona sono due foglie dal primo commit. La rotta al singolare resta per chi non lo sa ancora.
 
+## Il sì e la revoca dentro le conversazioni
+
+Entrare con tutti i dispositivi vale per chi entra da oggi. Per le conversazioni già aperte, ogni dispositivo approvato rimette d'accordo **le proprie foglie** con il registro della propria Casa (`allineaMieiDispositivi` in `apps/web/src/mls/conversazione.ts`), al più ogni cinque minuti per conversazione, quando la legge:
+
+- una chiave approvata che nell'albero non c'è **entra**. La sua chiave d'ingresso si preleva con `POST /api/v1/dispositivi/miei/key-packages` (`{"chiaviDiFirma": [...]}`), che consegna soltanto KeyPackage di altri dispositivi propri e approvati, e risponde `403 device_not_approved` a chi aspetta;
+- una foglia propria che il registro non riconosce più, perché revocata o scaduta, **esce**, e la catena dell'archivio ruota.
+
+Un dispositivo che nel registro non c'è non tocca niente: non è lui a decidere. Il tempo di perdita dell'accesso alla cronologia dopo una revoca è quindi «fino a quando un altro dispositivo della persona apre quella conversazione»; la Casa smette comunque di consegnare al revocato da subito.
+
 ## Che cosa manca, detto per intero
 
-- **La rimozione della foglia MLS da ogni conversazione** quando si revoca un dispositivo (ADR 0040, obbligo 3). È un commit per conversazione fatto da un altro dispositivo del membro: lo fa il client. La Casa smette di consegnare al dispositivo revocato, e la sua chiave di firma esce dal registro perché `getActiveDeviceKeysByUserId` legge la sessione.
+- **La rimozione subito, non alla lettura.** Oggi la foglia di un dispositivo revocato esce dalle conversazioni man mano che un altro dispositivo della persona le apre. Farlo per tutte al momento della revoca vuole una coda di lavoro sul client.
+- **Le app native** devono fare lo stesso allineamento delle foglie: la Casa è pronta.
 - **L'ingresso con un invito**, per chi non è ancora membro e non ha un browser in casa: oggi il QR lo emette solo chi è già dentro.
 - **Le prove sul campo**, nell'ordine di ADR 0044 e fatte dal proprietario: Milano–Campello su dati mobili, la misura dall'esterno che non c'è nessuna porta web, il tempo effettivo di perdita dell'accesso dopo una revoca.
 - **Due rotte che leggono l'indirizzo o l'host rispondono il falso via stream.** `GET /api/v1/connection` dice «loopback» a un'app che sta fuori casa, e un invito creato dall'app porta un indirizzo `localhost`. Nessuna delle due dà accesso a niente; vanno corrette quando l'app le userà.

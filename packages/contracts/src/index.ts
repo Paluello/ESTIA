@@ -3138,6 +3138,25 @@ export interface KeyPackagesMlsView {
   keyPackages: KeyPackageMlsView[];
 }
 
+/** Quali dei propri dispositivi far entrare, per chiave di firma (Base64). */
+export interface MieiKeyPackagesRequest {
+  chiaviDiFirma: string[];
+}
+
+export const mieiKeyPackagesRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["chiaviDiFirma"],
+  properties: {
+    chiaviDiFirma: {
+      type: "array",
+      minItems: 1,
+      maxItems: 10,
+      items: { type: "string", minLength: 1, maxLength: 256 },
+    },
+  },
+} as const;
+
 export const keyPackagesMlsViewSchema = {
   type: "object",
   additionalProperties: false,

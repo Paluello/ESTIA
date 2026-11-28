@@ -3,6 +3,8 @@ import {
   chiaviDiFirmaViewSchema,
   keyPackageMlsViewSchema,
   keyPackagesMlsViewSchema,
+  mieiKeyPackagesRequestSchema,
+  type MieiKeyPackagesRequest,
   dispositiviResponseSchema,
   ingressoEmessoViewSchema,
   sfidaViewSchema,
@@ -253,6 +255,34 @@ export function registerDispositiviRoutes(
         caller.sessionId,
         request.body,
       );
+    },
+  );
+
+  /**
+   * I KeyPackage di altri dispositivi propri, per chiave di firma: con questi
+   * un dispositivo già approvato fa entrare nelle conversazioni quello appena
+   * approvato ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+   */
+  app.post<{ Body: MieiKeyPackagesRequest; Reply: KeyPackagesMlsView }>(
+    "/api/v1/dispositivi/miei/key-packages",
+    {
+      preHandler: asMember,
+      // Uno per conversazione aperta: largo, ma non senza fondo.
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } },
+      schema: {
+        body: mieiKeyPackagesRequestSchema,
+        response: { 200: keyPackagesMlsViewSchema },
+      },
+    },
+    async (request) => {
+      const caller = request.caller!;
+      return {
+        keyPackages: services.dispositivi.claimMieiKeyPackages(
+          caller.user.id,
+          caller.sessionId,
+          request.body.chiaviDiFirma,
+        ),
+      };
     },
   );
 
