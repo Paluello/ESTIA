@@ -1259,18 +1259,19 @@ impl<I: Istanza> Motore<I> {
     }
 
     /// Scrive nella conversazione che cosa è successo al gruppo. Se non
-    /// riesce il gesto è fatto lo stesso: è un racconto, non il gesto.
-    async fn racconta(&self, conversazione: &str, tipo: TipoEvento, chi: &str) {
+    /// riesce il gesto è fatto lo stesso: è un racconto, non il gesto. Dice
+    /// l'id della voce, se è partita.
+    async fn racconta(&self, conversazione: &str, tipo: TipoEvento, chi: &str) -> Option<String> {
         let evento = Evento {
             tipo,
             chi: chi.to_string(),
         };
-        if let Ok(id) = nuovo_id() {
-            let contenuto = scrivi_contenuto("", None, Some(&evento));
-            let _ = self
-                .deposita_voce(conversazione, contenuto, &id, &adesso())
-                .await;
-        }
+        let id = nuovo_id().ok()?;
+        let contenuto = scrivi_contenuto("", None, Some(&evento));
+        self.deposita_voce(conversazione, contenuto, &id, &adesso())
+            .await
+            .ok()?;
+        Some(id)
     }
 
     /// Una pagina di cronologia, dalla più recente, decifrata con la catena.
@@ -1868,6 +1869,70 @@ impl<I: Istanza> Motore<I> {
             .await;
         Ok(())
     }
+
+    /// Esce da un gruppo. È un gesto di chi esce e non chiede permesso a
+    /// nessuno; come sul web (`esci` in `Messaggi.tsx`) sono due passi:
+    ///
+    /// 1. **prima si racconta l'uscita**, finché si può ancora scrivere: dopo,
+    ///    l'istanza non accetta più niente da chi è uscito;
+    /// 2. poi `POST …/uscita`.
+    ///
+    /// Nessun commit parte da qui: la foglia di chi esce la toglie chi resta,
+    /// al suo giro ([`Self::aggiorna`]), e la catena ruota allora. Fino a quel
+    /// momento questo dispositivo non legge comunque, perché la Casa non gli
+    /// dà più la cronologia.
+    ///
+    /// Se la Casa dice di no, il racconto già scritto si ritira: non resta
+    /// scritto che si è usciti da un gruppo in cui si è ancora. Lo stato del
+    /// gruppo cifrato resta su questo dispositivo, come sul web: se qualcuno
+    /// fa rientrare questa persona, è da lì che si riparte.
+    pub async fn esci(&self, conversazione: String) -> Esito<()> {
+        let _una_alla_volta = self.in_serie.lock().await;
+        let id = conversazione.as_str();
+        let vista = self.vista(id).await?.ok_or(ErroreNucleo::FuoriDalGruppo)?;
+        if !vista.gruppo {
+            // La stessa risposta della Casa: da una chat a due non si esce.
+            return Err(ErroreNucleo::Casa {
+                stato: 400,
+                codice: "non_un_gruppo".into(),
+            });
+        }
+        let racconto = if vista.congelata || !self.dispositivo.conosce(id) {
+            None
+        } else {
+            let io = self.membro.clone();
+            self.racconta(id, TipoEvento::Uscita, &io).await
+        };
+        if let Err(causa) = self.istanza.esci(id).await {
+            if let Some(voce) = racconto {
+                let _ = self.istanza.ritira_voce(id, &voce).await;
+            }
+            return Err(causa);
+        }
+        let mut aperte = self.aperte.lock().unwrap();
+        if let Some(aperta) = aperte.get_mut(id) {
+            aperta.pronta = false;
+            aperta.vista = None;
+            aperta.consegnati.clear();
+        }
+        Ok(())
+    }
+
+    /// Ritira un messaggio proprio (ADR 0043 §2): la voce esce dall'archivio
+    /// della propria casa, che è l'unico posto dove sta. Chi l'ha già letto
+    /// l'ha letto; al prossimo giro di chiunque l'id non è più nella pagina
+    /// ([`Aggiornamento::pagina`]).
+    ///
+    /// Si ritira soltanto il proprio: una voce d'altri, o che non c'è, è il
+    /// 404 della Casa (`messaggio_inesistente`).
+    pub async fn ritira(&self, conversazione: String, messaggio: String) -> Esito<()> {
+        let _una_alla_volta = self.in_serie.lock().await;
+        self.istanza.ritira_voce(&conversazione, &messaggio).await?;
+        if let Some(aperta) = self.aperte.lock().unwrap().get_mut(&conversazione) {
+            aperta.consegnati.remove(&messaggio);
+        }
+        Ok(())
+    }
 }
 
 enum Applicato {
@@ -2008,5 +2073,21 @@ impl Sessioni {
         membro_id: String,
     ) -> Result<(), ErroreNucleo> {
         self.motore.togli_membro(conversazione, membro_id).await
+    }
+
+    /// Esce da un gruppo: lo racconta, poi lo dice alla Casa. La propria
+    /// foglia la toglie chi resta.
+    pub async fn esci(&self, conversazione: String) -> Result<(), ErroreNucleo> {
+        self.motore.esci(conversazione).await
+    }
+
+    /// Ritira un proprio messaggio: la voce esce dall'archivio della propria
+    /// casa. `messaggio` è il suo [`Messaggio::id`].
+    pub async fn ritira(
+        &self,
+        conversazione: String,
+        messaggio: String,
+    ) -> Result<(), ErroreNucleo> {
+        self.motore.ritira(conversazione, messaggio).await
     }
 }

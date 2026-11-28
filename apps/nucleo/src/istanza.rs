@@ -227,6 +227,9 @@ pub trait Istanza: Send + Sync + 'static {
         id: &str,
         membro: &str,
     ) -> impl Future<Output = Esito<ConversazioneVista>> + Send;
+    /// Chi chiede esce dal gruppo: `POST …/uscita`. Non chiede permesso a
+    /// nessuno, e la sua foglia la toglie chi resta.
+    fn esci(&self, id: &str) -> impl Future<Output = Esito<()>> + Send;
 
     /// Gli handshake che spettano a chi chiede, **in ordine di arrivo**.
     fn handshake_dopo(
@@ -268,6 +271,9 @@ pub trait Istanza: Send + Sync + 'static {
         id: &str,
         voci: Vec<VoceDaDepositare>,
     ) -> impl Future<Output = Esito<()>> + Send;
+    /// Il ritiro (ADR 0043 §2): via una voce propria dalla propria casa,
+    /// `DELETE …/archivio/:voce`. Una voce che non c'è, o d'altri, è un 404.
+    fn ritira_voce(&self, id: &str, voce: &str) -> impl Future<Output = Esito<()>> + Send;
 }
 
 /// Un deposito che la fila rifiuta perché **qualcuno è arrivato prima** sulla
@@ -739,6 +745,12 @@ impl<F: Filo> Istanza for IstanzaSuCasa<F> {
         )
     }
 
+    async fn esci(&self, id: &str) -> Esito<()> {
+        self.chiedi("POST", della_conversazione(id, "/uscita"), None)
+            .await?;
+        Ok(())
+    }
+
     async fn handshake_dopo(&self, id: &str, dopo: Option<&str>) -> Esito<PaginaHandshake> {
         let coda = match dopo {
             Some(dopo) => format!("/handshake?dopo={}", componente(dopo)),
@@ -861,6 +873,13 @@ impl<F: Filo> Istanza for IstanzaSuCasa<F> {
             Some(json!({ "voci": voci })),
         )
         .await?;
+        Ok(())
+    }
+
+    async fn ritira_voce(&self, id: &str, voce: &str) -> Esito<()> {
+        let coda = format!("/archivio/{}", componente(voce));
+        self.chiedi("DELETE", della_conversazione(id, &coda), None)
+            .await?;
         Ok(())
     }
 }

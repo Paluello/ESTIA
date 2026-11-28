@@ -104,6 +104,16 @@ const casa = {
 /** Le domande che il nucleo ha fatto, per guardarle dalla prova. */
 const viste = [];
 
+/**
+ * Le voci ritirate (`DELETE …/archivio/:voce`): l'istanza finta del web non
+ * ritira, e il pilota le toglie dalla cronologia di tutti, browser compresi.
+ */
+const ritirate = new Set();
+const senzaRitirate = (pagina) => ({
+  ...pagina,
+  righe: pagina.righe.filter((r) => !ritirate.has(r.id)),
+});
+
 class Rifiuto extends Error {
   constructor(stato, code) {
     super(code);
@@ -346,7 +356,9 @@ async function rotta(chi, metodo, url, corpo) {
   const qui =
     cosa === "membri" && coda.length === 1
       ? `${metodo} /membri/:x`
-      : `${metodo} /${[cosa, ...coda].filter(Boolean).join("/")}`;
+      : metodo === "DELETE" && cosa === "archivio" && coda.length === 1
+        ? "DELETE /archivio/:x"
+        : `${metodo} /${[cosa, ...coda].filter(Boolean).join("/")}`;
 
   switch (qui) {
     case "GET /":
@@ -444,7 +456,27 @@ async function rotta(chi, metodo, url, corpo) {
     }
 
     case "GET /cronologia":
-      return conforme(contratti.cronologiaPageSchema, await vista.cronologia(idConv), dove);
+      return conforme(
+        contratti.cronologiaPageSchema,
+        senzaRitirate(await vista.cronologia(idConv)),
+        dove,
+      );
+
+    // Il ritiro (ADR 0043 §2): soltanto la propria voce, e una volta sola.
+    case "DELETE /archivio/:x": {
+      const { righe } = senzaRitirate(await vista.cronologia(idConv));
+      const sua = righe.find((r) => r.id === coda[0] && r.mittente === indirizzo(nomeDi(chi)));
+      if (sua === undefined) throw new Rifiuto(404, "messaggio_inesistente");
+      ritirate.add(sua.id);
+      return undefined;
+    }
+
+    // L'uscita: chi esce non chiede permesso, e non manda un corpo.
+    case "POST /uscita": {
+      if (conv.tipo !== "gruppo") throw new Rifiuto(400, "non_un_gruppo");
+      toglieDalGruppo(conv, chi);
+      return undefined;
+    }
 
     case "POST /archivio": {
       conforme(contratti.depositaArchivioRequestSchema, corpo, dove);
@@ -472,10 +504,12 @@ async function servi(chi, { metodo, percorso, corpo }) {
     const letto = corpo === null ? undefined : JSON.parse(corpo);
     assert.equal(
       letto === undefined,
-      metodo === "GET" || metodo === "DELETE",
+      metodo === "GET" || metodo === "DELETE" || percorso.endsWith("/uscita"),
       `${metodo} ${percorso}`,
     );
     const risposta = await rotta(chi, metodo, new URL(percorso, "http://casa"), letto);
+    // Le rotte che rispondono 204, come quelle vere, non hanno corpo.
+    if (risposta === undefined) return { corpo: "", stato: 204 };
     return { corpo: JSON.stringify(risposta), stato: 200 };
   } catch (errore) {
     if (errore instanceof Rifiuto) {
@@ -561,7 +595,10 @@ class Browser {
   }
   async nasce() {
     this.io = await finte.portachiaviFinto(this.nome);
-    this.ctx = { deposito: finte.depositoFinto(), io: this.io, istanza: istanza.per(this.id) };
+    const sua = istanza.per(this.id);
+    // La stessa cronologia che il pilota dà al telefono: senza le ritirate.
+    const cronologia = async (...args) => senzaRitirate(await sua.cronologia(...args));
+    this.ctx = { deposito: finte.depositoFinto(), io: this.io, istanza: { ...sua, cronologia } };
     this.dispositivo = registra(this.id, b64(this.io.chiaveDiFirma));
     for (let i = 0; i < 5; i += 1) {
       this.dispositivo.pacchetti.push(pacchettoSulFilo(await this.io.pubblica()));
@@ -718,6 +755,21 @@ async function dalTelefonoAlBrowser() {
     "ti rispondo",
   ]);
   fatto("una risposta scritta dal telefono il browser la legge come risposta");
+
+  // Il telefono ritira un suo messaggio: sparisce anche per il browser.
+  await attimo();
+  const sbagliato = await anna.scrive(conv, "scritto per sbaglio");
+  assert.equal(frasi(await bruno.legge(conv)).at(-1), "scritto per sbaglio");
+  await anna.chiedi("ritira", { conv, messaggio: sbagliato.id });
+  assert.ok(!(await bruno.legge(conv)).righe.some((r) => r.id === sbagliato.id));
+  assert.ok(!(await anna.aggiorna(conv)).pagina.includes(sbagliato.id));
+  // Ciò che ha scritto un altro non lo ritira: la Casa dice 404.
+  await assert.rejects(
+    anna.chiedi("ritira", { conv, messaggio: idDiBruno }),
+    /messaggio_inesistente/,
+  );
+  assert.ok((await bruno.legge(conv)).righe.some((r) => r.id === idDiBruno));
+  fatto("il telefono ritira un suo messaggio, e il browser non lo vede più");
 
   // L'app si chiude e si riapre: lo stato sta nel deposito, non nella memoria.
   await anna.apre();
@@ -906,11 +958,65 @@ async function unGruppo({ anna, bruno, carla, dario }) {
 }
 
 /* ================================================================== */
+/* 4. Un telefono esce da un gruppo                                     */
+/* ================================================================== */
+
+async function unTelefonoEsce({ anna, bruno, carla }) {
+  const conv = (
+    await anna.chiedi("creaGruppo", {
+      membri: [{ username: "bruno" }, { username: "carla" }],
+      nome: "cena",
+    })
+  ).id;
+  assert.equal(await anna.chiedi("apriConversazione", { conv }), "pronta");
+  assert.equal(await bruno.apre(conv), "pronta");
+  assert.equal((await carla.aggiorna(conv)).apertura, "pronta");
+  await carla.scrive(conv, "porto il vino");
+  assert.equal(frasi(await bruno.legge(conv)).at(-1), "porto il vino");
+
+  // Carla esce dal telefono: prima lo racconta, poi lo dice alla Casa. Nessun
+  // commit parte da lei.
+  const primaDiUscire = istanza.depositati().filter((h) => h.conversazioneId === conv).length;
+  await attimo();
+  await carla.chiedi("esci", { conv });
+  assert.equal(
+    istanza.depositati().filter((h) => h.conversazioneId === conv).length,
+    primaDiUscire,
+  );
+  assert.ok(!casa.conversazioni.get(conv).membri.includes(carla.id));
+  assert.equal((await carla.aggiorna(conv)).apertura, "tolto");
+
+  // Il browser, che ordina, toglie la sua foglia con ts-mls: la catena ruota,
+  // e il telefono di Anna applica il commit.
+  const letto = await bruno.legge(conv);
+  assert.deepEqual(letto.righe.filter((r) => r.evento !== undefined).at(-1).evento, {
+    chi: carla.chi,
+    tipo: "uscita",
+  });
+  assert.equal(bruno.sessioni.get(conv).tolto, undefined);
+  const giro = await anna.aggiorna(conv);
+  assert.deepEqual(giro.estranei, []);
+  assert.equal(await anna.chiedi("epoch", { conv }), 2);
+  assert.deepEqual(
+    (await anna.chiedi("membri", { conv })).map((m) => [m.membro, m.dispositivi]),
+    [
+      [anna.chi, 1],
+      [bruno.chi, 1],
+    ],
+  );
+  await attimo();
+  await anna.scrive(conv, "allora in due");
+  assert.equal(frasi(await bruno.legge(conv)).at(-1), "allora in due");
+  fatto("un telefono esce: lo racconta, e il browser che ordina toglie la sua foglia");
+}
+
+/* ================================================================== */
 
 try {
   const { anna, bruno } = await dalTelefonoAlBrowser();
   const { carla, dario } = await dalBrowserAlTelefono();
   await unGruppo({ anna, bruno, carla, dario });
+  await unTelefonoEsce({ anna, bruno, carla });
 } finally {
   for (const p of ponti) p.chiudi();
 }
