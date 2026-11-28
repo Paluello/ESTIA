@@ -32,6 +32,7 @@ export interface IrohModule {
     builder: () => {
       applyMinimal: () => void;
       applyN0: () => void;
+      relayMode: (mode: unknown) => void;
       alpns: (alpns: number[][]) => void;
       secretKey: (bytes: number[]) => void;
       bind: () => Promise<IrohEndpoint>;
@@ -45,11 +46,17 @@ export interface IrohModule {
     fromString: (value: string) => unknown;
   };
   EndpointAddr: new (id: unknown) => unknown;
+  RelayMode: {
+    defaultMode: () => { relayMap: () => { urls: () => string[] } };
+    customFromUrls: (urls: string[]) => unknown;
+  };
 }
 
 export interface IrohEndpoint {
   id: () => { toString: () => string };
-  addr: () => unknown;
+  addr: () => { relayUrl?: () => string | null };
+  insertRelay?: (config: { url: string }) => Promise<void>;
+  removeRelay?: (url: string) => Promise<boolean>;
   acceptNext: () => Promise<IrohIncoming | null>;
   connect: (addr: unknown, alpn: number[]) => Promise<IrohConnection>;
   close: () => Promise<void>;
@@ -115,6 +122,11 @@ export class InstanceEndpoint {
   #reason: string | undefined;
   #mode: EndpointMode | undefined;
   #accepting = false;
+  /** La mappa dei relay chiesta da `setRelayMap`; `undefined` = quella di n0. */
+  #wantedRelays: string[] | undefined;
+  /** La mappa che l'endpoint aperto ha davvero. */
+  #currentRelays: string[] = [];
+  readonly #onOpen: (() => void)[] = [];
 
   public constructor(secretKey: Uint8Array) {
     if (secretKey.length !== 32) {
@@ -165,6 +177,56 @@ export class InstanceEndpoint {
     return this.#mode === "internet";
   }
 
+  /**
+   * The relays of n0, as the binding knows them — `undefined` where no relay is
+   * used at all (`local`, or no binding). See `relays.ts` for why n0 is not
+   * simply the last entry of the map.
+   */
+  public n0RelayUrls(): string[] | undefined {
+    if (this.#iroh === undefined || this.#mode !== "internet") return undefined;
+
+    return this.#iroh.RelayMode.defaultMode().relayMap().urls();
+  }
+
+  /** The relay this instance is reachable through right now, if any. */
+  public get homeRelay(): string | undefined {
+    try {
+      return this.#endpoint?.addr().relayUrl?.() ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Called every time the socket opens, so the relay map can be (re)applied. */
+  public onOpen(listener: () => void): void {
+    this.#onOpen.push(listener);
+  }
+
+  /**
+   * Replaces the relay map (ADR 0045 §2), on the open socket and for the next
+   * one. Only the difference is applied, with `insertRelay`/`removeRelay`: the
+   * socket stays up, and so do the connections that do not use a removed relay.
+   */
+  public async setRelayMap(urls: readonly string[]): Promise<void> {
+    this.#wantedRelays = [...urls];
+
+    const endpoint = this.#endpoint;
+    if (endpoint === undefined || this.#mode !== "internet") return;
+    if (endpoint.insertRelay === undefined || endpoint.removeRelay === undefined) {
+      throw new Error("Questo binding non sa cambiare i relay a istanza accesa.");
+    }
+
+    for (const url of urls) {
+      if (!this.#currentRelays.includes(url)) await endpoint.insertRelay({ url });
+    }
+
+    for (const url of this.#currentRelays) {
+      if (!urls.includes(url)) await endpoint.removeRelay(url);
+    }
+
+    this.#currentRelays = [...urls];
+  }
+
   /** Binds the socket. Never throws: a failure becomes `unavailableReason`. */
   public async open(mode: EndpointMode): Promise<void> {
     if (this.#mode === mode && this.#endpoint !== undefined) {
@@ -191,6 +253,15 @@ export class InstanceEndpoint {
       // (ADR 0018 §«L'infrastruttura del trasporto»).
       if (mode === "internet") {
         builder.applyN0();
+
+        // The relays this instance adopted (ADR 0045 §2), when it adopted any.
+        // Discovery stays n0's: the preset is replayed first, then only the
+        // relay part is replaced.
+        const n0 = module.RelayMode.defaultMode().relayMap().urls();
+        this.#currentRelays = this.#wantedRelays ?? n0;
+        if (this.#wantedRelays !== undefined) {
+          builder.relayMode(module.RelayMode.customFromUrls(this.#wantedRelays));
+        }
       } else {
         builder.applyMinimal();
       }
@@ -210,6 +281,14 @@ export class InstanceEndpoint {
       this.#accepting = true;
 
       void this.#acceptLoop(endpoint);
+
+      for (const listener of this.#onOpen) {
+        try {
+          listener();
+        } catch {
+          // A listener is a convenience; the socket is open either way.
+        }
+      }
     } catch (error) {
       this.#reason = error instanceof Error ? error.message : String(error);
     }
