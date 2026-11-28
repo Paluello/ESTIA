@@ -99,14 +99,21 @@ struct Iniziale: View {
         (Color(chiaro: 0xE3E6C8, scuro: 0x2B2F12), Color(chiaro: 0x4A5216, scuro: 0xC9D08A)),
     ]
 
+    private static func indice(_ chiave: String) -> Int {
+        var somma = 0
+        for scalare in chiave.unicodeScalars {
+            somma = (somma &* 31 &+ Int(scalare.value)) & 0xFFFF
+        }
+        return somma % colori.count
+    }
+
     var body: some View {
-        let indice = chiave.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF } % Self.colori.count
-        let (sfondo, testo) = Self.colori[indice]
+        let coppia = Self.colori[Self.indice(chiave)]
         Text(String(nome.prefix(1)).uppercased())
             .font(Tema.titolo(17, relativo: .headline))
-            .foregroundStyle(testo)
+            .foregroundStyle(coppia.1)
             .frame(width: 40, height: 40)
-            .background(sfondo, in: Circle())
+            .background(coppia.0, in: Circle())
             .accessibilityHidden(true)
     }
 }

@@ -30,7 +30,7 @@ struct Radice: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Tema.sfondo)
         case .ingresso:
-            Ingresso()
+            SchermataIngresso()
         case .dentro:
             Dentro()
         case let .guasto(motivo):

@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-struct Ingresso: View {
+struct SchermataIngresso: View {
     @EnvironmentObject private var casa: Casa
     @State private var collegamento = ""
     @State private var inCorso = false
