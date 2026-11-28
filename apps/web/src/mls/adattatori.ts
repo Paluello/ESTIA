@@ -9,7 +9,7 @@
  * Nessuna logica di protocollo in questo file. Se ce ne finisce, è nel posto
  * sbagliato.
  */
-import type { HandshakeTipo } from "@estia/contracts";
+import { messaggioDiProvaChiave, type HandshakeTipo } from "@estia/contracts";
 
 import { api } from "../api.js";
 import { ALGORITMO, type Anagrafe, type Cassetto } from "./dispositivo.js";
@@ -20,6 +20,8 @@ import type { Deposito, Istanza } from "./sessione.js";
 const DB = "estia_mls_v1";
 const STATI = "stati_gruppo";
 const CURSORI = "cursori_handshake";
+/** Il mazzo d'archivio com'è avvolto, per il giorno in cui la casa che lo tiene è persa. */
+const MAZZI = "mazzi_avvolti";
 /** L'identità del dispositivo e la sua scorta di `KeyPackage`. */
 const DISPOSITIVO = "dispositivo";
 
@@ -30,7 +32,7 @@ function apriDb(): Promise<IDBDatabase> {
       return;
     }
 
-    const richiesta = indexedDB.open(DB, 2);
+    const richiesta = indexedDB.open(DB, 3);
     richiesta.onupgradeneeded = () => {
       const db = richiesta.result;
       if (!db.objectStoreNames.contains(STATI)) {
@@ -41,6 +43,9 @@ function apriDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(DISPOSITIVO)) {
         db.createObjectStore(DISPOSITIVO);
+      }
+      if (!db.objectStoreNames.contains(MAZZI)) {
+        db.createObjectStore(MAZZI);
       }
     };
     richiesta.onsuccess = () => resolveDb(richiesta, risolvi);
@@ -108,11 +113,14 @@ function scriviIn(store: string, chiave: string, valore: unknown): Promise<void>
 export const depositoIndexedDb: Deposito = {
   leggi: (conversazioneId) => leggiDa<Uint8Array>(STATI, conversazioneId),
   leggiCursore: (conversazioneId) => leggiDa<string>(CURSORI, conversazioneId),
+  leggiMazzo: (conversazioneId) => leggiDa<string>(MAZZI, conversazioneId),
   scrivi: (conversazioneId, stato) => scriviIn(STATI, conversazioneId, stato),
   scriviCursore: (conversazioneId, cursore) => scriviIn(CURSORI, conversazioneId, cursore),
+  scriviMazzo: (conversazioneId, mazzo) => scriviIn(MAZZI, conversazioneId, mazzo),
   svuota: async () => {
     await svuotaStore(STATI);
     await svuotaStore(CURSORI);
+    await svuotaStore(MAZZI);
   },
 };
 
@@ -148,6 +156,25 @@ async function seEsiste<T>(chiamata: Promise<T>): Promise<T | undefined> {
   } catch (causa) {
     if (causa instanceof Error && "status" in causa && causa.status === 404) {
       return undefined;
+    }
+    throw causa;
+  }
+}
+
+/**
+ * Un deposito di stato che l'istanza rifiuta perché **la fila è già più
+ * avanti** (409) non è un guasto: l'istanza accetta mazzo e punto di rientro
+ * solo all'epoch dell'ultimo commit in fila, e fra il momento in cui si è
+ * applicato un commit e quello in cui si deposita ne può arrivare un altro.
+ * Chi l'ha scritto, o il prossimo giro di sincronizzazione di chiunque,
+ * deposita quello giusto — è la ragione per cui lo fa chiunque noti il cambio.
+ */
+async function seNonSuperato(promessa: Promise<unknown>): Promise<void> {
+  try {
+    await promessa;
+  } catch (causa) {
+    if (causa instanceof Error && "status" in causa && causa.status === 409) {
+      return;
     }
     throw causa;
   }
@@ -225,11 +252,11 @@ export function istanzaSuApi(token: string, casa: string): Istanza {
     },
 
     salvaMazzo: async (conversazioneId, dati) => {
-      await api.saveMazzoArchivio(token, conversazioneId, dati);
+      await seNonSuperato(api.saveMazzoArchivio(token, conversazioneId, dati));
     },
 
     salvaPuntoDiRientro: async (conversazioneId, dati) => {
-      await api.saveGroupInfo(token, conversazioneId, dati);
+      await seNonSuperato(api.saveGroupInfo(token, conversazioneId, dati));
     },
   };
 }
@@ -252,8 +279,28 @@ export function anagrafeSuApi(token: string): Anagrafe {
       await api.publishKeyPackages(token, { keyPackages });
     },
 
-    registra: async (chiave) => {
-      const registrato = await api.registerDeviceKey(token, chiave);
+    registra: async ({ firma, ...chiave }) => {
+      // La prova di possesso costa una firma e un giro in più, e la si manda
+      // sempre: l'istanza la guarda solo quando la chiave è già approvata, cioè
+      // quando chi rientra con la frase segreta deve dimostrare di averla.
+      let prova: string | undefined;
+      if (firma !== undefined) {
+        try {
+          const { sfida } = await api.sfidaDispositivo(token);
+          prova = b64(
+            await firma(new TextEncoder().encode(messaggioDiProvaChiave(sfida, chiave.publicKey))),
+          );
+        } catch {
+          // Un'istanza di prima, senza la rotta: si registra senza prova, e
+          // una chiave già approvata aspetta il sì come le altre.
+          prova = undefined;
+        }
+      }
+
+      const registrato = await api.registerDeviceKey(
+        token,
+        prova === undefined ? chiave : { ...chiave, prova },
+      );
       return { deviceId: registrato.device.id };
     },
 

@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
-import { apriConversazione, leggi, manda, type Invito } from "./conversazione.js";
+import { annuncia, apriConversazione, leggi, manda, type Invito } from "./conversazione.js";
 import type { Contesto } from "./sessione.js";
 import type { KeyPackage } from "ts-mls";
 
@@ -143,5 +143,102 @@ describe("il giro completo che la schermata fa", () => {
     const letta = await leggi(anna, apertura.sessione);
     expect(letta.righe[0]).toMatchObject({ id: "m1", stato: "non-si-apre" });
     expect(letta.righe[0]?.testo).toBeUndefined();
+  });
+
+  it("ciò che succede al gruppo si legge come un evento, non come una frase", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+    const apertura = await apriConversazione(anna, QUI, invitaBruno);
+    const diBruno = await apriConversazione(bruno, ALTROVE, nessunInvito);
+    if (apertura.kind !== "pronta" || diBruno.kind !== "pronta") {
+      throw new Error("Le sessioni dovevano essere pronte");
+    }
+
+    await annuncia(
+      anna,
+      apertura.sessione,
+      { chi: "carla@casa-di-prova", tipo: "ingresso" },
+      "e1",
+      "2026-08-26T10:00:00.000Z",
+    );
+
+    const letta = await leggi(bruno, diBruno.sessione);
+    // Lo dice Anna, sigillato come una sua riga: è lei che l'ha fatta entrare.
+    expect(letta.righe).toEqual([
+      {
+        attestata: true,
+        createdAt: "2026-08-26T10:00:00.000Z",
+        evento: { chi: "carla@casa-di-prova", tipo: "ingresso" },
+        id: "e1",
+        mittente: "anna@casa-di-prova",
+        stato: "letta",
+        testo: "",
+      },
+    ]);
+  });
+
+  it("in un gruppo crea solo chi deve: gli altri della stessa casa aspettano", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+
+    // Bruno sta nella casa che ordina, ma il gruppo non l'ha creato lui.
+    expect(await apriConversazione(bruno, { ...QUI, creaQui: false }, nessunInvito)).toEqual({
+      kind: "in-attesa",
+    });
+
+    // Anna sì, e invita tutti quelli che hanno una chiave: qui uno.
+    const invitaTutti: Invito = async () => [await invitaBruno()].flat();
+    expect((await apriConversazione(anna, { ...QUI, creaQui: true }, invitaTutti)).kind).toBe(
+      "pronta",
+    );
+    expect((await apriConversazione(bruno, { ...QUI, creaQui: false }, nessunInvito)).kind).toBe(
+      "pronta",
+    );
+  });
+});
+
+describe("un gruppo congelato (ADR 0042 §3, «Il trasloco»)", () => {
+  /** La casa che ordinava è persa: la coda, il mazzo e il punto di rientro stavano lì. */
+  const senzaChiOrdina = (ctx: Contesto): Contesto => {
+    const persa = (): Promise<never> =>
+      Promise.reject(new Error("La casa che ordina non risponde"));
+    return {
+      ...ctx,
+      istanza: { ...ctx.istanza, handshakeDopo: persa, mazzo: persa, puntoDiRientro: persa },
+    };
+  };
+
+  it("si riapre con ciò che il dispositivo aveva tenuto, senza chiedere niente a chi lo ordinava", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+    const perAnna = await apriConversazione(anna, QUI, invitaBruno);
+    const perBruno = await apriConversazione(bruno, ALTROVE, nessunInvito);
+    if (perAnna.kind !== "pronta" || perBruno.kind !== "pronta") {
+      throw new Error("Le sessioni dovevano essere pronte");
+    }
+    await manda(anna, perAnna.sessione, { testo: "prima" }, "m1", "2026-08-26T10:00:00.000Z");
+
+    // Come dopo aver ricaricato la pagina: in mano c'è solo il deposito.
+    const dopo = senzaChiOrdina(bruno);
+    await expect(apriConversazione(dopo, ALTROVE, nessunInvito)).rejects.toThrow(
+      "La casa che ordina non risponde",
+    );
+
+    const riaperta = await apriConversazione(dopo, { ...ALTROVE, congelata: true }, nessunInvito);
+    if (riaperta.kind !== "pronta") {
+      throw new Error("Il gruppo congelato doveva riaprirsi");
+    }
+    expect(riaperta.sessione.catena).toEqual(perBruno.sessione.catena);
+
+    const letta = await leggi(dopo, riaperta.sessione, undefined, undefined, { congelata: true });
+    expect(letta.righe.map((r) => [r.stato, r.testo])).toEqual([["letta", "prima"]]);
+  });
+
+  it("un dispositivo che nel gruppo non c'era non lo apre, e non prova a entrarci", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+    await apriConversazione(anna, QUI, invitaBruno);
+
+    // Bruno non l'ha mai aperto da qui: un Welcome ci sarebbe, ma il gruppo è
+    // fermo e chi arriva dopo lo vede come lo vede un estraneo.
+    expect(
+      await apriConversazione(senzaChiOrdina(bruno), { ...ALTROVE, congelata: true }, nessunInvito),
+    ).toEqual({ kind: "in-attesa" });
   });
 });

@@ -1525,6 +1525,12 @@ export interface SessionView {
   expiresAt: string;
   /** True for the session making the request. */
   current: boolean;
+  /**
+   * La chiave di rete dell'app legata a questa sessione ([ADR 0044](../../../docs/adr/0044-il-dispositivo-e-l-app.md) §4),
+   * quando la sessione è un Dispositivo entrato con il QR. Assente per un
+   * browser. Revocare la sessione chiude la porta a quella chiave.
+   */
+  chiaveDiRete?: string;
 }
 
 export const sessionListSchema = {
@@ -1545,6 +1551,7 @@ export const sessionListSchema = {
           lastSeenAt: { type: "string" },
           expiresAt: { type: "string" },
           current: { type: "boolean" },
+          chiaveDiRete: { type: "string" },
         },
       },
     },
@@ -2362,19 +2369,55 @@ export interface RegisterDeviceKeyRequest {
   publicKey: string;
   algorithm: string;
   keyPackages?: string[];
+  /**
+   * La prova di possesso della chiave ([ADR 0040](../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)):
+   * la firma, in base64, di `messaggioDiProvaChiave(sfida, publicKey)` con la
+   * chiave privata, sulla sfida chiesta da questa sessione a
+   * `POST /api/v1/dispositivi/sfida`. Serve **solo** a chi ripresenta una
+   * chiave già approvata — il rientro con la frase segreta — e senza, quella
+   * chiave aspetta il sì come ogni altra.
+   */
+  prova?: string;
 }
+
+/** Quanti KeyPackage al massimo in una richiesta, e quanto lungo ognuno. */
+export const KEY_PACKAGE_MAX_PER_RICHIESTA = 100;
+export const KEY_PACKAGE_MAX_LUNGHEZZA = 16 * 1024;
+
+/**
+ * Il testo che il dispositivo firma per provare di avere la chiave privata.
+ * Porta la sfida, che lo lega a questa sessione e a questo momento, e la
+ * chiave, che lo lega a questa chiave: non si riusa altrove.
+ */
+export function messaggioDiProvaChiave(sfida: string, publicKey: string): string {
+  return `ESTIA-prova-chiave-v1\n${sfida}\n${publicKey}`;
+}
+
+export interface SfidaView {
+  sfida: string;
+  scadeIl: string;
+}
+
+export const sfidaViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["sfida", "scadeIl"],
+  properties: { sfida: { type: "string" }, scadeIl: { type: "string" } },
+} as const;
 
 export const registerDeviceKeyRequestSchema = {
   type: "object",
   additionalProperties: false,
   required: ["publicKey", "algorithm"],
   properties: {
-    publicKey: { type: "string", minLength: 1 },
-    algorithm: { type: "string", minLength: 1 },
+    publicKey: { type: "string", minLength: 1, maxLength: 1024 },
+    algorithm: { type: "string", minLength: 1, maxLength: 64 },
     keyPackages: {
       type: "array",
-      items: { type: "string", minLength: 1 },
+      maxItems: KEY_PACKAGE_MAX_PER_RICHIESTA,
+      items: { type: "string", minLength: 1, maxLength: KEY_PACKAGE_MAX_LUNGHEZZA },
     },
+    prova: { type: "string", minLength: 1, maxLength: 512 },
   },
 } as const;
 
@@ -2425,7 +2468,8 @@ export const publishKeyPackagesRequestSchema = {
   properties: {
     keyPackages: {
       type: "array",
-      items: { type: "string", minLength: 1 },
+      maxItems: KEY_PACKAGE_MAX_PER_RICHIESTA,
+      items: { type: "string", minLength: 1, maxLength: KEY_PACKAGE_MAX_LUNGHEZZA },
     },
   },
 } as const;
@@ -2442,10 +2486,10 @@ export const saveKeyBackupRequestSchema = {
   additionalProperties: false,
   required: ["encryptedBlob", "algorithm", "salt", "iterations"],
   properties: {
-    encryptedBlob: { type: "string", minLength: 1 },
-    algorithm: { type: "string", minLength: 1 },
-    salt: { type: "string", minLength: 1 },
-    iterations: { type: "integer", minimum: 1000 },
+    encryptedBlob: { type: "string", minLength: 1, maxLength: 64 * 1024 },
+    algorithm: { type: "string", minLength: 1, maxLength: 64 },
+    salt: { type: "string", minLength: 1, maxLength: 256 },
+    iterations: { type: "integer", minimum: 1000, maximum: 100_000_000 },
   },
 } as const;
 
@@ -2851,7 +2895,167 @@ export interface ConversazioneView {
    * attraversa.
    */
   peerVistoFinoA?: string | null;
+  /** Il nome del gruppo. Assente in una conversazione diretta. */
+  nome?: string;
+  /**
+   * Chi fa che cosa in un gruppo, per id del membro. Assente in una
+   * conversazione diretta, dove non c'è niente da amministrare.
+   */
+  ruoli?: Record<string, RuoloGruppo>;
+  /**
+   * Chi è stato tolto dal gruppo o ne è uscito, come `username@casa`. Assente
+   * in una conversazione diretta.
+   *
+   * Serve al client per una cosa sola: la foglia MLS di chi esce non può
+   * toglierla lui, la toglie il primo dispositivo che se ne accorge — e per
+   * farlo deve **sapere** che è uscito, non dedurlo dal fatto che non lo vede
+   * fra i membri ([ADR 0052](../../../docs/adr/0052-l-archivio-dei-gruppi.md) §3).
+   */
+  rimossi?: string[];
+  /**
+   * Da quando la casa che ordina questo gruppo non risponde, se è **persa**:
+   * oltre la soglia di [ADR 0042](../../../docs/adr/0042-come-mls-attraversa.md)
+   * §3 «Il trasloco». Assente finché non lo è — un fine settimana di silenzio
+   * non è una scomparsa — e sempre assente in un gruppo che ordina questa casa.
+   */
+  casaPersaDal?: string;
+  /**
+   * Chi guarda può traslocare questo gruppo: la casa che lo ordina è persa, e
+   * lui lo amministra — o nessun amministratore ha una casa viva.
+   */
+  puoTraslocare?: boolean;
+  /**
+   * Il gruppo è congelato: qualcuno l'ha traslocato, e qui si legge soltanto.
+   * La cronologia delle case ancora vive si continua a visitare.
+   */
+  congelata?: boolean;
+  /** I gruppi che continuano questo. Più d'uno se due persone hanno traslocato. */
+  successori?: SuccessoreView[];
+  /** Questo gruppo ne continua un altro, e lo dichiara. */
+  continua?: ContinuaView;
 }
+
+/** Un gruppo nato da un trasloco, visto dal gruppo di prima. */
+export interface SuccessoreView {
+  /** L'id del successore. Chi non ci è entrato non lo trova fra le sue conversazioni. */
+  id: string;
+  /** Chi ha traslocato, come `username@casa`. */
+  da: string;
+  il: string;
+}
+
+/**
+ * Ciò che un successore dichiara di sé ([ADR 0042](../../../docs/adr/0042-come-mls-attraversa.md)
+ * §3 «Il trasloco», punto 4): quale gruppo continua, fin dove chi ha
+ * traslocato l'aveva visto, chi è stato e quando. Lo dice la casa di chi ha
+ * traslocato: è una dichiarazione firmata con un nome, non una prova.
+ */
+export interface ContinuaView {
+  conversazioneId: string;
+  /** Il nome che il gruppo di prima aveva. */
+  nome: string;
+  /** L'ultima epoch MLS che chi ha traslocato aveva visto nel gruppo di prima. */
+  epoch: number;
+  /** Chi ha traslocato, come `username@casa`. */
+  da: string;
+  il: string;
+  /** Da quando la casa che ordinava non rispondeva, per la casa di chi ha traslocato. */
+  casaPersaDal: string;
+}
+
+/** Il trasloco di un gruppo: l'ultima epoch che il dispositivo di chi trasloca ha visto. */
+export interface TraslocaGruppoRequest {
+  epoch: number;
+}
+
+export const traslocaGruppoRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["epoch"],
+  properties: { epoch: { type: "integer", minimum: 0 } },
+} as const;
+
+/**
+ * I gruppi (M8). Le risposte del proprietario del 2026-09-17:
+ *
+ * - **aggiungono e tolgono membri il creatore e gli amministratori che
+ *   nomina**; chiunque può uscire da solo;
+ * - il tetto è **50 foglie**, e ogni dispositivo è una foglia
+ *   ([S5](../../../docs/spike/S5-quanto-pesa-un-albero.md)).
+ *
+ * La composizione la sa **la casa che ordina**
+ * ([ADR 0042](../../../docs/adr/0042-come-mls-attraversa.md) §3): le altre
+ * case la chiedono a lei.
+ */
+export const RUOLI_GRUPPO = ["creatore", "amministratore", "membro"] as const;
+export type RuoloGruppo = (typeof RUOLI_GRUPPO)[number];
+
+/**
+ * Il tetto di un gruppo per la 1.0, in **foglie**.
+ *
+ * L'istanza non vede l'albero — le buste sono opache — quindi conta i membri:
+ * ogni membro ha almeno una foglia, e più di 50 membri sono di sicuro più di
+ * 50 foglie. Il conto esatto, dispositivo per dispositivo, lo fa il client
+ * prima di un commit.
+ */
+export const MAX_FOGLIE_GRUPPO = 50;
+
+/** Sotto tre persone non è un gruppo: è la conversazione diretta, che c'è già. */
+export const MIN_MEMBRI_GRUPPO = 3;
+
+export const MAX_NOME_GRUPPO = 80;
+
+/** Una persona da mettere in un gruppo: il nome, e la casa se non è questa. */
+export interface MembroGruppoInput {
+  username: string;
+  /** La chiave della sua casa. Assente = questa casa. */
+  casa?: string;
+}
+
+export const membroGruppoInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["username"],
+  properties: {
+    username: { type: "string", minLength: 1, maxLength: 120 },
+    casa: { type: "string", minLength: 1, maxLength: 120 },
+  },
+} as const;
+
+export interface CreaGruppoRequest {
+  nome: string;
+  /** Gli altri: chi crea c'è già, ed è il creatore. */
+  membri: MembroGruppoInput[];
+}
+
+export const creaGruppoRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["nome", "membri"],
+  properties: {
+    nome: { type: "string", minLength: 1, maxLength: MAX_NOME_GRUPPO },
+    membri: {
+      type: "array",
+      minItems: MIN_MEMBRI_GRUPPO - 1,
+      maxItems: MAX_FOGLIE_GRUPPO - 1,
+      items: membroGruppoInputSchema,
+    },
+  },
+} as const;
+
+/** Si nomina un amministratore, o gli si toglie l'incarico. Il creatore non si nomina. */
+export interface CambiaRuoloRequest {
+  ruolo: Exclude<RuoloGruppo, "creatore">;
+}
+
+export const cambiaRuoloRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ruolo"],
+  properties: {
+    ruolo: { type: "string", enum: ["amministratore", "membro"] },
+  },
+} as const;
 
 export const conversazioneViewSchema = {
   type: "object",
@@ -2875,6 +3079,37 @@ export const conversazioneViewSchema = {
     createdAt: { type: "string" },
     ordinataQui: { type: "boolean" },
     peerVistoFinoA: { type: ["string", "null"] },
+    nome: { type: "string" },
+    ruoli: {
+      type: "object",
+      additionalProperties: { type: "string", enum: [...RUOLI_GRUPPO] },
+    },
+    rimossi: { type: "array", items: { type: "string" } },
+    casaPersaDal: { type: "string" },
+    puoTraslocare: { type: "boolean" },
+    congelata: { type: "boolean" },
+    successori: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "da", "il"],
+        properties: { id: { type: "string" }, da: { type: "string" }, il: { type: "string" } },
+      },
+    },
+    continua: {
+      type: "object",
+      additionalProperties: false,
+      required: ["conversazioneId", "nome", "epoch", "da", "il", "casaPersaDal"],
+      properties: {
+        conversazioneId: { type: "string" },
+        nome: { type: "string" },
+        epoch: { type: "integer", minimum: 0 },
+        da: { type: "string" },
+        il: { type: "string" },
+        casaPersaDal: { type: "string" },
+      },
+    },
   },
 } as const;
 
@@ -3140,4 +3375,165 @@ export const scriviReplicaRequestSchema = {
   additionalProperties: false,
   required: ["testo"],
   properties: { testo: { type: "string", minLength: 1, maxLength: 4000 } },
+} as const;
+// ---------------------------------------------------------------------------
+// L'accesso del Dispositivo (ADR 0044 §4–§5). Il filo è descritto per intero in
+// docs/ACCESSO_DEL_DISPOSITIVO.md; qui c'è quello che client e Casa devono
+// scrivere e leggere allo stesso modo.
+// ---------------------------------------------------------------------------
+
+/** L'ALPN su cui un Dispositivo registrato parla l'API dei membri. */
+export const ALPN_DISPOSITIVO = "estia/dispositivo/1";
+
+/**
+ * L'ALPN su cui una chiave **non ancora registrata** presenta il codice del QR.
+ * È separato perché su `ALPN_DISPOSITIVO` una chiave sconosciuta non riceve
+ * niente, nemmeno la schermata d'ingresso (ADR 0044 §4).
+ */
+export const ALPN_INGRESSO = "estia/ingresso/1";
+
+/** Tetto dell'intestazione JSON di un frame, in byte. */
+export const FRAME_MAX_INTESTAZIONE = 64 * 1024;
+
+/** Tetto del corpo di una richiesta su stream, in byte. */
+export const FRAME_MAX_CORPO_RICHIESTA = 32 * 1024 * 1024;
+
+/** Quanto vive un codice d'ingresso, in millisecondi. */
+export const INGRESSO_DURATA_MS = 10 * 60 * 1000;
+
+export interface RichiestaSuStream {
+  metodo: string;
+  /** Percorso più query, per esempio `/api/v1/feed?limit=20`. Sempre sotto `/api/`. */
+  percorso: string;
+  intestazioni: Record<string, string>;
+}
+
+export interface RispostaSuStream {
+  stato: number;
+  intestazioni: Record<string, string>;
+}
+
+const frameEncoder = new TextEncoder();
+const frameDecoder = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Un frame: 4 byte big-endian con la lunghezza dell'intestazione JSON, poi
+ * l'intestazione, poi il corpo grezzo fino alla fine dello stream.
+ */
+export function codificaFrame(
+  intestazione: RichiestaSuStream | RispostaSuStream,
+  corpo: Uint8Array = new Uint8Array(),
+): Uint8Array {
+  const json = frameEncoder.encode(JSON.stringify(intestazione));
+
+  if (json.length > FRAME_MAX_INTESTAZIONE) {
+    throw new Error("Intestazione del frame troppo lunga.");
+  }
+
+  const frame = new Uint8Array(4 + json.length + corpo.length);
+  new DataView(frame.buffer).setUint32(0, json.length, false);
+  frame.set(json, 4);
+  frame.set(corpo, 4 + json.length);
+
+  return frame;
+}
+
+/** L'inverso di `codificaFrame`. Lancia su un frame malformato. */
+export function decodificaFrame(frame: Uint8Array): {
+  intestazione: unknown;
+  corpo: Uint8Array;
+} {
+  if (frame.length < 4) {
+    throw new Error("Frame troppo corto.");
+  }
+
+  const lunghezza = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(
+    0,
+    false,
+  );
+
+  if (lunghezza > FRAME_MAX_INTESTAZIONE || 4 + lunghezza > frame.length) {
+    throw new Error("Lunghezza dell'intestazione non valida.");
+  }
+
+  return {
+    corpo: frame.subarray(4 + lunghezza),
+    intestazione: JSON.parse(frameDecoder.decode(frame.subarray(4, 4 + lunghezza))) as unknown,
+  };
+}
+
+/** Che cosa la chiave nuova manda su `ALPN_INGRESSO`, in JSON, e poi chiude. */
+export interface DomandaDiIngresso {
+  codice: string;
+  /** Come il membro riconoscerà questo dispositivo nell'elenco, per esempio «iPhone di Anna». */
+  etichetta: string;
+}
+
+/** La sola risposta che una domanda valida riceve. Una non valida non riceve niente. */
+export interface EsitoDiIngresso {
+  esito: "ammesso";
+  utente: { id: string; username: string; displayName: string };
+  /** La sessione legata alla chiave, quella che il membro vede e può revocare. */
+  sessionId: string;
+}
+
+/** Il contenuto del QR (ADR 0044 §5). */
+export interface QrDiIngresso {
+  /** La chiave pubblica della Casa: l'unica identità di cui l'app si fiderà. */
+  casa: string;
+  codice: string;
+  /** Gli indirizzi, solo dove la scoperta non c'è (rete su «local»). */
+  ticket?: string;
+}
+
+export function formattaQrDiIngresso(qr: QrDiIngresso): string {
+  const parametri = new URLSearchParams({ casa: qr.casa, codice: qr.codice });
+
+  if (qr.ticket !== undefined) {
+    parametri.set("ticket", qr.ticket);
+  }
+
+  return `estia://ingresso?${parametri.toString()}`;
+}
+
+/** `undefined` per tutto ciò che non è un QR d'ingresso di ESTIA. */
+export function leggiQrDiIngresso(testo: string): QrDiIngresso | undefined {
+  const prefisso = "estia://ingresso?";
+
+  if (!testo.startsWith(prefisso)) {
+    return undefined;
+  }
+
+  const parametri = new URLSearchParams(testo.slice(prefisso.length));
+  const casa = parametri.get("casa");
+  const codice = parametri.get("codice");
+  const ticket = parametri.get("ticket");
+
+  if (casa === null || casa === "" || codice === null || codice === "") {
+    return undefined;
+  }
+
+  return ticket === null || ticket === "" ? { casa, codice } : { casa, codice, ticket };
+}
+
+export interface IngressoEmessoView {
+  codice: string;
+  casa: string;
+  ticket?: string;
+  /** Il testo da mettere nel QR, già formattato. */
+  qr: string;
+  scadeIl: string;
+}
+
+export const ingressoEmessoViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["codice", "casa", "qr", "scadeIl"],
+  properties: {
+    codice: { type: "string" },
+    casa: { type: "string" },
+    ticket: { type: "string" },
+    qr: { type: "string" },
+    scadeIl: { type: "string" },
+  },
 } as const;

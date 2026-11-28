@@ -1,5 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AuthorView, ConversazioneTipo, VoceArchivioInput } from "@estia/contracts";
+import type {
+  AuthorView,
+  ConversazioneTipo,
+  RuoloGruppo,
+  VoceArchivioInput,
+} from "@estia/contracts";
 
 export interface ConversazioneRecord {
   id: string;
@@ -28,7 +33,78 @@ export interface MessaggiRepository {
     membri: string[];
     /** La casa che mette in fila i commit (ADR 0042 §3). Assente = questa casa. */
     casaCheOrdina?: string | undefined;
+    /** Il nome, per un gruppo. */
+    nome?: string | undefined;
+    /** I ruoli di chi non è un semplice membro, per id. */
+    ruoli?: Readonly<Record<string, RuoloGruppo>> | undefined;
   }): ConversazioneRecord;
+  /** Il nome di un gruppo; `null` per una conversazione diretta o che non c'è. */
+  nomeDi(conversazioneId: string): string | null;
+  /** Chi c'è, con il ruolo e da quando, nell'ordine in cui è entrato. */
+  membriConRuolo(conversazioneId: string): MembroRecord[];
+  ruoloDi(conversazioneId: string, userId: string): RuoloGruppo | undefined;
+  contaMembri(conversazioneId: string): number;
+  /**
+   * Fa entrare qualcuno. Se era stato tolto, la riga di `conversazione_rimossi`
+   * sparisce: è una riammissione, e chi rientra non è più «rimosso».
+   */
+  aggiungiMembro(
+    conversazioneId: string,
+    userId: string,
+    ruolo: RuoloGruppo,
+    joinedAt: string,
+  ): void;
+  /**
+   * Toglie qualcuno e **lo ricorda**: da quel momento l'istanza gli rifiuta la
+   * conversazione dicendo perché. `da` è chi ha tolto, uguale a `userId`
+   * quando è un'uscita.
+   */
+  togliMembro(conversazioneId: string, userId: string, rimosso: { il: string; da: string }): void;
+  impostaRuolo(conversazioneId: string, userId: string, ruolo: RuoloGruppo): void;
+  /** Se e quando questa persona è stata tolta da questa conversazione. */
+  rimosso(conversazioneId: string, userId: string): RimossoRecord | undefined;
+  rimossi(conversazioneId: string): RimossoRecord[];
+  /** La versione della composizione: cresce a ogni cambio, presso chi ordina. */
+  versioneComposizione(conversazioneId: string): number;
+  /** Un cambio è avvenuto: la versione avanza, e si ritorna quella nuova. */
+  avanzaVersioneComposizione(conversazioneId: string): number;
+  /**
+   * Sostituisce lo specchio della composizione con quello dichiarato dalla
+   * casa che ordina. **Solo con una versione non più bassa** (la stessa si riapplica: è la stessa composizione, e intanto chi di qui non si poteva raggiungere può essere diventato raggiungibile): `false` altrimenti, e
+   * allora non si scrive niente. Tutto o niente, in una transazione.
+   */
+  sostituisciComposizione(
+    conversazioneId: string,
+    composizione: {
+      versione: number;
+      tipo: ConversazioneTipo;
+      nome: string | null;
+      membri: readonly MembroRecord[];
+      rimossi: readonly RimossoRecord[];
+    },
+  ): boolean;
+  /**
+   * Le case che **custodiscono** qualcosa di questa conversazione: quelle dei
+   * membri, e quelle di chi è stato tolto — che non partecipano più, ma
+   * servono ancora quello che i loro avevano scritto (ADR 0043).
+   */
+  caseCustodi(conversazioneId: string): string[];
+  /** Questa casa ha qualcuno **tolto** da questa conversazione? */
+  haRimossoDiCasa(conversazioneId: string, remoteKey: string): boolean;
+  /**
+   * Scrive ciò che un successore dichiara di sé (ADR 0042 §3, «Il trasloco»).
+   * Una volta scritto non cambia: una seconda dichiarazione per lo stesso
+   * successore si ignora.
+   */
+  dichiaraTrasloco(trasloco: TraslocoRecord): void;
+  /** Che cosa dichiara questo gruppo, se è un successore. */
+  traslocoDi(successoreId: string): TraslocoRecord | undefined;
+  /** I successori dichiarati di un gruppo, dal più vecchio. */
+  successoriDi(conversazioneId: string): TraslocoRecord[];
+  /** Quando questa casa ha congelato il gruppo; `null` se non lo è. */
+  congelataIl(conversazioneId: string): string | null;
+  /** Congela un gruppo: da qui si legge soltanto. Non si scongela. */
+  congela(conversazioneId: string, il: string): void;
   /**
    * Chi mette in fila i commit di questa conversazione (ADR 0042 §3).
    *
@@ -156,8 +232,25 @@ export interface MessaggiRepository {
   ritiraVoce(conversazioneId: string, autoreId: string, id: string): boolean;
   /** Le case con almeno un membro nella conversazione. */
   caseDellaConversazione(conversazioneId: string): string[];
-  /** Questa casa ha almeno un membro in una qualunque conversazione di qui? */
+  /**
+   * Questa casa è in una conversazione **per un gesto di qualcuno di qui**?
+   *
+   * Conta una conversazione che ordina questa casa (l'ha aperta un membro
+   * nostro), o una in cui un membro nostro ha scritto. Non conta una
+   * conversazione che l'altra casa ha soltanto annunciato: altrimenti chiunque
+   * si darebbe da sola il budget di una casa collegata, con un annuncio.
+   */
   casaPartecipa(remoteKey: string): boolean;
+  /**
+   * Quante conversazioni sono nate da un annuncio di `casa` da `dal` in poi —
+   * tutte, o solo quelle con dentro `userId`. È il conto delle quote di §4.1.
+   */
+  contaNateDa(casa: string, dal: string, userId?: string): number;
+  /**
+   * Quanti Welcome sono in fila in una conversazione da `dal` in poi: tutti, o
+   * solo quelli per `destinatario`.
+   */
+  contaWelcome(conversazioneId: string, dal: string, destinatario?: string): number;
 
   /** Le voci in ordine di tempo, dalla piu' vecchia. */
   listVociArchivio(
@@ -168,13 +261,21 @@ export interface MessaggiRepository {
   /**
    * Deposita un handshake MLS (commit o Welcome) — ADR 0038.
    *
-   * **Un commit si accetta solo se porta un'epoch più alta di ogni commit già
-   * in fila** ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3).
-   * Due commit che creano la stessa epoch sono una corsa: il primo entra, il
-   * secondo torna `false` e chi l'ha scritto lo rifà sull'epoch nuova. Senza
-   * questo controllo la fila sola non basterebbe — accetterebbe entrambi, e
-   * ogni client ne applicherebbe uno scoprendo solo dopo che l'altro non si
-   * apre più.
+   * **Un commit si accetta solo se crea esattamente l'epoch che segue l'ultimo
+   * commit in fila** ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3) —
+   * la prima è la 1. Due commit che creano la stessa epoch sono una corsa: il
+   * primo entra, il secondo torna `false` e chi l'ha scritto lo rifà sull'epoch
+   * nuova. Senza questo controllo la fila sola non basterebbe — accetterebbe
+   * entrambi, e ogni client ne applicherebbe uno scoprendo solo dopo che
+   * l'altro non si apre più.
+   *
+   * «Esattamente la seguente», e non «più alta di tutte»: fino al 2026-11-27
+   * bastava essere più alta, e un solo partecipante che dichiarava l'epoch
+   * 2^53 chiudeva la fila per sempre — nessun commit vero sarebbe più stato
+   * più alto del suo.
+   *
+   * Un Welcome porta l'epoch del commit che l'ha prodotto: si accetta solo se
+   * quell'epoch in fila c'è già.
    */
   insertHandshake(
     record: Omit<HandshakeRecord, "seq"> & { conversazioneId: string; destinatario?: string },
@@ -200,6 +301,45 @@ export interface MessaggiRepository {
     remoteKey: string,
     options?: { limit?: number | undefined; dopo?: string | undefined },
   ): HandshakeRecord[];
+}
+
+/** Un membro di una conversazione, con quello che la composizione dice di lui. */
+/** Un trasloco, come lo dichiara il successore. Le persone e le case per indirizzo e chiave. */
+export interface TraslocoRecord {
+  successoreId: string;
+  /** Il gruppo di prima. */
+  conversazioneId: string;
+  nomeDiPrima: string;
+  epoch: number;
+  /** `username@casa` di chi ha traslocato. */
+  da: string;
+  il: string;
+  casaPersa: string;
+  casaPersaDal: string;
+}
+
+export interface MembroRecord {
+  userId: string;
+  ruolo: RuoloGruppo;
+  joinedAt: string;
+}
+
+/** Chi è stato tolto da una conversazione, o ne è uscito. */
+export interface RimossoRecord {
+  userId: string;
+  rimossoIl: string;
+  /** Chi l'ha tolto: uguale a `userId` per un'uscita. */
+  da: string;
+}
+
+/** La casa di un id `remote:<casa>:<username>`, o `undefined` per uno di qui. */
+function casaDi(userId: string): string | undefined {
+  if (!userId.startsWith("remote:")) {
+    return undefined;
+  }
+
+  const chiave = userId.split(":")[1];
+  return chiave !== undefined && chiave.length > 0 ? chiave : undefined;
 }
 
 /** Una voce di un autore di questa casa, vista come segnaposto. */
@@ -250,6 +390,13 @@ export interface HandshakeRecord {
  * vorrebbero dire «qualunque carattere», e una chiave che li contenesse
  * finirebbe per corrispondere ai membri di case che non sono la sua.
  */
+/**
+ * L'epoch a cui la fila è arrivata: quella dell'ultimo commit, o zero se non
+ * ce n'è ancora nessuno. Un frammento SQL con **un** parametro, la conversazione.
+ */
+const EPOCH_IN_FILA = `(SELECT COALESCE(MAX(epoch), 0) FROM conversazione_handshake
+                          WHERE conversazione_id = ? AND tipo = 'commit')`;
+
 function escapeLike(valore: string): string {
   return valore.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
@@ -292,6 +439,34 @@ export interface GroupInfoRecord {
   updatedBy: string;
 }
 
+const SELECT_TRASLOCO = `SELECT successore_id, conversazione_id, nome_di_prima, epoch, da, il,
+                                casa_persa, casa_persa_dal
+                           FROM conversazione_traslochi`;
+
+interface TraslocoRow {
+  successore_id: string;
+  conversazione_id: string;
+  nome_di_prima: string;
+  epoch: number;
+  da: string;
+  il: string;
+  casa_persa: string;
+  casa_persa_dal: string;
+}
+
+function traslocoDaRiga(row: TraslocoRow): TraslocoRecord {
+  return {
+    casaPersa: row.casa_persa,
+    casaPersaDal: row.casa_persa_dal,
+    conversazioneId: row.conversazione_id,
+    da: row.da,
+    epoch: row.epoch,
+    il: row.il,
+    nomeDiPrima: row.nome_di_prima,
+    successoreId: row.successore_id,
+  };
+}
+
 export class SqliteMessaggiRepository implements MessaggiRepository {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -301,21 +476,40 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
     createdAt: string;
     membri: string[];
     casaCheOrdina?: string | undefined;
+    nome?: string | undefined;
+    ruoli?: Readonly<Record<string, RuoloGruppo>> | undefined;
   }): ConversazioneRecord {
-    this.db
-      .prepare(
-        `INSERT INTO conversazioni (id, tipo, created_at, casa_che_ordina)
+    // Una conversazione senza i suoi membri non deve poter restare a metà: un
+    // gruppo con il creatore e nessun altro sarebbe un gruppo che nessuno può
+    // più correggere da fuori.
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO conversazioni (id, tipo, created_at, casa_che_ordina, nome)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          record.id,
+          record.tipo,
+          record.createdAt,
+          record.casaCheOrdina ?? null,
+          record.nome ?? null,
+        );
+
+      const stmtMembro = this.db.prepare(
+        `INSERT INTO conversazione_membri (conversazione_id, user_id, joined_at, ruolo)
          VALUES (?, ?, ?, ?)`,
-      )
-      .run(record.id, record.tipo, record.createdAt, record.casaCheOrdina ?? null);
+      );
 
-    const stmtMembro = this.db.prepare(
-      `INSERT INTO conversazione_membri (conversazione_id, user_id, joined_at)
-       VALUES (?, ?, ?)`,
-    );
+      for (const userId of record.membri) {
+        stmtMembro.run(record.id, userId, record.createdAt, record.ruoli?.[userId] ?? "membro");
+      }
 
-    for (const userId of record.membri) {
-      stmtMembro.run(record.id, userId, record.createdAt);
+      this.db.exec("COMMIT");
+    } catch (causa) {
+      this.db.exec("ROLLBACK");
+      throw causa;
     }
 
     return {
@@ -323,6 +517,285 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
       tipo: record.tipo,
       createdAt: record.createdAt,
     };
+  }
+
+  public nomeDi(conversazioneId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT nome FROM conversazioni WHERE id = ?`)
+      .get(conversazioneId) as { nome: string | null } | undefined;
+
+    return row?.nome ?? null;
+  }
+
+  public membriConRuolo(conversazioneId: string): MembroRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT user_id, ruolo, joined_at FROM conversazione_membri
+           WHERE conversazione_id = ?
+           ORDER BY joined_at ASC, rowid ASC`,
+      )
+      .all(conversazioneId) as { user_id: string; ruolo: RuoloGruppo; joined_at: string }[];
+
+    return rows.map((r) => ({ joinedAt: r.joined_at, ruolo: r.ruolo, userId: r.user_id }));
+  }
+
+  public ruoloDi(conversazioneId: string, userId: string): RuoloGruppo | undefined {
+    const row = this.db
+      .prepare(`SELECT ruolo FROM conversazione_membri WHERE conversazione_id = ? AND user_id = ?`)
+      .get(conversazioneId, userId) as { ruolo: RuoloGruppo } | undefined;
+
+    return row?.ruolo;
+  }
+
+  public contaMembri(conversazioneId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS quanti FROM conversazione_membri WHERE conversazione_id = ?`)
+      .get(conversazioneId) as { quanti: number };
+
+    return row.quanti;
+  }
+
+  public aggiungiMembro(
+    conversazioneId: string,
+    userId: string,
+    ruolo: RuoloGruppo,
+    joinedAt: string,
+  ): void {
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO conversazione_membri (conversazione_id, user_id, joined_at, ruolo)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(conversazioneId, userId, joinedAt, ruolo);
+      this.db
+        .prepare(`DELETE FROM conversazione_rimossi WHERE conversazione_id = ? AND user_id = ?`)
+        .run(conversazioneId, userId);
+      this.db.exec("COMMIT");
+    } catch (causa) {
+      this.db.exec("ROLLBACK");
+      throw causa;
+    }
+  }
+
+  public togliMembro(
+    conversazioneId: string,
+    userId: string,
+    rimosso: { il: string; da: string },
+  ): void {
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(`DELETE FROM conversazione_membri WHERE conversazione_id = ? AND user_id = ?`)
+        .run(conversazioneId, userId);
+      this.db
+        .prepare(
+          `INSERT INTO conversazione_rimossi (conversazione_id, user_id, rimosso_il, da)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (conversazione_id, user_id) DO UPDATE SET
+             rimosso_il = excluded.rimosso_il, da = excluded.da`,
+        )
+        .run(conversazioneId, userId, rimosso.il, rimosso.da);
+      this.db.exec("COMMIT");
+    } catch (causa) {
+      this.db.exec("ROLLBACK");
+      throw causa;
+    }
+  }
+
+  public impostaRuolo(conversazioneId: string, userId: string, ruolo: RuoloGruppo): void {
+    this.db
+      .prepare(
+        `UPDATE conversazione_membri SET ruolo = ? WHERE conversazione_id = ? AND user_id = ?`,
+      )
+      .run(ruolo, conversazioneId, userId);
+  }
+
+  public rimosso(conversazioneId: string, userId: string): RimossoRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT user_id, rimosso_il, da FROM conversazione_rimossi
+           WHERE conversazione_id = ? AND user_id = ?`,
+      )
+      .get(conversazioneId, userId) as
+      { user_id: string; rimosso_il: string; da: string } | undefined;
+
+    return row === undefined
+      ? undefined
+      : { da: row.da, rimossoIl: row.rimosso_il, userId: row.user_id };
+  }
+
+  public rimossi(conversazioneId: string): RimossoRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT user_id, rimosso_il, da FROM conversazione_rimossi
+           WHERE conversazione_id = ? ORDER BY rimosso_il ASC, user_id ASC`,
+      )
+      .all(conversazioneId) as { user_id: string; rimosso_il: string; da: string }[];
+
+    return rows.map((r) => ({ da: r.da, rimossoIl: r.rimosso_il, userId: r.user_id }));
+  }
+
+  public versioneComposizione(conversazioneId: string): number {
+    const row = this.db
+      .prepare(`SELECT versione_composizione AS v FROM conversazioni WHERE id = ?`)
+      .get(conversazioneId) as { v: number } | undefined;
+
+    return row?.v ?? 0;
+  }
+
+  public avanzaVersioneComposizione(conversazioneId: string): number {
+    const row = this.db
+      .prepare(
+        `UPDATE conversazioni SET versione_composizione = versione_composizione + 1
+           WHERE id = ? RETURNING versione_composizione AS v`,
+      )
+      .get(conversazioneId) as { v: number } | undefined;
+
+    return row?.v ?? 0;
+  }
+
+  public sostituisciComposizione(
+    conversazioneId: string,
+    composizione: {
+      versione: number;
+      tipo: ConversazioneTipo;
+      nome: string | null;
+      membri: readonly MembroRecord[];
+      rimossi: readonly RimossoRecord[];
+    },
+  ): boolean {
+    this.db.exec("BEGIN");
+    try {
+      // Il controllo e la scrittura nella stessa istruzione: due spinte
+      // arrivate insieme non possono far vincere la più vecchia.
+      const avanzata = this.db
+        .prepare(
+          `UPDATE conversazioni SET versione_composizione = ?, tipo = ?, nome = ?
+             WHERE id = ? AND versione_composizione <= ?`,
+        )
+        .run(
+          composizione.versione,
+          composizione.tipo,
+          composizione.nome,
+          conversazioneId,
+          composizione.versione,
+        );
+
+      if (Number(avanzata.changes) === 0) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+
+      this.db
+        .prepare(`DELETE FROM conversazione_membri WHERE conversazione_id = ?`)
+        .run(conversazioneId);
+      const membro = this.db.prepare(
+        `INSERT INTO conversazione_membri (conversazione_id, user_id, joined_at, ruolo)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const m of composizione.membri) {
+        membro.run(conversazioneId, m.userId, m.joinedAt, m.ruolo);
+      }
+
+      this.db
+        .prepare(`DELETE FROM conversazione_rimossi WHERE conversazione_id = ?`)
+        .run(conversazioneId);
+      const rimosso = this.db.prepare(
+        `INSERT INTO conversazione_rimossi (conversazione_id, user_id, rimosso_il, da)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const r of composizione.rimossi) {
+        rimosso.run(conversazioneId, r.userId, r.rimossoIl, r.da);
+      }
+
+      this.db.exec("COMMIT");
+      return true;
+    } catch (causa) {
+      this.db.exec("ROLLBACK");
+      throw causa;
+    }
+  }
+
+  public dichiaraTrasloco(trasloco: TraslocoRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO conversazione_traslochi
+           (successore_id, conversazione_id, nome_di_prima, epoch, da, il, casa_persa, casa_persa_dal)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        trasloco.successoreId,
+        trasloco.conversazioneId,
+        trasloco.nomeDiPrima,
+        trasloco.epoch,
+        trasloco.da,
+        trasloco.il,
+        trasloco.casaPersa,
+        trasloco.casaPersaDal,
+      );
+  }
+
+  public traslocoDi(successoreId: string): TraslocoRecord | undefined {
+    const row = this.db.prepare(`${SELECT_TRASLOCO} WHERE successore_id = ?`).get(successoreId) as
+      TraslocoRow | undefined;
+
+    return row === undefined ? undefined : traslocoDaRiga(row);
+  }
+
+  public successoriDi(conversazioneId: string): TraslocoRecord[] {
+    const rows = this.db
+      .prepare(`${SELECT_TRASLOCO} WHERE conversazione_id = ? ORDER BY il ASC, successore_id ASC`)
+      .all(conversazioneId) as unknown as TraslocoRow[];
+
+    return rows.map(traslocoDaRiga);
+  }
+
+  public congelataIl(conversazioneId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT congelata_il FROM conversazioni WHERE id = ?`)
+      .get(conversazioneId) as { congelata_il: string | null } | undefined;
+
+    return row?.congelata_il ?? null;
+  }
+
+  public congela(conversazioneId: string, il: string): void {
+    this.db
+      .prepare(`UPDATE conversazioni SET congelata_il = ? WHERE id = ? AND congelata_il IS NULL`)
+      .run(il, conversazioneId);
+  }
+
+  public caseCustodi(conversazioneId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT user_id FROM conversazione_membri WHERE conversazione_id = ?
+         UNION
+         SELECT user_id FROM conversazione_rimossi WHERE conversazione_id = ?`,
+      )
+      .all(conversazioneId, conversazioneId) as { user_id: string }[];
+
+    const case_ = new Set<string>();
+    for (const { user_id: id } of rows) {
+      const chiave = casaDi(id);
+      if (chiave !== undefined) {
+        case_.add(chiave);
+      }
+    }
+
+    return [...case_];
+  }
+
+  public haRimossoDiCasa(conversazioneId: string, remoteKey: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM conversazione_rimossi
+           WHERE conversazione_id = ? AND user_id LIKE ? ESCAPE '\\'
+           LIMIT 1`,
+      )
+      .get(conversazioneId, `remote:${escapeLike(remoteKey)}:%`);
+
+    return row !== undefined;
   }
 
   findDirectConversazione(userA: string, userB: string): ConversazioneRecord | undefined {
@@ -574,19 +1047,22 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
     updatedAt: string;
     updatedBy: string;
   }): boolean {
-    // `WHERE epoch <= excluded.epoch` e' la regola, ed e' in SQL apposta: due
-    // client che depositano insieme non possono far vincere il piu' vecchio.
+    // La regola è in SQL apposta: due client che depositano insieme non
+    // possono far vincere il più vecchio. E l'epoch è **quella dell'ultimo
+    // commit in fila**, non «una non più bassa»: un `GroupInfo` che dichiara
+    // un'epoch che la fila non ha mai visto manderebbe chi rientra verso un
+    // gruppo che non esiste, e nessun deposito vero lo sostituirebbe più.
     const esito = this.db
       .prepare(
         `INSERT INTO conversazione_group_info
            (conversazione_id, epoch, group_info, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?)
+         SELECT ?, ?, ?, ?, ?
+          WHERE ? = ${EPOCH_IN_FILA}
          ON CONFLICT (conversazione_id) DO UPDATE SET
            epoch = excluded.epoch,
            group_info = excluded.group_info,
            updated_at = excluded.updated_at,
-           updated_by = excluded.updated_by
-         WHERE conversazione_group_info.epoch <= excluded.epoch`,
+           updated_by = excluded.updated_by`,
       )
       .run(
         record.conversazioneId,
@@ -594,6 +1070,8 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
         record.groupInfo,
         record.updatedAt,
         record.updatedBy,
+        record.epoch,
+        record.conversazioneId,
       );
 
     return esito.changes > 0;
@@ -639,15 +1117,23 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
       .prepare(
         `INSERT INTO conversazione_archivio_chiavi
            (conversazione_id, epoch, mazzo, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?)
+         SELECT ?, ?, ?, ?, ?
+          WHERE ? = ${EPOCH_IN_FILA}
          ON CONFLICT (conversazione_id) DO UPDATE SET
            epoch = excluded.epoch,
            mazzo = excluded.mazzo,
            updated_at = excluded.updated_at,
-           updated_by = excluded.updated_by
-         WHERE conversazione_archivio_chiavi.epoch <= excluded.epoch`,
+           updated_by = excluded.updated_by`,
       )
-      .run(record.conversazioneId, record.epoch, record.mazzo, record.updatedAt, record.updatedBy);
+      .run(
+        record.conversazioneId,
+        record.epoch,
+        record.mazzo,
+        record.updatedAt,
+        record.updatedBy,
+        record.epoch,
+        record.conversazioneId,
+      );
 
     return esito.changes > 0;
   }
@@ -1008,8 +1494,21 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
 
   public casaPartecipa(remoteKey: string): boolean {
     const row = this.db
-      .prepare(`SELECT 1 FROM conversazione_membri WHERE user_id LIKE ? ESCAPE '\\' LIMIT 1`)
-      .get(`remote:${escapeLike(remoteKey)}:%`);
+      .prepare(
+        `SELECT 1 FROM conversazione_membri m
+           JOIN conversazioni c ON c.id = m.conversazione_id
+          WHERE m.user_id LIKE ? ESCAPE '\\'
+            AND (
+              c.casa_che_ordina IS NULL
+              OR c.casa_che_ordina <> ?
+              OR EXISTS (
+                SELECT 1 FROM archivio_voci v
+                 WHERE v.conversazione_id = c.id AND v.autore_id IS NOT NULL
+              )
+            )
+          LIMIT 1`,
+      )
+      .get(`remote:${escapeLike(remoteKey)}:%`, remoteKey);
 
     return row !== undefined;
   }
@@ -1083,10 +1582,10 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
         `INSERT INTO conversazione_handshake
            (id, conversazione_id, epoch, tipo, destinatario, busta, created_at)
          SELECT ?, ?, ?, ?, ?, ?, ?
-         WHERE ? <> 'commit' OR NOT EXISTS (
-           SELECT 1 FROM conversazione_handshake
-             WHERE conversazione_id = ? AND tipo = 'commit' AND epoch >= ?
-         )`,
+          WHERE CASE WHEN ? = 'commit'
+                  THEN ? = ${EPOCH_IN_FILA} + 1
+                  ELSE ? >= 1 AND ? <= ${EPOCH_IN_FILA}
+                END`,
       )
       .run(
         record.id,
@@ -1097,11 +1596,56 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
         record.busta,
         record.createdAt,
         record.tipo,
+        record.epoch,
         record.conversazioneId,
         record.epoch,
+        record.epoch,
+        record.conversazioneId,
       );
 
     return Number(esito.changes) > 0;
+  }
+
+  public contaWelcome(conversazioneId: string, dal: string, destinatario?: string): number {
+    const row = (
+      destinatario === undefined
+        ? this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazione_handshake
+                 WHERE conversazione_id = ? AND tipo = 'welcome' AND created_at >= ?`,
+            )
+            .get(conversazioneId, dal)
+        : this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazione_handshake
+                 WHERE conversazione_id = ? AND tipo = 'welcome' AND created_at >= ?
+                   AND destinatario = ?`,
+            )
+            .get(conversazioneId, dal, destinatario)
+    ) as { n: number };
+
+    return row.n;
+  }
+
+  public contaNateDa(casa: string, dal: string, userId?: string): number {
+    const row = (
+      userId === undefined
+        ? this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazioni
+                 WHERE casa_che_ordina = ? AND created_at >= ?`,
+            )
+            .get(casa, dal)
+        : this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM conversazioni c
+                 JOIN conversazione_membri m ON m.conversazione_id = c.id
+                WHERE c.casa_che_ordina = ? AND c.created_at >= ? AND m.user_id = ?`,
+            )
+            .get(casa, dal, userId)
+    ) as { n: number };
+
+    return row.n;
   }
 
   /**

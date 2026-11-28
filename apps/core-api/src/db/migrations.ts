@@ -995,4 +995,105 @@ export const migrations: readonly Migration[] = [
        ) STRICT`,
     ],
   },
+  {
+    version: 34,
+    name: "accesso-del-dispositivo",
+    statements: [
+      // La chiave di rete di un Dispositivo (ADR 0044 §2, §4): l'identità iroh
+      // con cui l'app bussa da fuori. Una chiave, una sessione: revocare la
+      // sessione è revocare la chiave, e nessun'altra tabella lo deve ricordare.
+      `CREATE TABLE chiavi_di_rete (
+         chiave TEXT PRIMARY KEY NOT NULL,
+         session_id TEXT NOT NULL UNIQUE REFERENCES sessions (id) ON DELETE CASCADE,
+         user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+         creato_il TEXT NOT NULL
+       ) STRICT`,
+      `CREATE INDEX chiavi_di_rete_user ON chiavi_di_rete (user_id)`,
+      // I codici del QR (ADR 0044 §5). Solo l'impronta, come per le sessioni:
+      // leggere il database non dà un codice usabile. Monouso e brevi.
+      `CREATE TABLE ingressi_dispositivo (
+         id TEXT PRIMARY KEY NOT NULL,
+         user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+         codice_hash TEXT NOT NULL UNIQUE,
+         emesso_il TEXT NOT NULL,
+         scade_il TEXT NOT NULL,
+         usato_il TEXT
+       ) STRICT`,
+    ],
+  },
+  {
+    version: 35,
+    name: "gruppi",
+    statements: [
+      // I gruppi (M8 Fase 1). Il `tipo` c'era dalla migrazione 21 e niente
+      // creava mai un gruppo: mancavano il nome, chi può cambiare chi c'è, e
+      // la memoria di chi è stato tolto.
+      //
+      // Il nome è del gruppo; una conversazione diretta non ne ha.
+      `ALTER TABLE conversazioni ADD COLUMN nome TEXT`,
+      // La composizione ha una versione, e la assegna **la casa che ordina**
+      // ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3) a
+      // ogni cambio. Le altre case tengono uno specchio e lo sostituiscono
+      // solo con una versione non più bassa: una spinta vecchia arrivata tardi non
+      // rimette dentro chi è stato tolto.
+      `ALTER TABLE conversazioni ADD COLUMN versione_composizione INTEGER NOT NULL DEFAULT 0`,
+      // Risposta del proprietario, 2026-09-17: aggiungono e tolgono membri il
+      // creatore e gli amministratori che nomina. Chi c'era prima è `membro`,
+      // ed è vero: in una conversazione diretta non c'è niente da amministrare.
+      `ALTER TABLE conversazione_membri ADD COLUMN ruolo TEXT NOT NULL DEFAULT 'membro'
+         CHECK (ruolo IN ('creatore', 'amministratore', 'membro'))`,
+      // Chi è stato tolto, o è uscito, e quando. Serve a tre cose: l'istanza
+      // rifiuta di servirgli la conversazione dicendo perché, invece di un
+      // «non sei membro» che non spiega niente (criterio 3 di M8); la casa che
+      // ordina sa a quali case dire che la composizione è cambiata anche
+      // quando non hanno più nessuno dentro — custodiscono ancora quello che i
+      // loro avevano scritto ([ADR 0043](../../../../docs/adr/0043-custodia-lato-mittente.md));
+      // e chi riammette sa che sta riammettendo.
+      //
+      // `da` è chi ha tolto: uguale a `user_id` quando è un'uscita, che è
+      // un'operazione di chi esce e non di chi resta.
+      `CREATE TABLE conversazione_rimossi (
+         conversazione_id TEXT NOT NULL REFERENCES conversazioni (id) ON DELETE CASCADE,
+         user_id TEXT NOT NULL,
+         rimosso_il TEXT NOT NULL,
+         da TEXT NOT NULL,
+         PRIMARY KEY (conversazione_id, user_id)
+       ) STRICT`,
+    ],
+  },
+  {
+    version: 36,
+    name: "trasloco",
+    statements: [
+      // Il trasloco ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md)
+      // §3): quando la casa che ordina un gruppo è persa, un amministratore ne
+      // crea dalla propria casa un **successore dichiarato**.
+      //
+      // Una riga per successore, e ci sta scritto ciò che il successore dice
+      // di sé (punto 4): quale gruppo continua, l'ultima epoch che chi ha
+      // traslocato aveva visto, chi è stato e quando, quale casa era persa e
+      // da quando taceva. La scrive la casa di chi trasloca, e le altre la
+      // ricevono con la composizione del successore: non cambia più.
+      //
+      // `conversazione_id` **non** è un riferimento: chi entra nel successore
+      // senza essere stato nel gruppo di prima ha la dichiarazione e non il
+      // gruppo. Due traslochi dello stesso gruppo sono due righe, ed è voluto:
+      // il doppio trasloco non si previene, si rende visibile.
+      `CREATE TABLE conversazione_traslochi (
+         successore_id TEXT PRIMARY KEY NOT NULL REFERENCES conversazioni (id) ON DELETE CASCADE,
+         conversazione_id TEXT NOT NULL,
+         nome_di_prima TEXT NOT NULL,
+         epoch INTEGER NOT NULL,
+         da TEXT NOT NULL,
+         il TEXT NOT NULL,
+         casa_persa TEXT NOT NULL,
+         casa_persa_dal TEXT NOT NULL
+       ) STRICT`,
+      `CREATE INDEX conversazione_traslochi_di ON conversazione_traslochi (conversazione_id)`,
+      // Il gruppo di prima resta, in sola lettura (punto 5). La data è quella
+      // in cui **questa** casa ha smesso di accettarci scritture; NULL = non è
+      // congelato.
+      `ALTER TABLE conversazioni ADD COLUMN congelata_il TEXT`,
+    ],
+  },
 ];

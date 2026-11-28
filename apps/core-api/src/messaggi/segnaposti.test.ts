@@ -20,7 +20,7 @@ import { openDatabase } from "../db/database.js";
 import { SqliteUserRepository } from "../identity/repository.js";
 
 import { SqliteMessaggiRepository } from "./repository.js";
-import { MessaggiService, type ReteFraCase } from "./service.js";
+import { MessaggiService, QUOTE, type ChiPuoScrivere, type ReteFraCase } from "./service.js";
 
 const ORA = "2026-09-23T10:00:00.000Z";
 
@@ -35,6 +35,11 @@ interface Casa {
   /** Quante domande ha ricevuto questa casa, per sapere se si è chiesto davvero. */
   domande: { segnaposti: number };
   orologio: { adesso: string };
+  /**
+   * Chi può aprire una conversazione con chi (ADR 0030). Di norma tutti: qui
+   * si prova che cosa resta dove, e la regola ha le sue prove più sotto.
+   */
+  porta: ChiPuoScrivere;
 }
 
 function casa(dataDir: string, chiave: string): Casa {
@@ -45,7 +50,10 @@ function casa(dataDir: string, chiave: string): Casa {
   const accese = new Map<string, Casa>();
   const domande = { segnaposti: 0 };
 
+  const porta: ChiPuoScrivere = { puoAprire: () => true };
+
   const messaggi = new MessaggiService({
+    chiPuoScrivere: { puoAprire: (...argomenti) => porta.puoAprire(...argomenti) },
     now: () => orologio.adesso,
     repository: repo,
     users,
@@ -54,11 +62,16 @@ function casa(dataDir: string, chiave: string): Casa {
   // La rete, in processo: ogni domanda arriva all'altra casa come se venisse
   // dal filo, con la chiave di chi chiede al posto della connessione.
   const rete: ReteFraCase = {
+    // I gruppi hanno le loro prove in `gruppi.test.ts`: qui nessuno li usa.
+    annunciaComposizione: () => Promise.resolve(),
+    cambiaMembri: () => Promise.resolve({ esito: "irraggiungibile" }),
     casa: chiave,
     coda: () => Promise.resolve({ esito: "irraggiungibile" }),
+    composizione: () => Promise.resolve({ esito: "irraggiungibile" }),
     deposita: () => Promise.resolve({ esito: "irraggiungibile" }),
     depositaStato: () => Promise.resolve({ esito: "irraggiungibile" }),
     leggiStato: () => Promise.resolve({ esito: "irraggiungibile" }),
+    risponde: () => Promise.resolve(false),
     segnapostiDa: (altra, conversazioneId, dopo) => {
       const lei = accese.get(altra);
       if (lei === undefined) {
@@ -76,6 +89,7 @@ function casa(dataDir: string, chiave: string): Casa {
       accese.get(altra)?.messaggi.riceviSegnapostiSpinti({ ...spinta, remoteKey: chiave });
       return Promise.resolve();
     },
+    ultimoContatto: () => undefined,
     visitaArchivio: (altra, conversazioneId, ids) => {
       const lei = accese.get(altra);
       if (lei === undefined) {
@@ -110,6 +124,7 @@ function casa(dataDir: string, chiave: string): Casa {
     domande,
     messaggi,
     orologio,
+    porta,
     repo,
   };
 }
@@ -198,6 +213,383 @@ describe("l'annuncio: la casa di chi è invitato sa che la conversazione esiste"
         }),
       ).toBe(false);
       expect(aia.repo.casaCheOrdina(conv)).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * Le quattro cose che la revisione di sicurezza del 2026-11-27 ha trovato
+ * dietro l'annuncio, prima che la chat fra case venisse collegata davvero:
+ * chiunque faceva nascere qui una conversazione, la risposta diceva quali nomi
+ * esistono, un annuncio valeva il budget di una casa collegata, e i Welcome
+ * non avevano tetto.
+ */
+describe("l'annuncio non è un permesso (ADR 0030, ADR 0020 §1)", () => {
+  const annuncia = (
+    a: Casa,
+    da: Casa,
+    conv: string,
+    destinatari: string[],
+    chi = "matteo",
+  ): boolean =>
+    a.messaggi.riceviSegnapostiSpinti({
+      conversazioneId: conv,
+      da: chi,
+      destinatari,
+      remoteKey: da.chiave,
+      voci: [],
+    });
+
+  it("senza una regola che dica di sì, nessun annuncio fa nascere niente", async () => {
+    await withTempDataDir(async (dataDir) => {
+      const database = openDatabase(dataDir);
+      try {
+        const users = new SqliteUserRepository(database);
+        const repo = new SqliteMessaggiRepository(database);
+        // Nessun `chiPuoScrivere`: è il servizio com'è prima che la rete lo colleghi.
+        const messaggi = new MessaggiService({ now: () => ORA, repository: repo, users });
+        users.create({
+          createdAt: ORA,
+          deletedAt: null,
+          displayName: "marco",
+          id: "id-di-marco",
+          passwordHash: "$argon2id$finto",
+          role: "member",
+          username: "marco",
+        });
+
+        expect(
+          messaggi.riceviSegnapostiSpinti({
+            conversazioneId: "conv",
+            da: "matteo",
+            destinatari: ["marco"],
+            remoteKey: "una-casa",
+            voci: [],
+          }),
+        ).toBe(false);
+        expect(repo.casaCheOrdina("conv")).toBeUndefined();
+      } finally {
+        database.close();
+      }
+    });
+  });
+
+  it("chi non può scrivere a Marco non apre niente, e sente la stessa risposta di un nome che non c'è", async () => {
+    await dueCase(async (aia, borgo) => {
+      const marco = aia.abita("marco");
+      aia.porta.puoAprire = () => false;
+
+      const rifiutato = annuncia(aia, borgo, "conv-1", ["marco"]);
+      const inesistente = annuncia(aia, borgo, "conv-2", ["nessuno-con-questo-nome"]);
+
+      // La stessa risposta: da qui un'altra casa non impara chi abita qua.
+      expect(rifiutato).toBe(false);
+      expect(inesistente).toBe(rifiutato);
+      expect(aia.repo.casaCheOrdina("conv-1")).toBeUndefined();
+      expect(aia.messaggi.listConversazioni(marco)).toEqual([]);
+    });
+  });
+
+  it("la regola si chiede per ogni destinatario, con la casa della connessione e il nome dichiarato", async () => {
+    await dueCase(async (aia, borgo) => {
+      const marco = aia.abita("marco");
+      const lucia = aia.abita("lucia");
+      const chieste: unknown[] = [];
+      aia.porta.puoAprire = (casaDiChi, da, destinatario) => {
+        chieste.push({ casaDiChi, da, destinatario: destinatario.username });
+        return destinatario.id === marco;
+      };
+
+      // Lucia non si può raggiungere: con lei dentro, niente nasce — nemmeno
+      // per Marco, che da solo si potrebbe.
+      expect(annuncia(aia, borgo, "conv-a-tre", ["marco", "lucia"])).toBe(false);
+      expect(aia.repo.casaCheOrdina("conv-a-tre")).toBeUndefined();
+      expect(aia.messaggi.listConversazioni(lucia)).toEqual([]);
+
+      expect(annuncia(aia, borgo, "conv-a-due", ["marco"])).toBe(true);
+      expect(aia.repo.casaCheOrdina("conv-a-due")).toBe(borgo.chiave);
+      expect(chieste).toContainEqual({
+        casaDiChi: borgo.chiave,
+        da: "matteo",
+        destinatario: "marco",
+      });
+      expect(chieste).toContainEqual({
+        casaDiChi: borgo.chiave,
+        da: "matteo",
+        destinatario: "lucia",
+      });
+    });
+  });
+
+  it("un nome di chi scrive che non è un nome non crea un membro", async () => {
+    await dueCase(async (aia, borgo) => {
+      aia.abita("marco");
+
+      for (const da of ["", "Matteo Con Spazi", "a", "matteo:altro", "x".repeat(200)]) {
+        expect({ da, esito: annuncia(aia, borgo, `conv-${da.length}`, ["marco"], da) }).toEqual({
+          da,
+          esito: false,
+        });
+      }
+    });
+  });
+
+  it("una casa non fa nascere più conversazioni di quante ne tiene la quota, né per una persona né in tutto", async () => {
+    await dueCase(async (aia, borgo) => {
+      aia.abita("marco");
+
+      for (let n = 0; n < QUOTE.annunciPerPersona; n += 1) {
+        expect(annuncia(aia, borgo, `per-marco-${n}`, ["marco"])).toBe(true);
+      }
+      expect(annuncia(aia, borgo, "per-marco-una-di-troppo", ["marco"])).toBe(false);
+      expect(aia.repo.casaCheOrdina("per-marco-una-di-troppo")).toBeUndefined();
+
+      // Un'altra casa ha la sua quota: quella di Borgo non la tocca.
+      const terza = { ...borgo, chiave: "chiave-di-corte" };
+      expect(annuncia(aia, terza, "da-corte", ["marco"])).toBe(true);
+
+      // E in tutto: tante persone diverse, ma la casa che annuncia è una.
+      let nate = QUOTE.annunciPerPersona;
+      for (let persona = 0; nate < QUOTE.annunciPerCasa; persona += 1) {
+        aia.abita(`persona-${persona}`);
+        for (let n = 0; n < QUOTE.annunciPerPersona && nate < QUOTE.annunciPerCasa; n += 1) {
+          expect(annuncia(aia, borgo, `p${persona}-${n}`, [`persona-${persona}`])).toBe(true);
+          nate += 1;
+        }
+      }
+      aia.abita("ultima");
+      expect(annuncia(aia, borgo, "oltre-la-quota", ["ultima"])).toBe(false);
+
+      // La finestra è di un giorno: passato quello, si ricomincia.
+      aia.orologio.adesso = "2026-09-24T10:00:01.000Z";
+      expect(annuncia(aia, borgo, "il-giorno-dopo", ["ultima"])).toBe(true);
+    });
+  });
+
+  it("un annuncio ripetuto non consuma la quota e non cambia la conversazione", async () => {
+    await dueCase(async (aia, borgo) => {
+      const marco = aia.abita("marco");
+
+      for (let n = 0; n < QUOTE.annunciPerPersona * 3; n += 1) {
+        expect(annuncia(aia, borgo, "sempre-la-stessa", ["marco"])).toBe(true);
+      }
+      expect(aia.messaggi.listConversazioni(marco)).toHaveLength(1);
+    });
+  });
+
+  it("una conversazione soltanto annunciata non vale il budget di una casa collegata", async () => {
+    await dueCase(async (aia, borgo) => {
+      const marco = aia.abita("marco");
+
+      expect(annuncia(aia, borgo, "annunciata", ["marco"])).toBe(true);
+      // Borgo l'ha annunciata e basta: ad Aia nessuno ha fatto niente.
+      expect(aia.messaggi.casaPartecipa(borgo.chiave)).toBe(false);
+
+      // Marco ci scrive: adesso è una conversazione che qualcuno di qui usa.
+      scrive(aia, marco, "annunciata", "m-di-marco");
+      expect(aia.messaggi.casaPartecipa(borgo.chiave)).toBe(true);
+    });
+  });
+
+  it("una conversazione aperta da qualcuno di qui vale subito", async () => {
+    await dueCase(async (aia, borgo) => {
+      const marco = aia.abita("marco");
+
+      expect(aia.messaggi.casaPartecipa(borgo.chiave)).toBe(false);
+      aia.messaggi.getOrCreateDirect(marco, {
+        recipientUsername: "matteo",
+        remoteInstanceKey: borgo.chiave,
+      });
+      expect(aia.messaggi.casaPartecipa(borgo.chiave)).toBe(true);
+    });
+  });
+});
+
+describe("i Welcome hanno un tetto (ADR 0042 §3)", () => {
+  /** Una conversazione che ordina Borgo, con Matteo di là e Marco di qua, e un commit in fila. */
+  async function conUnCommit(aia: Casa, borgo: Casa): Promise<{ conv: string; matteo: string }> {
+    const { conv, matteo } = await conversazione(aia, borgo);
+    await borgo.messaggi.depositaHandshake(matteo, conv, { busta: "C1", epoch: 1, tipo: "commit" });
+    return { conv, matteo };
+  }
+
+  const welcomeDa = (
+    ordina: Casa,
+    da: Casa,
+    conv: string,
+    destinatario: string,
+    epoch = 1,
+  ): unknown =>
+    ordina.messaggi.depositaHandshakeRemoto({
+      busta: "W",
+      conversazioneId: conv,
+      createdAt: "1999-01-01T00:00:00.000Z",
+      destinatario,
+      epoch,
+      id: "sempre-lo-stesso-id",
+      remoteKey: da.chiave,
+      tipo: "welcome",
+    });
+
+  it("un Welcome è per un membro: per chiunque altro non entra in fila", async () => {
+    await dueCase(async (aia, borgo) => {
+      const { conv, matteo } = await conUnCommit(aia, borgo);
+
+      expect(welcomeDa(borgo, aia, conv, "uno-che-non-c-entra")).toBeUndefined();
+      await expect(
+        borgo.messaggi.depositaHandshake(matteo, conv, {
+          busta: "W",
+          destinatario: "uno-che-non-c-entra",
+          epoch: 1,
+          tipo: "welcome",
+        }),
+      ).rejects.toMatchObject({ code: "invalid_request" });
+
+      expect(welcomeDa(borgo, aia, conv, `remote:${aia.chiave}:marco`)).toEqual({
+        id: expect.any(String),
+      });
+    });
+  });
+
+  it("l'id e l'orario li mette chi ordina: quelli dell'altra casa non contano", async () => {
+    await dueCase(async (aia, borgo) => {
+      const { conv } = await conUnCommit(aia, borgo);
+      const marco = `remote:${aia.chiave}:marco`;
+
+      // Lo stesso id due volte: prima faceva fallire la scrittura.
+      const primo = welcomeDa(borgo, aia, conv, marco) as { id: string };
+      const secondo = welcomeDa(borgo, aia, conv, marco) as { id: string };
+      expect(primo.id).not.toBe(secondo.id);
+      expect(primo.id).not.toBe("sempre-lo-stesso-id");
+
+      const coda = borgo.messaggi.handshakeRemoti(conv, aia.chiave);
+      expect(coda?.handshake.filter((h) => h.tipo === "welcome").map((h) => h.createdAt)).toEqual([
+        ORA,
+        ORA,
+      ]);
+    });
+  });
+
+  it("un Welcome porta un'epoch che la fila ha già: non una inventata", async () => {
+    await dueCase(async (aia, borgo) => {
+      const { conv } = await conUnCommit(aia, borgo);
+      const marco = `remote:${aia.chiave}:marco`;
+
+      expect(welcomeDa(borgo, aia, conv, marco, 2)).toBe("indietro");
+      expect(welcomeDa(borgo, aia, conv, marco, 2 ** 53 - 1)).toBe("indietro");
+      expect(welcomeDa(borgo, aia, conv, marco, 0)).toBe("indietro");
+    });
+  });
+
+  it("per lo stesso destinatario non ne entrano più della quota, da nessuna delle due porte", async () => {
+    await dueCase(async (aia, borgo) => {
+      const { conv, matteo } = await conUnCommit(aia, borgo);
+      const marco = `remote:${aia.chiave}:marco`;
+
+      for (let n = 0; n < QUOTE.welcomePerDestinatario; n += 1) {
+        expect(welcomeDa(borgo, aia, conv, marco)).toEqual({ id: expect.any(String) });
+      }
+
+      // Lo stesso rifiuto di sempre, senza dire perché (§2).
+      expect(welcomeDa(borgo, aia, conv, marco)).toBeUndefined();
+      // E un membro di casa non ha una quota a parte.
+      await expect(
+        borgo.messaggi.depositaHandshake(matteo, conv, {
+          busta: "W",
+          destinatario: marco,
+          epoch: 1,
+          tipo: "welcome",
+        }),
+      ).rejects.toMatchObject({ code: "troppe_richieste" });
+
+      // Un altro destinatario ha il suo conto.
+      expect(welcomeDa(borgo, aia, conv, matteo)).toEqual({ id: expect.any(String) });
+
+      // I commit non c'entrano: il gruppo va avanti.
+      expect(
+        borgo.messaggi.depositaHandshakeRemoto({
+          busta: "C2",
+          conversazioneId: conv,
+          createdAt: ORA,
+          epoch: 2,
+          id: "c2",
+          remoteKey: aia.chiave,
+          tipo: "commit",
+        }),
+      ).toEqual({ id: expect.any(String) });
+
+      // E il giorno dopo la finestra si è svuotata.
+      borgo.orologio.adesso = "2026-09-24T10:00:01.000Z";
+      expect(welcomeDa(borgo, aia, conv, marco, 2)).toEqual({ id: expect.any(String) });
+    });
+  });
+
+  it("una conversazione ha un tetto suo, qualunque siano i destinatari", async () => {
+    await dueCase(async (aia, borgo) => {
+      const { conv } = await conUnCommit(aia, borgo);
+
+      // Tanti membri di Aia, scritti nel database: i gruppi non hanno ancora una rotta.
+      const membri = Array.from(
+        { length: QUOTE.welcomePerConversazione / QUOTE.welcomePerDestinatario + 1 },
+        (_, n) => `remote:${aia.chiave}:membro-${n}`,
+      );
+      const aggiungi = borgo.database.prepare(
+        `INSERT INTO conversazione_membri (conversazione_id, user_id, joined_at) VALUES (?, ?, ?)`,
+      );
+      membri.forEach((m) => aggiungi.run(conv, m, ORA));
+
+      let entrati = 0;
+      for (const membro of membri) {
+        for (let n = 0; n < QUOTE.welcomePerDestinatario; n += 1) {
+          if (welcomeDa(borgo, aia, conv, membro) !== undefined) {
+            entrati += 1;
+          }
+        }
+      }
+
+      expect(entrati).toBe(QUOTE.welcomePerConversazione);
+    });
+  });
+
+  it("una casa ha un tetto suo, in tutte le sue conversazioni insieme", async () => {
+    await dueCase(async (aia, borgo) => {
+      const matteo = borgo.abita("matteo");
+      const aggiungi = borgo.database.prepare(
+        `INSERT INTO conversazione_membri (conversazione_id, user_id, joined_at) VALUES (?, ?, ?)`,
+      );
+
+      let entrati = 0;
+      let rifiutati = 0;
+      const conversazioni = QUOTE.welcomePerCasa / QUOTE.welcomePerConversazione + 1;
+      for (let c = 0; c < conversazioni; c += 1) {
+        const conv = `conv-${c}`;
+        borgo.repo.createConversazione({
+          createdAt: ORA,
+          id: conv,
+          membri: [matteo],
+          tipo: "gruppo",
+        });
+        await borgo.messaggi.depositaHandshake(matteo, conv, {
+          busta: "C1",
+          epoch: 1,
+          tipo: "commit",
+        });
+
+        for (let m = 0; m < QUOTE.welcomePerConversazione / QUOTE.welcomePerDestinatario; m += 1) {
+          const membro = `remote:${aia.chiave}:membro-${m}`;
+          aggiungi.run(conv, membro, ORA);
+          for (let n = 0; n < QUOTE.welcomePerDestinatario; n += 1) {
+            if (welcomeDa(borgo, aia, conv, membro) === undefined) {
+              rifiutati += 1;
+            } else {
+              entrati += 1;
+            }
+          }
+        }
+      }
+
+      expect(entrati).toBe(QUOTE.welcomePerCasa);
+      expect(rifiutati).toBe(QUOTE.welcomePerConversazione);
     });
   });
 });

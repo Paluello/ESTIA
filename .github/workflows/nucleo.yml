@@ -1,0 +1,122 @@
+name: nucleo
+
+# Il nucleo Rust delle app native (apps/nucleo, ADR 0051) e la prova che il suo
+# MLS e quello del web stanno nella stessa conversazione (S7).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/nucleo/**"
+      - "apps/web/src/mls/**"
+      - "apps/web/package.json"
+      - "patches/**"
+      - "infra/spike-mls/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/nucleo.yml"
+  pull_request:
+    paths:
+      - "apps/nucleo/**"
+      - "apps/web/src/mls/**"
+      - "apps/web/package.json"
+      - "patches/**"
+      - "infra/spike-mls/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/nucleo.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: nucleo-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/nucleo
+            infra/spike-mls/ponte
+
+      - name: Formato e clippy
+        working-directory: apps/nucleo
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: apps/nucleo
+        run: cargo test --locked
+
+      - name: Legami Swift e Kotlin, e il confine dei segreti
+        working-directory: apps/nucleo
+        run: ./scripts/legami.sh
+
+      - name: Libreria per Android (arm64)
+        working-directory: apps/nucleo
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          export AR_aarch64_linux_android="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          cargo build --locked --lib --release --target aarch64-linux-android
+          ls -l target/aarch64-linux-android/release/libestia_nucleo.so
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - run: corepack enable
+
+      - run: corepack pnpm install --frozen-lockfile
+
+      - name: S7, OpenMLS e ts-mls nella stessa conversazione
+        run: |
+          cargo build --locked --manifest-path infra/spike-mls/ponte/Cargo.toml
+          node infra/spike-mls/prova.mjs
+
+  apple:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/nucleo
+
+      - name: I legami Swift, compilati e provati
+        working-directory: apps/nucleo
+        run: |
+          ./scripts/legami.sh
+          swiftc -O \
+            -Xcc -fmodule-map-file=target/legami/swift/EstiaNucleoFFI.modulemap \
+            -I target/legami/swift \
+            target/legami/swift/EstiaNucleo.swift tests/swift/main.swift \
+            target/debug/libestia_nucleo.a \
+            -framework SystemConfiguration -framework Security -framework CoreFoundation \
+            -o target/prova-swift
+          ./target/prova-swift
+
+      - name: Librerie per iPhone e simulatore
+        working-directory: apps/nucleo
+        run: |
+          cargo build --locked --lib --release --target aarch64-apple-ios
+          cargo build --locked --lib --release --target aarch64-apple-ios-sim
+          ls -l target/aarch64-apple-ios/release/libestia_nucleo.a target/aarch64-apple-ios-sim/release/libestia_nucleo.a

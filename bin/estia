@@ -321,6 +321,7 @@ ${CCYAN}╔═══════════════════════
 	sayb "${C1}2. Destinazione dei dati${C0}"
 	sayb "   ${CCYAN}├──${C0} Volume/Percorso: ${C1}$DATA_SOURCE${C0}"
 	sayb "   ${CCYAN}└──${C0} ${CYELLOW}⚠️  Attenzione: il ripristino sostituirà i dati dell'istanza con quelli del backup.${C0}"
+	sayb "       ${CDIM}Quelli di adesso non si cancellano: finiscono in una cartella .prima-del-ripristino-… accanto ai dati.${C0}"
 	printf "   Vuoi procedere con il ripristino? [s/N]: "
 	read -r CONFERMA
 	case "$CONFERMA" in
@@ -343,7 +344,13 @@ ${CCYAN}╔═══════════════════════
 	fi
 
 	sayb "${C1}3. Decifratura ed estrazione${C0}"
+	# Da root perche' deve poter scrivere nel volume di chiunque e restituirlo
+	# a 10001, ma con le sole capability che servono a questo, senza rete e
+	# senza privilegi nuovi: il contenuto di un archivio e' input non fidato.
 	if docker run --rm -it --user 0:0 \
+		--cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
+		--security-opt no-new-privileges:true \
+		--network none \
 		-v "${ARCH_HOST_DIR}:/backup:ro" \
 		-v "${DATA_SOURCE}:/restore" \
 		--entrypoint node "$IMAGE" dist/backup/cli.js ripristina "/backup/${ARCH_FILE}" /restore --sovrascrivi; then
@@ -360,7 +367,7 @@ ${CCYAN}╔═══════════════════════
 	else
 		if [ "$WAS_RUNNING" = "1" ]; then
 			sayb ""
-			sayb "${CYELLOW}→${C0} Ripristino non riuscito. Riavvio il container con i dati precedenti…"
+			sayb "${CYELLOW}→${C0} Ripristino non riuscito: i dati dell'istanza non sono stati toccati. Riavvio il container…"
 			docker start "$NAME" >/dev/null
 		fi
 		die "Ripristino non completato."

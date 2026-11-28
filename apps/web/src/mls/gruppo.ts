@@ -20,6 +20,7 @@
  *    legato all'epoch e chi entra dopo non può derivare quello di prima
  *    ([S2](../../../../docs/spike/S2-la-chiave-d-archivio.md)).
  */
+import { MAX_FOGLIE_GRUPPO } from "@estia/contracts";
 import {
   acceptAll,
   createApplicationMessage,
@@ -69,6 +70,13 @@ export const CIPHERSUITE = "MLS_128_DHKEMP256_AES128GCM_SHA256_P256";
 
 /** L'etichetta con cui si deriva la serratura del mazzo d'archivio (S2). */
 const ETICHETTA_ARCHIVIO = "estia archive wrap v1";
+
+/**
+ * L'etichetta con cui si deriva la chiave che la catena d'archivio guadagna a
+ * ogni rimozione ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §2).
+ * Diversa da quella della serratura: stesso segreto, due usi che non si toccano.
+ */
+const ETICHETTA_ROTAZIONE = "estia archive chain v1";
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -311,6 +319,202 @@ export async function aggiungi(
     stato: esito.newState,
     welcome: serializzaWelcome(esito.welcome),
   };
+}
+
+/** Una foglia dell'albero: dove sta, di chi è, con che chiave firma. */
+export interface Foglia {
+  indice: number;
+  membro: Membro;
+  chiaveDiFirma: Uint8Array;
+}
+
+/**
+ * Le foglie dell'albero, una per dispositivo.
+ *
+ * Una foglia la cui credenziale non porta una casa compare lo stesso, con un
+ * nome vuoto che non è di nessuno: chi confronta l'albero con i membri deve
+ * vederla come **un'estranea**, non perderla di vista.
+ */
+export function foglie(stato: ClientState): Foglia[] {
+  const elenco: Foglia[] = [];
+  stato.ratchetTree.forEach((nodo, posizione) => {
+    if (nodo === undefined || nodo.nodeType !== "leaf") {
+      return;
+    }
+
+    const credenziale = nodo.leaf.credential;
+    const membro =
+      credenziale.credentialType === "basic"
+        ? leggiIdentita(td.decode(credenziale.identity))
+        : undefined;
+    elenco.push({
+      chiaveDiFirma: nodo.leaf.signaturePublicKey,
+      // Nell'albero di RFC 9420 le foglie stanno ai posti pari.
+      indice: posizione / 2,
+      membro: membro ?? { casa: "", username: "" },
+    });
+  });
+  return elenco;
+}
+
+/** Di chi dice di essere una chiave d'ingresso. `undefined` se non porta una casa. */
+export function diChiE(pacchetto: KeyPackage): Membro | undefined {
+  const credenziale = pacchetto.leafNode.credential;
+  return credenziale.credentialType === "basic"
+    ? leggiIdentita(td.decode(credenziale.identity))
+    : undefined;
+}
+
+/** Le foglie di una persona: tutti i suoi dispositivi in questo gruppo. */
+export function foglieDi(stato: ClientState, membro: Membro): Foglia[] {
+  const chi = scriviIdentita(membro);
+  return foglie(stato).filter((f) => scriviIdentita(f.membro) === chi);
+}
+
+/** Chi sono io in questo gruppo: la credenziale della mia foglia. */
+export function ioIn(stato: ClientState): Membro | undefined {
+  return foglie(stato).find((f) => f.indice === stato.privatePath.leafIndex)?.membro;
+}
+
+/** Questo dispositivo è stato tolto dal gruppo: il suo stato non si usa più. */
+export const toltoDalGruppo = (stato: ClientState): boolean =>
+  stato.groupActiveState.kind === "removedFromGroup";
+
+/**
+ * L'albero messo accanto a chi dovrebbe esserci.
+ *
+ * - `estranei`: hanno una foglia e non sono fra i membri. Possono aprire il
+ *   mazzo, quindi leggere: è la discrepanza che conta.
+ * - `assenti`: sono fra i membri e non hanno nessuna foglia. Non leggono
+ *   ancora niente: qualcuno deve farli entrare.
+ */
+export interface Confronto {
+  estranei: Membro[];
+  assenti: Membro[];
+}
+
+export function confronta(stato: ClientState, attesi: readonly Membro[]): Confronto {
+  const nellAlbero = new Map<string, Membro>();
+  for (const foglia of foglie(stato)) {
+    nellAlbero.set(scriviIdentita(foglia.membro), foglia.membro);
+  }
+  const fraIMembri = new Set(attesi.map(scriviIdentita));
+
+  return {
+    assenti: attesi.filter((m) => !nellAlbero.has(scriviIdentita(m))),
+    estranei: [...nellAlbero].filter(([chi]) => !fraIMembri.has(chi)).map(([, m]) => m),
+  };
+}
+
+export interface EsitoCambio {
+  stato: ClientState;
+  /** Va a tutti i membri. */
+  commit: Uint8Array;
+  /** Uno solo per tutti quelli che entrano; manca se non entra nessuno. */
+  welcome?: Uint8Array;
+  epoch: number;
+}
+
+/**
+ * Un commit solo che fa entrare delle foglie e ne toglie altre.
+ *
+ * È l'operazione dei gruppi e dei dispositivi insieme: togliere una persona è
+ * togliere **tutte** le sue foglie, e riammetterla è togliere le vecchie e
+ * aggiungere le nuove **nello stesso commit**, così che non esista un'epoch in
+ * cui ci sono entrambe.
+ *
+ * Non ci si toglie da soli: MLS non lo permette a chi firma il commit. Chi
+ * esce lo dice alla casa che ordina, e la sua foglia la toglie il primo che se
+ * ne accorge ([`allinea`](./conversazione.ts)).
+ */
+export async function cambiaFoglie(
+  stato: ClientState,
+  cambio: { entrano: readonly KeyPackage[]; escono: readonly number[] },
+  porta: Porta,
+): Promise<EsitoCambio> {
+  if (cambio.escono.includes(stato.privatePath.leafIndex)) {
+    throw new Error("Non ci si toglie da soli: lo fa un altro membro.");
+  }
+
+  const quante = foglie(stato).length + cambio.entrano.length - cambio.escono.length;
+  // Un dispositivo è una foglia ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)):
+  // il tetto conta dispositivi. L'istanza conta le persone, che è ciò che vede.
+  if (quante > MAX_FOGLIE_GRUPPO) {
+    throw new TroppeFoglie();
+  }
+
+  const cs = await suite();
+  const esito = await createCommit(
+    { cipherSuite: cs, state: { ...stato, clientConfig: configurazione(porta) } },
+    {
+      extraProposals: [
+        // Prima chi esce, poi chi entra: una riammissione riusa il posto.
+        ...cambio.escono.map((removed) => ({
+          proposalType: "remove" as const,
+          remove: { removed },
+        })),
+        ...cambio.entrano.map((keyPackage) => ({
+          add: { keyPackage },
+          proposalType: "add" as const,
+        })),
+      ],
+      ratchetTreeExtension: true,
+    },
+  );
+
+  if (cambio.entrano.length > 0 && esito.welcome === undefined) {
+    throw new Error("Un ingresso senza Welcome non è un ingresso.");
+  }
+
+  return {
+    commit: encodeMlsMessage(esito.commit),
+    epoch: Number(esito.newState.groupContext.epoch),
+    stato: esito.newState,
+    ...(esito.welcome === undefined ? {} : { welcome: serializzaWelcome(esito.welcome) }),
+  };
+}
+
+/** Il gruppo è pieno: cinquanta foglie, e un dispositivo è una foglia. */
+export class TroppeFoglie extends Error {
+  public readonly code = "gruppo_pieno";
+
+  public constructor() {
+    // Il messaggio è il codice: la frase la sceglie chi lo mostra (ADR 0046).
+    super("gruppo_pieno");
+  }
+}
+
+/**
+ * La chiave che la catena d'archivio guadagna quando qualcuno viene tolto
+ * ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §2).
+ *
+ * Si deriva dall'epoch **che la rimozione ha creato**: chi resta la ottiene
+ * identica senza scambiarsi niente, e chi è stato tolto non la ottiene, perché
+ * di quell'epoch non ha il segreto. Una chiave casuale scelta da chi toglie
+ * dovrebbe arrivare agli altri prima che uno di loro riavvolga il mazzo con la
+ * catena vecchia — una corsa che la derivazione non ha.
+ */
+export async function chiaveDiRotazione(stato: ClientState): Promise<Uint8Array> {
+  const cs = await suite();
+  return mlsExporter(
+    stato.keySchedule.exporterSecret,
+    ETICHETTA_ROTAZIONE,
+    new Uint8Array(),
+    32,
+    cs,
+  );
+}
+
+/**
+ * Fra due stati consecutivi, qualche foglia è stata tolta?
+ *
+ * Si guarda la **chiave di firma**, non il posto: un rientro con la stessa
+ * chiave sostituisce la foglia e non toglie nessuno, e un posto riusato da chi
+ * entra nello stesso commit è comunque un dispositivo che non c'è più.
+ */
+export function qualcunoTolto(prima: ClientState, dopo: ClientState): boolean {
+  const rimaste = foglie(dopo).map((f) => f.chiaveDiFirma);
+  return foglie(prima).some((f) => !rimaste.some((r) => uguali(r, f.chiaveDiFirma)));
 }
 
 /** Entra in un gruppo dal proprio Welcome. */

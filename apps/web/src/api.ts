@@ -58,11 +58,16 @@ import type {
   PublishKeyPackagesRequest,
   RegisterDeviceKeyRequest,
   RegisterDeviceKeyResponse,
+  SfidaView,
   SaveKeyBackupRequest,
   ArchivioPage,
   ChiaviDiFirmaView,
   ConversazioneView,
+  CreaGruppoRequest,
+  TraslocaGruppoRequest,
   CreateConversazioneRequest,
+  MembroGruppoInput,
+  RuoloGruppo,
   DepositaArchivioRequest,
   DepositaHandshakeRequest,
   GroupInfoView,
@@ -80,6 +85,7 @@ import { fraseDiErrore } from "@estia/lingue";
 
 import { linguaCorrente } from "./lingua.js";
 import { t } from "./lingua.js";
+import { chiedi } from "./piattaforma/app.js";
 
 /**
  * Carries the machine-readable code, so screens can react to the cause.
@@ -129,7 +135,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers.authorization = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(path, {
+  const response = await chiedi(path, {
     headers,
     method: options.method ?? "GET",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -192,7 +198,7 @@ export const api = {
    * instance builds the path from an identifier of its own.
    */
   uploadMedia: async (token: string, blob: Blob): Promise<MediaView> => {
-    const response = await fetch("/api/v1/media", {
+    const response = await chiedi("/api/v1/media", {
       body: blob,
       headers: { authorization: `Bearer ${token}`, "content-type": blob.type },
       method: "POST",
@@ -556,6 +562,9 @@ export const api = {
     return response.blob();
   },
 
+  sfidaDispositivo: (token: string): Promise<SfidaView> =>
+    request("/api/v1/dispositivi/sfida", { method: "POST", token }),
+
   registerDeviceKey: (
     token: string,
     body: RegisterDeviceKeyRequest,
@@ -729,6 +738,66 @@ export const api = {
       method: "DELETE",
       token,
     }),
+
+  // --- Gruppi (M8) --------------------------------------------------------
+  //
+  // Queste rotte cambiano **chi è nel gruppo per la casa che ordina**. Chi è
+  // nel gruppo cifrato lo cambia il client, con un commit MLS: le due cose si
+  // fanno una dopo l'altra, e [`conversazione.ts`](./mls/conversazione.ts)
+  // rimette d'accordo la seconda con la prima se la scheda si chiude in mezzo.
+
+  creaGruppo: (
+    token: string,
+    body: CreaGruppoRequest,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request("/api/v1/gruppi", { body, method: "POST", token }),
+
+  aggiungiAlGruppo: (
+    token: string,
+    id: string,
+    body: MembroGruppoInput,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(`/api/v1/conversazioni/${encodeURIComponent(id)}/membri`, {
+      body,
+      method: "POST",
+      token,
+    }),
+
+  togliDalGruppo: (
+    token: string,
+    id: string,
+    membroId: string,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(
+      `/api/v1/conversazioni/${encodeURIComponent(id)}/membri/${encodeURIComponent(membroId)}`,
+      { method: "DELETE", token },
+    ),
+
+  cambiaRuoloNelGruppo: (
+    token: string,
+    id: string,
+    membroId: string,
+    ruolo: Exclude<RuoloGruppo, "creatore">,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(
+      `/api/v1/conversazioni/${encodeURIComponent(id)}/membri/${encodeURIComponent(membroId)}/ruolo`,
+      { body: { ruolo }, method: "PUT", token },
+    ),
+
+  /** Il trasloco (ADR 0042 §3): risponde con il gruppo che continua questo. */
+  traslocaGruppo: (
+    token: string,
+    id: string,
+    body: TraslocaGruppoRequest,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(`/api/v1/conversazioni/${encodeURIComponent(id)}/trasloco`, {
+      body,
+      method: "POST",
+      token,
+    }),
+
+  esciDalGruppo: (token: string, id: string): Promise<void> =>
+    request(`/api/v1/conversazioni/${encodeURIComponent(id)}/uscita`, { method: "POST", token }),
 
   // --- Segnalazioni (ADR 0047, ADR 0049) ---------------------------------
 

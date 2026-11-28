@@ -1,0 +1,55 @@
+[package]
+name = "estia-app"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only"
+description = "L'app ESTIA: il Dispositivo di ADR 0044, su Tauri 2"
+
+[lib]
+name = "estia_app_lib"
+# staticlib per iOS, cdylib per Android, rlib per il binario desktop.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+anyhow = "1"
+base64 = "0.22"
+iroh = "=1.4.1"
+iroh-tickets = "=1.0.0"
+keyring-core = "=1.0.1"
+chacha20poly1305 = "0.10.1"
+
+# La cassaforte del sistema, una per piattaforma (ADR 0044 §2).
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+apple-native-keyring-store = { version = "=1.0.2", features = ["keychain", "protected"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = "=1.0.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "=1.1.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
+# iroh 1.4.1 non compila per iOS con libc >= 0.2.190 (richiesto da mio),
+# che dichiara solo per macOS `in6_ifreq` (netdev) e le costanti di route.h (netwatch).
+# Le copie in ../patches le dichiarano da sé. Vedi ../patches/README.md.
+[patch.crates-io]
+netdev = { path = "../patches/netdev" }
+netwatch = { path = "../patches/netwatch" }

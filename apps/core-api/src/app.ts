@@ -36,9 +36,13 @@ import { FeedService } from "./feed/service.js";
 import { SqliteNotificheRepository } from "./notifiche/repository.js";
 import { registerNotificheRoutes } from "./notifiche/routes.js";
 import { NotificheService } from "./notifiche/service.js";
+import { AccessoDispositivi, SqliteAccessoRepository } from "./dispositivi/accesso.js";
+import { ServizioDispositivo, ServizioIngresso, type Iniettore } from "./dispositivi/alpn.js";
+import { INTESTAZIONE_CANALE, contrassegnoDi } from "./dispositivi/canale.js";
 import { SqliteDeviceKeysRepository } from "./dispositivi/repository.js";
 import { registerDispositiviRoutes } from "./dispositivi/routes.js";
 import { DispositiviService } from "./dispositivi/service.js";
+import { chiPuoScrivere, direttorioMessaggi, reteFraCase } from "./messaggi/direttorio.js";
 import { SqliteMessaggiRepository } from "./messaggi/repository.js";
 import { registerMessaggiRoutes } from "./messaggi/routes.js";
 import { MessaggiService } from "./messaggi/service.js";
@@ -150,6 +154,14 @@ export interface BuildAppOptions {
    * databases with purely in-memory connections to isolate runs.
    */
   createTransactor?: typeof createTransactor;
+  /**
+   * Sostituisce il trasporto fra istanze, e soltanto quello. Esiste perché una
+   * prova possa mettere un filo in processo fra due istanze intere: tutto il
+   * resto — il protocollo, i permessi, i limiti, il collegamento dei servizi —
+   * resta quello vero, che è ciò che la prova deve vedere
+   * (`federation/filo-finto.ts`).
+   */
+  createEndpoint?: (chiavi: { secretKey: Uint8Array; publicKey: string }) => InstanceEndpoint;
 }
 
 export async function buildApp(
@@ -166,7 +178,12 @@ export async function buildApp(
         : {
             level: config.logLevel,
             redact: {
-              paths: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
+              paths: [
+                "req.headers.authorization",
+                "req.headers.cookie",
+                `req.headers["${INTESTAZIONE_CANALE}"]`,
+                "res.headers.set-cookie",
+              ],
               remove: true,
             },
             ...(options.logDestination === undefined ? {} : { stream: options.logDestination }),
@@ -185,6 +202,13 @@ export async function buildApp(
   const connections = new ConnectionOriginLog();
 
   app.addHook("onRequest", async (request) => {
+    // Una richiesta portata da uno stream iroh non ha un indirizzo: è nata qui
+    // dentro con `app.inject()`, per conto di una chiave (ADR 0044 §4). Contarla
+    // come «loopback» sarebbe falso, e il suo IP non dice niente.
+    if (contrassegnoDi(request) !== undefined) {
+      return;
+    }
+
     const origin = connections.record(
       request.ip,
       options.now === undefined ? new Date() : options.now(),
@@ -403,6 +427,14 @@ export async function buildApp(
     // starts failing gets restarted, which would turn a burst of traffic into
     // an outage.
     allowList: (request) => request.url.startsWith("/health/"),
+    // Le richieste dei Dispositivi arrivano tutte da `app.inject()`, quindi
+    // dallo stesso indirizzo finto: il conto si fa per chiave, o tutte le app
+    // di una Casa dividerebbero un limite solo.
+    keyGenerator: (request) => {
+      const canale = contrassegnoDi(request);
+
+      return canale === undefined ? request.ip : `dispositivo:${canale.chiave}`;
+    },
   });
 
   await app.register(swagger, {
@@ -475,7 +507,12 @@ export async function buildApp(
   // endpoint and are told apart by ALPN. Two endpoints on the same key would
   // publish one identity at two addresses, and a remote instance resolving that
   // key could land on the socket that does not speak what it wanted.
-  const endpoint = new InstanceEndpoint(deriveNetworkSecretKey(identity));
+  const networkSecretKey = deriveNetworkSecretKey(identity);
+  const endpoint =
+    options.createEndpoint?.({
+      publicKey: deriveNetworkPublicId(identity),
+      secretKey: networkSecretKey,
+    }) ?? new InstanceEndpoint(networkSecretKey);
   const networkProbe = new NetworkProbe(endpoint);
   const profileRepository = new SqliteProfileRepository(database);
   const clockOption =
@@ -521,6 +558,8 @@ export async function buildApp(
   // niente dell'altra.
   federation.useBoards(
     new BachecheServite({
+      collegata: (instanceKey) =>
+        federation.list().some((r) => r.publicKey === instanceKey && r.state === "collegata"),
       commenti: commentiRemoti,
       comments: commentRepository,
       cuori: cuoriRemoti,
@@ -559,8 +598,28 @@ export async function buildApp(
 
   app.decorate("federationService", federation);
 
+  // L'accesso del Dispositivo (ADR 0044 §4–§5): due ALPN in più sullo stesso
+  // endpoint, perché la chiave della Casa è una sola.
+  const accessoDispositivi = new AccessoDispositivi({
+    identity: identityService,
+    repository: new SqliteAccessoRepository(database),
+    transaction: createTransactor(database),
+    ...clockOption,
+  });
+
+  identityService.useChiaviDiRete((sessionId) => accessoDispositivi.chiaveDellaSessione(sessionId));
+
   endpoint.register(networkProbe);
   endpoint.register(federation);
+  endpoint.register(new ServizioIngresso(accessoDispositivi));
+  endpoint.register(
+    new ServizioDispositivo(
+      accessoDispositivi,
+      app as unknown as Iniettore,
+      // Il corpo più grande che una rotta accetta: quello dei media.
+      Math.max(config.media.maxBytes, 1024 * 1024),
+    ),
+  );
   const startingProbe = effectiveProbe({
     environment: config.network,
     stored: readStoredProbe(settingsRepository),
@@ -587,39 +646,35 @@ export async function buildApp(
     ...clockOption,
   });
 
+  identityService.useDispositivi({
+    inAttesa: (sessionId) => dispositiviService.inAttesa(sessionId),
+    revocataDaAltri: (sessionId) => dispositiviService.revocataDaAltri(sessionId),
+  });
+
   const messaggiService = new MessaggiService({
     repository: new SqliteMessaggiRepository(database),
     users: userRepository,
     ...clockOption,
   });
 
-  federation.useMessaggi({
-    getKeyPackages(username: string) {
-      const preso = dispositiviService.claimKeyPackagePerNome(username);
-      return preso === null ? [] : [{ blob: preso.keyPackage, id: preso.deviceId }];
-    },
-    chiaviDiFirmaDi(username: string) {
-      return dispositiviService.chiaviDiFirmaDi(username).chiavi;
-    },
-  });
+  // Quello che questa casa risponde alle altre, **per intero**: fino al
+  // 2026-11-27 qui si collegavano soltanto KeyPackage e registro, e le altre
+  // operazioni di ADR 0042 rispondevano «richiesta sconosciuta» su un'istanza
+  // vera. Vedi `messaggi/direttorio.ts`.
+  federation.useMessaggi(direttorioMessaggi(messaggiService, dispositiviService));
 
   // La casa che ordina (ADR 0042 §3). Quando non è questa, la coda non si
   // duplica: si chiede a lei, e se non risponde lo si dice.
-  messaggiService.useRete({
-    casa: deriveNetworkPublicId(identity),
-    coda: (casa, conversazioneId, dopo) => federation.fetchHandshake(casa, conversazioneId, dopo),
-    deposita: (casa, conversazioneId, busta) =>
-      federation.depositaHandshakePresso(casa, conversazioneId, busta),
-    depositaStato: (casa, conversazioneId, tipo, stato) =>
-      federation.depositaStatoPresso(casa, conversazioneId, tipo, stato),
-    leggiStato: (casa, conversazioneId, tipo) =>
-      federation.leggiStatoPresso(casa, conversazioneId, tipo),
-    segnapostiDa: (casa, conversazioneId, dopo) =>
-      federation.segnapostiDaPresso(casa, conversazioneId, dopo),
-    spingiSegnaposti: (casa, spinta) => federation.spingiSegnapostiA(casa, spinta),
-    visitaArchivio: (casa, conversazioneId, ids) =>
-      federation.visitaArchivioPresso(casa, conversazioneId, ids),
-  });
+  messaggiService.useRete(reteFraCase(federation, deriveNetworkPublicId(identity)));
+
+  // Chi può far nascere qui una conversazione con un annuncio (ADR 0030 §1).
+  messaggiService.useChiPuoScrivere(
+    chiPuoScrivere({
+      follows: followRepository,
+      profiles: profileRepository,
+      statoDi: (casa) => remoteInstanceRepository.findByKey(casa)?.state,
+    }),
+  );
 
   // Il battito di ADR 0041 non ha più una coda da risvegliare: la consegna in
   // busta di `ESTIA-E2E-v1` si è ritirata con il taglio di ADR 0038, e una casa
@@ -676,7 +731,17 @@ export async function buildApp(
   registerInstanceRoutes(app, instanceService);
   registerIdentityRoutes(app, identityService);
   registerDispositiviRoutes(app, {
+    accesso: accessoDispositivi,
     casa: deriveNetworkPublicId(identity),
+    rete: () =>
+      endpoint.endpointId === undefined
+        ? undefined
+        : {
+            chiave: endpoint.endpointId,
+            ...(endpoint.reachableByKey || endpoint.ticket === undefined
+              ? {}
+              : { ticket: endpoint.ticket }),
+          },
     dispositivi: dispositiviService,
     federation,
     identity: identityService,

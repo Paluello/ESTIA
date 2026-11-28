@@ -12,6 +12,8 @@ import {
   MAX_BACHECA_POSTS,
   MAX_NAME_LENGTH,
   MAX_PROOF_LENGTH,
+  leggiComposizione,
+  leggiSegnaposto,
   parseRequest,
 } from "./protocol.js";
 import { SqliteRemoteInstanceRepository } from "./repository.js";
@@ -1070,6 +1072,8 @@ describe("la corsa fra due commit, sul filo", () => {
 describe("segnaposto e segnaposto-da, sul filo", () => {
   it("una finestra attraversa intera, e una spinta arriva con la chiave di chi spinge", async () => {
     await dueCase(async (a, b) => {
+      // Il mittente di un segnaposto è `nome@casa`, con la chiave vera della casa.
+      const matteo = `matteo@${b.endpoint.endpointId ?? ""}`;
       const spinte: Array<{ remoteKey: string; destinatari: readonly string[] }> = [];
       b.federation.useMessaggi({
         chiaviDiFirmaDi: () => [],
@@ -1085,7 +1089,7 @@ describe("segnaposto e segnaposto-da, sul filo", () => {
             {
               id: "m-1",
               inviatoIl: "2026-09-23T10:00:00.000Z",
-              mittente: "matteo@b",
+              mittente: matteo,
               seq: dopo + 1,
             },
           ],
@@ -1097,7 +1101,7 @@ describe("segnaposto e segnaposto-da, sul filo", () => {
         a: 2,
         da: 1,
         esito: "finestra",
-        voci: [{ id: "m-1", inviatoIl: "2026-09-23T10:00:00.000Z", mittente: "matteo@b", seq: 1 }],
+        voci: [{ id: "m-1", inviatoIl: "2026-09-23T10:00:00.000Z", mittente: matteo, seq: 1 }],
       });
 
       await a.federation.spingiSegnapostiA(b.endpoint.ticket ?? "", {
@@ -1127,6 +1131,165 @@ describe("segnaposto e segnaposto-da, sul filo", () => {
       });
     });
   }, 30_000);
+});
+
+/**
+ * I tre campi di un segnaposto che fino al 2026-11-27 erano «un testo corto»
+ * (revisione di sicurezza, federazione, punto 10): finiscono nel database di
+ * chi riceve, e ora hanno una forma.
+ */
+describe("la forma di un segnaposto", () => {
+  const CASA = "ab".repeat(32);
+  const buono = {
+    id: "0b7c1f0e-5a53-4c0c-9d0e-5f6f3c1a2b3c",
+    inviatoIl: "2026-09-23T10:00:00.000Z",
+    mittente: `matteo@${CASA}`,
+    seq: 1,
+  };
+
+  it("uno fatto bene si legge com'è", () => {
+    expect(leggiSegnaposto(buono)).toEqual(buono);
+    expect(leggiSegnaposto({ ...buono, id: "m-1" })).toMatchObject({ id: "m-1" });
+    expect(leggiSegnaposto({ ...buono, inviatoIl: "2026-09-23T10:00:00Z" })).toBeDefined();
+  });
+
+  it.each([
+    ["un id con uno spazio", { id: "m 1" }],
+    ["un id con un a capo", { id: "m-1\nm-2" }],
+    ["un id che è un pezzo di HTML", { id: "<img src=x>" }],
+    ["un id troppo lungo", { id: "x".repeat(121) }],
+    ["un mittente senza casa", { mittente: "matteo" }],
+    ["un mittente con una casa che non è una chiave", { mittente: "matteo@casa-mia" }],
+    ["un mittente con una chiave in maiuscolo", { mittente: `matteo@${CASA.toUpperCase()}` }],
+    ["un mittente il cui nome non è un nome", { mittente: `Matteo Rossi@${CASA}` }],
+    ["un mittente con due case", { mittente: `matteo@${CASA}@${CASA}` }],
+    ["un mittente con del testo in più", { mittente: `matteo@${CASA} e altro` }],
+    ["una data che non è una data", { inviatoIl: "ieri" }],
+    ["una data senza fuso", { inviatoIl: "2026-09-23T10:00:00.000" }],
+    ["una data con un altro fuso", { inviatoIl: "2026-09-23T10:00:00.000+02:00" }],
+    ["un giorno che non esiste", { inviatoIl: "2026-02-31T10:00:00.000Z" }],
+    ["un mese che non esiste", { inviatoIl: "2026-13-01T10:00:00.000Z" }],
+    ["una data con del testo in più", { inviatoIl: "2026-09-23T10:00:00.000Z; DROP" }],
+  ])("%s non passa", (_che, campo) => {
+    expect(leggiSegnaposto({ ...buono, ...campo })).toBeUndefined();
+  });
+
+  it("una spinta con un segnaposto malformato si rifiuta intera, prima di arrivare al servizio", () => {
+    const spinta = (voce: unknown, da = "matteo", destinatari: unknown[] = ["marco"]): unknown =>
+      parseRequest({
+        conversazione: "conv-1",
+        da,
+        destinatari,
+        nome: "Borgo",
+        segnaposti: [buono, voce],
+        tipo: "segnaposto",
+      });
+
+    expect(spinta(buono)).toMatchObject({ request: { tipo: "segnaposto" } });
+    expect(spinta({ ...buono, mittente: "matteo@altrove" })).toMatchObject({
+      error: { codice: "malformata" },
+    });
+    // Chi scrive e chi riceve sono nomi, non testo: la stessa risposta per
+    // qualunque cosa non lo sia, che è una risposta sulla forma e non su chi c'è.
+    expect(spinta(buono, "Matteo Rossi")).toMatchObject({ error: { codice: "malformata" } });
+    expect(spinta(buono, "matteo", ["marco", "non un nome"])).toMatchObject({
+      error: { codice: "malformata" },
+    });
+  });
+});
+
+/** Le due operazioni dei gruppi (M8): la composizione, e il cambio chiesto a chi ordina. */
+describe("la forma di una composizione e di un cambio di membri", () => {
+  const AIA = "a1".repeat(32);
+  const BORGO = "b0".repeat(32);
+  const QUANDO = "2026-11-27T10:00:00.000Z";
+  const buona = {
+    membri: [
+      { chi: `anna@${AIA}`, dal: QUANDO, ruolo: "creatore" },
+      { chi: `bruno@${BORGO}`, dal: QUANDO, ruolo: "membro" },
+    ],
+    nome: "Cena di quartiere",
+    rimossi: [{ chi: `carla@${BORGO}`, da: `anna@${AIA}`, il: QUANDO }],
+    tipo: "gruppo",
+    versione: 3,
+  };
+
+  it("una fatta bene si legge com'è, e attraversa", () => {
+    expect(leggiComposizione(buona)).toEqual(buona);
+    expect(
+      parseRequest({
+        azione: "annuncia",
+        composizione: buona,
+        conversazione: "conv-1",
+        nome: "Aia",
+        tipo: "composizione",
+      }),
+    ).toMatchObject({ request: { azione: "annuncia", composizione: buona } });
+    expect(
+      parseRequest({ azione: "leggi", conversazione: "conv-1", nome: "Aia", tipo: "composizione" }),
+    ).toMatchObject({ request: { azione: "leggi" } });
+  });
+
+  it.each([
+    ["una versione che non è un intero positivo", { versione: 0 }],
+    ["un tipo che non esiste", { tipo: "canale" }],
+    ["un membro senza casa", { membri: [{ chi: "anna", dal: QUANDO, ruolo: "membro" }] }],
+    [
+      "un membro con una casa che non è una chiave",
+      { membri: [{ chi: "anna@casa-mia", dal: QUANDO, ruolo: "membro" }] },
+    ],
+    ["un ruolo inventato", { membri: [{ chi: `anna@${AIA}`, dal: QUANDO, ruolo: "padrone" }] }],
+    [
+      "una data che non è una data",
+      { membri: [{ chi: `anna@${AIA}`, dal: "ieri", ruolo: "membro" }] },
+    ],
+    [
+      "un rimosso tolto da qualcuno che non è un indirizzo",
+      { rimossi: [{ chi: `carla@${BORGO}`, da: "anna", il: QUANDO }] },
+    ],
+    ["troppi membri", { membri: Array.from({ length: 300 }, () => buona.membri[0]) }],
+  ])("%s rende malformata la composizione intera", (_che, campo) => {
+    expect(leggiComposizione({ ...buona, ...campo })).toBeUndefined();
+    expect(
+      parseRequest({
+        azione: "annuncia",
+        composizione: { ...buona, ...campo },
+        conversazione: "conv-1",
+        nome: "Aia",
+        tipo: "composizione",
+      }),
+    ).toMatchObject({ error: { codice: "malformata" } });
+  });
+
+  it("un cambio dice chi lo chiede, che cosa, e su chi", () => {
+    const cambio = (campi: Record<string, unknown>): unknown =>
+      parseRequest({
+        conversazione: "conv-1",
+        da: "bruno",
+        nome: "Borgo",
+        tipo: "membri",
+        ...campi,
+      });
+
+    expect(cambio({ azione: "esci" })).toMatchObject({ request: { azione: "esci", da: "bruno" } });
+    expect(cambio({ azione: "aggiungi", chi: `dino@${BORGO}` })).toMatchObject({
+      request: { azione: "aggiungi", chi: `dino@${BORGO}` },
+    });
+    expect(
+      cambio({ azione: "nomina", chi: `dino@${BORGO}`, ruolo: "amministratore" }),
+    ).toMatchObject({ request: { azione: "nomina", ruolo: "amministratore" } });
+
+    for (const sbagliato of [
+      { azione: "aggiungi" },
+      { azione: "aggiungi", chi: "dino" },
+      { azione: "togli", chi: "dino@altrove" },
+      { azione: "nomina", chi: `dino@${BORGO}`, ruolo: "creatore" },
+      { azione: "promuovi", chi: `dino@${BORGO}` },
+      { azione: "esci", da: "Non Un Nome" },
+    ]) {
+      expect(cambio(sbagliato)).toMatchObject({ error: { codice: "malformata" } });
+    }
+  });
 });
 
 describe("archivio, sul filo", () => {

@@ -563,7 +563,7 @@ estia ripristino-backup
 In alternativa, con Docker diretto (la chiave viene chiesta a video in modo interattivo, evitando che finisca nella cronologia della shell; aggiungi `--sovrascrivi` se la cartella di destinazione contiene già dati):
 
 ```sh
-docker run --rm -it --user 0:0 -v /cartella/del/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVIO.tar.age /restore
+docker run --rm -it --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --network none -v /cartella/del/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVIO.tar.age /restore
 ```
 
 **Perché questo comando parte da root, quando tutto il resto della guida non lo fa.** La cartella di destinazione l'hai creata tu, quindi appartiene al tuo utente; l'istanza invece gira come utente `10001`, e con i suoi permessi non può scriverci dentro. Il container ripristina e poi **consegna automaticamente i file all'utente dell'istanza** con `chown`. È un container usa e getta che non serve niente a nessuno e muore subito dopo — la differenza con l'istanza, che resta accesa e risponde dalla rete, è tutta qui.

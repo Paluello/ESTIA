@@ -55,7 +55,31 @@ export type Impedimento =
    * Finché non succede non si legge e **non si scrive**: una riga chiusa con
    * una chiave che nessun altro ha sarebbe un messaggio che nessuno legge.
    */
-  | { kind: "cronologia-in-arrivo"; nome: string };
+  | { kind: "cronologia-in-arrivo"; nome: string }
+  /**
+   * Il gruppo l'ha creato un altro, e l'invito per questo dispositivo non è
+   * ancora arrivato. È `in-attesa` detto per un gruppo: lì «dalla sua casa»
+   * sarebbe falso metà delle volte, perché chi l'ha creato può abitare qui.
+   */
+  | { kind: "gruppo-in-attesa"; nome: string }
+  /**
+   * Non si è più nel gruppo: tolti, o usciti. L'istanza non serve più la
+   * conversazione (criterio 3 di M8), e non c'è niente da aspettare.
+   */
+  | { kind: "tolto-dal-gruppo" }
+  /**
+   * Nel gruppo cifrato c'è un dispositivo di qualcuno che non è fra le persone
+   * della conversazione ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §3).
+   * Chi ha una foglia apre il mazzo: scrivere sarebbe scrivere anche a lui,
+   * quindi il campo si spegne e **si dice chi è**.
+   */
+  | { kind: "presenza-estranea"; nomi: string }
+  /**
+   * Il gruppo è stato traslocato ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md)
+   * §3): la casa che lo gestiva è persa, e qui si legge soltanto. Non è
+   * un'attesa — non torna — e la mossa è aprire il gruppo che lo continua.
+   */
+  | { kind: "gruppo-congelato" };
 
 export interface Spiegazione {
   titolo: string;
@@ -83,6 +107,14 @@ export function impedimentoDi(condizioni: {
   inAttesa?: boolean;
   /** Questo dispositivo è nella conversazione, ma non ne ha ancora la chiave per leggerla. */
   senzaCronologia?: boolean;
+  /** È un gruppo: cambia come si dice l'attesa. */
+  gruppo?: boolean;
+  /** Questo dispositivo ha applicato il commit che lo toglie dal gruppo. */
+  tolto?: boolean;
+  /** Chi ha una foglia senza essere fra i membri, già detto con il suo nome. */
+  estranei?: readonly string[];
+  /** Il gruppo è congelato: è stato traslocato, e qui si legge soltanto. */
+  congelata?: boolean;
 }): Impedimento {
   if (!condizioni.crittografiaDisponibile) {
     return { kind: "connessione-non-sicura" };
@@ -90,6 +122,20 @@ export function impedimentoDi(condizioni: {
 
   // Si guarda il codice, non il testo: il testo dell'istanza può cambiare, e
   // una schermata che riconosce un errore dalla sua frase si rompe in silenzio.
+  if (
+    condizioni.tolto === true ||
+    (condizioni.erroreChiave instanceof ApiError &&
+      condizioni.erroreChiave.code === "rimosso_dal_gruppo")
+  ) {
+    return { kind: "tolto-dal-gruppo" };
+  }
+
+  // Prima della casa che non risponde e dell'invito che non arriva: di un
+  // gruppo congelato sono vere tutte e due, e nessuna delle due è da aspettare.
+  if (condizioni.congelata === true) {
+    return { kind: "gruppo-congelato" };
+  }
+
   if (condizioni.erroreChiave instanceof ApiError) {
     if (condizioni.erroreChiave.code === "no_device_available") {
       return { kind: "destinatario-senza-dispositivo", nome: condizioni.nomeDestinatario };
@@ -107,7 +153,14 @@ export function impedimentoDi(condizioni: {
   }
 
   if (condizioni.inAttesa === true) {
-    return { kind: "in-attesa", nome: condizioni.nomeDestinatario };
+    return {
+      kind: condizioni.gruppo === true ? "gruppo-in-attesa" : "in-attesa",
+      nome: condizioni.nomeDestinatario,
+    };
+  }
+
+  if (condizioni.estranei !== undefined && condizioni.estranei.length > 0) {
+    return { kind: "presenza-estranea", nomi: condizioni.estranei.join(", ") };
   }
 
   if (condizioni.senzaCronologia === true) {
@@ -165,6 +218,43 @@ export function spiegazioneDi(impedimento: Impedimento): Spiegazione | undefined
       segnaposto: t("chat.cronologia.segnaposto", nome),
       testo: t("chat.cronologia.testo"),
       titolo: t("chat.cronologia.titolo"),
+    };
+  }
+
+  if (impedimento.kind === "gruppo-in-attesa") {
+    const nome = { nome: impedimento.nome };
+    return {
+      cosaFare: t("chat.gruppo_in_attesa.cosa_fare", nome),
+      segnaposto: t("chat.gruppo_in_attesa.segnaposto", nome),
+      testo: t("chat.gruppo_in_attesa.testo", nome),
+      titolo: t("chat.gruppo_in_attesa.titolo"),
+    };
+  }
+
+  if (impedimento.kind === "tolto-dal-gruppo") {
+    return {
+      cosaFare: t("chat.tolto.cosa_fare"),
+      segnaposto: t("chat.tolto.segnaposto"),
+      testo: t("chat.tolto.testo"),
+      titolo: t("chat.tolto.titolo"),
+    };
+  }
+
+  if (impedimento.kind === "gruppo-congelato") {
+    return {
+      cosaFare: t("chat.congelato.cosa_fare"),
+      segnaposto: t("chat.congelato.segnaposto"),
+      testo: t("chat.congelato.testo"),
+      titolo: t("chat.congelato.titolo"),
+    };
+  }
+
+  if (impedimento.kind === "presenza-estranea") {
+    return {
+      cosaFare: t("chat.estranei.cosa_fare"),
+      segnaposto: t("chat.estranei.segnaposto"),
+      testo: t("chat.estranei.testo", { nomi: impedimento.nomi }),
+      titolo: t("chat.estranei.titolo"),
     };
   }
 

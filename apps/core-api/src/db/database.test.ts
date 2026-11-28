@@ -50,6 +50,9 @@ describe("instance database", () => {
           { name: "ritirata-estia-e2e-v1", version: 31 },
           { name: "lingua-della-persona", version: 32 },
           { name: "segnalazioni", version: 33 },
+          { name: "accesso-del-dispositivo", version: 34 },
+          { name: "gruppi", version: 35 },
+          { name: "trasloco", version: 36 },
         ]);
 
         // Re-running must be a no-op rather than an error.

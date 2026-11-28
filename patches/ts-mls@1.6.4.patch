@@ -1,0 +1,58 @@
+diff --git a/dist/src/createCommit.js b/dist/src/createCommit.js
+index 59ab06c6ed558a54f0c900e888d32de1e97d4519..0a995a8296db40dc6e047a7bc3551ea1e2df2cef 100644
+--- a/dist/src/createCommit.js
++++ b/dist/src/createCommit.js
+@@ -137,11 +137,34 @@ export async function createGroupInfoWithRatchetTree(groupContext, confirmationT
+     const gi = await createGroupInfo(groupContext, confirmationTag, state, [...extensions, { extensionType: "ratchet_tree", extensionData: encodedTree }], cs);
+     return gi;
+ }
++
++// ESTIA: RFC 9420 §12.4.3.2 vuole `struct { HPKEPublicKey external_pub; }`,
++// con HPKEPublicKey = opaque<V>: la chiave va preceduta dalla sua lunghezza.
++// ts-mls 1.6.x la scrive nuda, e OpenMLS (come ogni altra implementazione) non
++// legge il GroupInfo. Si scrive col prefisso e si legge in entrambe le forme,
++// perché i punti di rientro già depositati sono nudi (spike S7).
++function estiaScriviExternalPub(chiave) {
++    const n = chiave.length;
++    const prefisso = n < 64 ? new Uint8Array([n]) : new Uint8Array([0x40 | (n >> 8), n & 0xff]);
++    const out = new Uint8Array(prefisso.length + n);
++    out.set(prefisso, 0);
++    out.set(chiave, prefisso.length);
++    return out;
++}
++function estiaLeggiExternalPub(dati) {
++    if (dati.length > 0) {
++        const tipo = dati[0] >> 6;
++        const [lunga, n] = tipo === 0 ? [1, dati[0]] : tipo === 1 && dati.length > 1 ? [2, ((dati[0] & 0x3f) << 8) | dati[1]] : [0, -1];
++        if (lunga > 0 && lunga + n === dati.length)
++            return dati.subarray(lunga);
++    }
++    return dati;
++}
+ /** @public */
+ export async function createGroupInfoWithExternalPub(state, extensions, cs) {
+     const externalKeyPair = await cs.hpke.deriveKeyPair(state.keySchedule.externalSecret);
+     const externalPub = await cs.hpke.exportPublicKey(externalKeyPair.publicKey);
+-    const gi = await createGroupInfo(state.groupContext, state.confirmationTag, state, [...extensions, { extensionType: "external_pub", extensionData: externalPub }], cs);
++    const gi = await createGroupInfo(state.groupContext, state.confirmationTag, state, [...extensions, { extensionType: "external_pub", extensionData: estiaScriviExternalPub(externalPub) }], cs);
+     return gi;
+ }
+ /** @public */
+@@ -151,7 +174,7 @@ export async function createGroupInfoWithExternalPubAndRatchetTree(state, extens
+     const externalPub = await cs.hpke.exportPublicKey(externalKeyPair.publicKey);
+     const gi = await createGroupInfo(state.groupContext, state.confirmationTag, state, [
+         ...extensions,
+-        { extensionType: "external_pub", extensionData: externalPub },
++        { extensionType: "external_pub", extensionData: estiaScriviExternalPub(externalPub) },
+         { extensionType: "ratchet_tree", extensionData: encodedTree },
+     ], cs);
+     return gi;
+@@ -196,7 +219,7 @@ export async function joinGroupExternal(groupInfo, keyPackage, privateKeys, resy
+     const allExtensionsSupported = extensionsSupportedByCapabilities(groupInfo.groupContext.extensions, keyPackage.leafNode.capabilities);
+     if (!allExtensionsSupported)
+         throw new UsageError("client does not support every extension in the GroupContext");
+-    const { enc, secret: initSecret } = await exportSecret(externalPub.extensionData, cs);
++    const { enc, secret: initSecret } = await exportSecret(estiaLeggiExternalPub(externalPub.extensionData), cs);
+     const ratchetTree = ratchetTreeFromExtension(groupInfo) ?? tree;
+     if (ratchetTree === undefined)
+         throw new UsageError("No RatchetTree passed and no ratchet_tree extension");

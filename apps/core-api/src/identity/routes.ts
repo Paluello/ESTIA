@@ -120,8 +120,9 @@ export function registerIdentityRoutes(app: FastifyInstance, service: IdentitySe
     },
     async (request, reply) => {
       const caller = request.caller!;
+      const target = request.params.sessionId;
       // Scoped to the caller: one member can never revoke another's session.
-      service.revokeSession(caller.user.id, request.params.sessionId);
+      service.revokeOtherOrOwnSession(caller.user.id, caller.sessionId, target);
 
       return reply.status(204).send();
     },
