@@ -267,6 +267,14 @@ impl Ponte {
                     .map_err(e)?;
                 Ok(Value::Null)
             }
+            "esci" => {
+                s.esci(conv()?).await.map_err(e)?;
+                Ok(Value::Null)
+            }
+            "ritira" => {
+                s.ritira(conv()?, testo(a, "messaggio")?).await.map_err(e)?;
+                Ok(Value::Null)
+            }
             // Per la prova, non per l'app: a che epoch è il gruppo qui.
             "epoch" => Ok(json!(s.dispositivo().epoch(conv()?).map_err(e)?)),
             altro => Err(format!("comando sconosciuto: {altro}")),

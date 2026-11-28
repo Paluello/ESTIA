@@ -12,9 +12,10 @@ Sta accanto a [`spike-mls`](../spike-mls) (S7, il protocollo) e a [`prova-archiv
 
 ## Che cosa prova
 
-1. **Una chat a due creata dal telefono.** OpenMLS crea il gruppo, il browser entra dal suo invito e apre il suo mazzo; i messaggi si leggono nei due versi con mittente e ora sigillati, una risposta resta una risposta, e il telefono riparte dal suo deposito.
+1. **Una chat a due creata dal telefono.** OpenMLS crea il gruppo, il browser entra dal suo invito e apre il suo mazzo; i messaggi si leggono nei due versi con mittente e ora sigillati, una risposta resta una risposta, un messaggio che il telefono ritira il browser non lo vede più (e uno d'altri non si ritira), e il telefono riparte dal suo deposito.
 2. **Una chat a due creata dal browser.** Il telefono entra dall'invito di `ts-mls`, con il KeyPackage che aveva pubblicato alla Casa.
 3. **Un gruppo con due telefoni e due browser.** Il telefono lo crea e aggiunge un browser, che legge anche il pregresso e il cui ingresso è detto. Il browser toglie un telefono e il telefono toglie un browser: chi resta deriva la stessa chiave nuova senza scambiarsela, e la catena di chi è stato tolto non apre il seguito.
+4. **Un telefono esce da un gruppo.** Racconta l'uscita e la dice alla Casa senza mandare un commit; il browser, che ordina, toglie la sua foglia con `ts-mls`, e l'altro telefono applica il commit e continua.
 
 In più, a ogni richiesta:
 

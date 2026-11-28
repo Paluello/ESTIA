@@ -1,37 +1,49 @@
 // Le conversazioni cifrate (ADR 0038, 0043, 0052), sopra le `Sessioni` del
 // nucleo: l'app chiede e mostra, il nucleo fa MLS e l'archivio. Nessuna
 // chiave passa di qui.
+//
+// Qui l'elenco e la conversazione aperta, con la risposta e il ritiro. Il
+// gruppo (crearlo, chi c'è, aggiungere, togliere, uscire) sta in Gruppi.kt.
 
 package org.estia.app.schermate
 
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
@@ -60,9 +72,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -80,6 +97,7 @@ import org.estia.app.Casa
 import org.estia.app.Frasi
 import org.estia.nucleo.Apertura
 import org.estia.nucleo.Conversazione
+import org.estia.nucleo.ErroreNucleo
 import org.estia.nucleo.Io
 import org.estia.nucleo.Messaggio
 import org.estia.nucleo.PersonaDaInvitare
@@ -88,11 +106,40 @@ import org.estia.nucleo.TipoEvento
 
 private enum class StatoElenco { Carico, Pronto, Errore }
 
+/** Che cosa si comincia: una conversazione a due, o un gruppo. */
+private enum class Foglio { Diretta, Gruppo }
+
 /** Il nome da mostrare: quello del gruppo, oppure le altre persone. */
 private fun nomeConversazione(c: Conversazione, io: Io?): String {
     c.nome?.takeIf { it.isNotBlank() }?.let { return it }
     val altri = c.membri.filter { it.id != io?.id }
     return if (altri.isEmpty()) Frasi.t("messaggi.te_stesso") else altri.joinToString(", ") { it.nome }
+}
+
+/** Chi è `username@casa` in questa conversazione, detto come va mostrato. */
+private fun nomeNellaConversazione(c: Conversazione, membro: String?): String {
+    if (membro == null) return Frasi.t("messaggi.interlocutore")
+    val persona = c.membri.firstOrNull { "${it.username}@${it.casa}" == membro }
+    return persona?.nome?.takeIf { it.isNotBlank() } ?: persona?.username ?: membro
+}
+
+/**
+ * `nome` o `nome@chiave-della-casa`, com'è scritto, nella forma che la Casa
+ * vuole. `null` se non c'è un nome.
+ */
+internal fun personaDaInvitare(testo: String): PersonaDaInvitare? {
+    val parti = testo.trim().trim('@').split("@", limit = 2)
+    val username = parti.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    return PersonaDaInvitare(username, parti.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() })
+}
+
+/**
+ * Il codice con cui la Casa ha detto di no (`no_device_available`, …), se è
+ * stata lei: il nucleo lo passa come `casa <stato>: <codice>`.
+ */
+internal fun codiceDellaCasa(e: Throwable): String? {
+    val messaggio = (e as? ErroreNucleo.Casa)?.message ?: return null
+    return messaggio.substringAfter(": ", "").takeIf { it.isNotEmpty() }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,7 +150,8 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
     var stato by remember { mutableStateOf(StatoElenco.Carico) }
     var aggiorno by remember { mutableStateOf(false) }
     var aperta by rememberSaveable { mutableStateOf<String?>(null) }
-    var nuova by remember { mutableStateOf(false) }
+    var foglio by remember { mutableStateOf<Foglio?>(null) }
+    var menu by remember { mutableStateOf(false) }
     val ambito = rememberCoroutineScope()
     val barra = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -119,12 +167,31 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
         }
     }
 
+    fun apri(creata: Conversazione) {
+        foglio = null
+        if (conversazioni.none { it.id == creata.id }) conversazioni = listOf(creata) + conversazioni
+        aperta = creata.id
+    }
+
     LaunchedEffect(Unit) { carica() }
 
     val scelta = conversazioni.firstOrNull { it.id == aperta }
     if (scelta != null) {
         BackHandler { aperta = null }
-        SchermataConversazione(casa, scelta, io, onIndietro = { aperta = null }, modifier = modifier)
+        SchermataConversazione(
+            casa,
+            scelta,
+            io,
+            onIndietro = { aperta = null },
+            onCambiata = { ambito.launch { carica() } },
+            onUscita = {
+                // Si è usciti dal gruppo: si torna all'elenco, dove non c'è più.
+                aperta = null
+                conversazioni = conversazioni.filter { it.id != scelta.id }
+                ambito.launch { carica() }
+            },
+            modifier = modifier,
+        )
         return
     }
 
@@ -133,8 +200,26 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
         topBar = { LargeTopAppBar(title = { Text(Frasi.t("messaggi.titolo")) }, scrollBehavior = barra) },
         floatingActionButton = {
             if (io?.approvato == true) {
-                FloatingActionButton(onClick = { nuova = true }) {
-                    Icon(Icons.Filled.Edit, contentDescription = Frasi.t("app_messaggi.nuova"))
+                Box {
+                    FloatingActionButton(onClick = { menu = true }) {
+                        Icon(Icons.Filled.Edit, contentDescription = Frasi.t("app_messaggi.nuova_o_gruppo"))
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(Frasi.t("app_messaggi.nuova")) },
+                            onClick = {
+                                menu = false
+                                foglio = Foglio.Diretta
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(Frasi.t("gruppi.nuovo.voce")) },
+                            onClick = {
+                                menu = false
+                                foglio = Foglio.Gruppo
+                            },
+                        )
+                    }
                 }
             }
         },
@@ -169,12 +254,10 @@ fun Messaggi(casa: Casa, modifier: Modifier = Modifier) {
         }
     }
 
-    if (nuova) {
-        NuovaConversazione(casa, onChiudi = { nuova = false }) { creata ->
-            nuova = false
-            if (conversazioni.none { it.id == creata.id }) conversazioni = listOf(creata) + conversazioni
-            aperta = creata.id
-        }
+    when (foglio) {
+        Foglio.Diretta -> NuovaConversazione(casa, onChiudi = { foglio = null }) { creata -> apri(creata) }
+        Foglio.Gruppo -> NuovoGruppo(casa, io, onChiudi = { foglio = null }) { creato -> apri(creato) }
+        null -> {}
     }
 }
 
@@ -225,6 +308,21 @@ private val ora = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 private fun oraDi(iso: String): String? =
     runCatching { Instant.parse(iso).atZone(ZoneId.systemDefault()).format(ora) }.getOrNull()
 
+/** Il messaggio a cui una nuvoletta risponde, come lo si mostra sopra il testo. */
+private data class Citazione(
+    val id: String,
+    /** `null` quando il messaggio citato non è fra quelli caricati. */
+    val autore: String?,
+    val testo: String,
+)
+
+/** Ciò che una riga dice di sé in un'anteprima: il testo, o perché non c'è. */
+private fun anteprima(m: Messaggio): String = when (m.stato) {
+    StatoMessaggio.LETTO -> m.testo ?: ""
+    StatoMessaggio.NON_SI_APRE -> Frasi.t("messaggi.non_si_apre.titolo")
+    StatoMessaggio.NON_DISPONIBILE -> Frasi.t("messaggi.non_disponibile.titolo")
+}
+
 /** Una conversazione aperta: la cronologia, e sotto il campo per scrivere. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -233,6 +331,8 @@ private fun SchermataConversazione(
     conversazione: Conversazione,
     io: Io?,
     onIndietro: () -> Unit,
+    onCambiata: () -> Unit,
+    onUscita: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var messaggi by remember { mutableStateOf<List<Messaggio>>(emptyList()) }
@@ -243,8 +343,29 @@ private fun SchermataConversazione(
     var testo by rememberSaveable { mutableStateOf("") }
     var invio by remember { mutableStateOf(false) }
     var errore by remember { mutableStateOf<String?>(null) }
+    var risponde by remember { mutableStateOf<Messaggio?>(null) }
+    var daRitirare by remember { mutableStateOf<Messaggio?>(null) }
+    var info by rememberSaveable { mutableStateOf(false) }
     val ambito = rememberCoroutineScope()
     val elenco = rememberLazyListState()
+    val fuoco = remember { FocusRequester() }
+
+    if (info) {
+        BackHandler { info = false }
+        InfoGruppo(
+            casa,
+            conversazione,
+            io,
+            onIndietro = { info = false },
+            onCambiata = onCambiata,
+            onUscita = {
+                info = false
+                onUscita()
+            },
+            modifier = modifier,
+        )
+        return
+    }
 
     val altro = conversazione.membri.firstOrNull { it.id != io?.id }?.nome ?: Frasi.t("messaggi.questa_persona")
     val nome = mapOf("nome" to altro)
@@ -265,6 +386,16 @@ private fun SchermataConversazione(
         }
     }
     val spento = blocco != null || apertura != Apertura.PRONTA
+
+    fun autoreDi(m: Messaggio): String =
+        if (m.mio) Frasi.t("messaggi.tu") else nomeNellaConversazione(conversazione, m.mittente)
+
+    fun citazioneDi(m: Messaggio): Citazione? {
+        val id = m.risponde ?: return null
+        val citato = messaggi.firstOrNull { it.id == id }
+            ?: return Citazione(id, null, Frasi.t("app_messaggi.citato_assente"))
+        return Citazione(id, autoreDi(citato), anteprima(citato))
+    }
 
     // Un giro subito, poi ogni dieci secondi finché la schermata è aperta.
     LaunchedEffect(conversazione.id) {
@@ -289,6 +420,7 @@ private fun SchermataConversazione(
                 a.nuovi.forEach { perId[it.id] = it }
                 messaggi = perId.values.sortedWith(compareBy({ it.creatoIl }, { it.id }))
                 ultimaPagina = a.pagina.toSet()
+                if (risponde?.id in ritirati) risponde = null
             }
             delay(10_000)
         }
@@ -305,13 +437,29 @@ private fun SchermataConversazione(
         errore = null
         ambito.launch {
             try {
-                val mandato = casa.sessioniPronte().invia(conversazione.id, daMandare, null)
+                val mandato = casa.sessioniPronte().invia(conversazione.id, daMandare, risponde?.id)
                 testo = ""
+                risponde = null
                 messaggi = messaggi.filter { it.id != mandato.id } + mandato
             } catch (e: Exception) {
                 errore = Frasi.t("messaggi.errore_invio")
             } finally {
                 invio = false
+            }
+        }
+    }
+
+    // Il ritiro: la voce esce dall'archivio della propria casa, e da qui.
+    fun ritira(m: Messaggio) {
+        errore = null
+        ambito.launch {
+            try {
+                casa.sessioniPronte().ritira(conversazione.id, m.id)
+                messaggi = messaggi.filter { it.id != m.id }
+                ultimaPagina = ultimaPagina - m.id
+                if (risponde?.id == m.id) risponde = null
+            } catch (e: Exception) {
+                errore = Frasi.t("app_messaggi.ritira.errore")
             }
         }
     }
@@ -326,6 +474,13 @@ private fun SchermataConversazione(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = Frasi.t("messaggi.torna_elenco"))
                     }
                 },
+                actions = {
+                    if (conversazione.gruppo && apertura != Apertura.TOLTO) {
+                        IconButton(onClick = { info = true }) {
+                            Icon(Icons.Filled.Info, contentDescription = Frasi.t("gruppi.membri.voce"))
+                        }
+                    }
+                },
             )
         },
         bottomBar = {
@@ -333,6 +488,13 @@ private fun SchermataConversazione(
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     errore?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    risponde?.let { citato ->
+                        BarraDellaRisposta(
+                            titolo = Frasi.t("messaggi.risposta_a", mapOf("nome" to autoreDi(citato))),
+                            testo = anteprima(citato),
+                            onAnnulla = { risponde = null },
+                        )
                     }
                     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextField(
@@ -348,7 +510,7 @@ private fun SchermataConversazione(
                                 disabledIndicatorColor = Color.Transparent,
                             ),
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).focusRequester(fuoco),
                         )
                         FilledIconButton(
                             onClick = { invia() },
@@ -365,7 +527,7 @@ private fun SchermataConversazione(
             state = elenco,
             modifier = Modifier.padding(margini).fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            contentPadding = PaddingValues(16.dp),
         ) {
             blocco?.let { (titolo, spiegazione) ->
                 item(key = "blocco") { Riquadro(titolo, spiegazione) }
@@ -381,7 +543,85 @@ private fun SchermataConversazione(
                     )
                 }
             }
-            items(messaggi, key = { it.id }) { m -> Nuvoletta(m, conversazione) }
+            items(messaggi, key = { it.id }) { m ->
+                Nuvoletta(
+                    m = m,
+                    conversazione = conversazione,
+                    citazione = citazioneDi(m),
+                    puoRispondere = !spento,
+                    puoRitirare = m.mio && apertura == Apertura.PRONTA,
+                    onRispondi = {
+                        risponde = m
+                        runCatching { fuoco.requestFocus() }
+                    },
+                    onRitira = { daRitirare = m },
+                    onCitazione = { id ->
+                        val posto = messaggi.indexOfFirst { it.id == id }
+                        if (posto >= 0) {
+                            val prima = if (blocco != null) 1 else 0
+                            ambito.launch { elenco.animateScrollToItem(posto + prima) }
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    daRitirare?.let { m ->
+        AlertDialog(
+            onDismissRequest = { daRitirare = null },
+            title = { Text(Frasi.t("app_messaggi.ritira.titolo")) },
+            text = { Text(Frasi.t("app_messaggi.ritira.testo")) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        daRitirare = null
+                        ritira(m)
+                    },
+                ) {
+                    Text(Frasi.t("app_messaggi.ritira"), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { daRitirare = null }) { Text(Frasi.t("comune.annulla")) } },
+        )
+    }
+}
+
+/** Sopra il campo: a che cosa si sta rispondendo, e come smettere. */
+@Composable
+private fun BarraDellaRisposta(titolo: String, testo: String, onAnnulla: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(start = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(32.dp)
+                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)),
+        )
+        Column(Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(
+                titolo,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                testo,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onAnnulla) {
+            Icon(Icons.Filled.Close, contentDescription = Frasi.t("messaggi.annulla_risposta"))
         }
     }
 }
@@ -396,16 +636,22 @@ private fun Riquadro(titolo: String, testo: String) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Nuvoletta(m: Messaggio, conversazione: Conversazione) {
-    fun nome(membro: String?): String =
-        membro?.let { chi -> conversazione.membri.firstOrNull { "${it.username}@${it.casa}" == chi }?.nome ?: chi }
-            ?: Frasi.t("messaggi.interlocutore")
-
+private fun Nuvoletta(
+    m: Messaggio,
+    conversazione: Conversazione,
+    citazione: Citazione?,
+    puoRispondere: Boolean,
+    puoRitirare: Boolean,
+    onRispondi: () -> Unit,
+    onRitira: () -> Unit,
+    onCitazione: (String) -> Unit,
+) {
     val evento = m.evento
     if (evento != null) {
-        val di = nome(evento.chi)
-        val chi = if (m.mio) Frasi.t("messaggi.tu") else nome(m.mittente)
+        val di = nomeNellaConversazione(conversazione, evento.chi)
+        val chi = if (m.mio) Frasi.t("messaggi.tu") else nomeNellaConversazione(conversazione, m.mittente)
         val frase = when (evento.tipo) {
             TipoEvento.USCITA -> Frasi.t("gruppi.evento.uscita", mapOf("nome" to di))
             TipoEvento.INGRESSO -> Frasi.t("gruppi.evento.ingresso", mapOf("chi" to chi, "nome" to di))
@@ -421,54 +667,142 @@ private fun Nuvoletta(m: Messaggio, conversazione: Conversazione) {
         return
     }
 
+    var menu by remember { mutableStateOf(false) }
+    val appunti = LocalClipboardManager.current
     val mio = m.mio
+    val forma = RoundedCornerShape(18.dp)
     val sfondo = if (mio) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
     val inchiostro = if (mio) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-    Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
+    val testo = m.testo
+    val siCopia = m.stato == StatoMessaggio.LETTO && !testo.isNullOrEmpty()
+    val haAzioni = puoRispondere || siCopia || puoRitirare
+
+    Row(Modifier.fillMaxWidth()) {
         if (mio) Spacer(Modifier.weight(1f))
-        Surface(
-            color = sfondo,
-            contentColor = inchiostro,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.widthIn(max = 300.dp),
-        ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (conversazione.gruppo && !mio) {
-                    Text(
-                        nome(m.mittente),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.tertiary,
+        Box {
+            Surface(
+                color = sfondo,
+                contentColor = inchiostro,
+                shape = forma,
+                modifier = Modifier
+                    .widthIn(max = 300.dp)
+                    .clip(forma)
+                    .combinedClickable(
+                        enabled = haAzioni,
+                        onLongClickLabel = Frasi.t("comune.altre_azioni"),
+                        // Il tocco lungo vibra da sé.
+                        onLongClick = { menu = true },
+                        onClick = {},
                     )
-                }
-                when (m.stato) {
-                    StatoMessaggio.LETTO -> Text(m.testo ?: "", style = MaterialTheme.typography.bodyLarge)
-                    StatoMessaggio.NON_SI_APRE -> Text(
-                        Frasi.t("messaggi.non_si_apre.titolo"),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontStyle = FontStyle.Italic,
-                    )
-                    StatoMessaggio.NON_DISPONIBILE -> Text(
-                        Frasi.t("messaggi.non_disponibile.titolo"),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontStyle = FontStyle.Italic,
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (!m.attestato) {
-                        Icon(
-                            Icons.Filled.Warning,
-                            contentDescription = Frasi.t("messaggi.non_attestato"),
-                            modifier = Modifier.padding(0.dp).background(Color.Transparent, CircleShape),
+                    .semantics(mergeDescendants = true) {},
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (conversazione.gruppo && !mio) {
+                        Text(
+                            nomeNellaConversazione(conversazione, m.mittente),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.tertiary,
                         )
                     }
-                    oraDi(m.creatoIl)?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, color = inchiostro.copy(alpha = 0.7f))
+                    citazione?.let { Citato(it, mio, onCitazione) }
+                    when (m.stato) {
+                        StatoMessaggio.LETTO -> Text(testo ?: "", style = MaterialTheme.typography.bodyLarge)
+                        StatoMessaggio.NON_SI_APRE -> Text(
+                            Frasi.t("messaggi.non_si_apre.titolo"),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontStyle = FontStyle.Italic,
+                        )
+                        StatoMessaggio.NON_DISPONIBILE -> Text(
+                            Frasi.t("messaggi.non_disponibile.titolo"),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontStyle = FontStyle.Italic,
+                        )
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (!m.attestato) {
+                            Icon(Icons.Filled.Warning, contentDescription = Frasi.t("messaggi.non_attestato"))
+                        }
+                        oraDi(m.creatoIl)?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = inchiostro.copy(alpha = 0.7f))
+                        }
+                    }
+                }
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                if (puoRispondere) {
+                    DropdownMenuItem(
+                        text = { Text(Frasi.t("commento.rispondi")) },
+                        onClick = {
+                            menu = false
+                            onRispondi()
+                        },
+                    )
+                }
+                if (siCopia) {
+                    DropdownMenuItem(
+                        text = { Text(Frasi.t("comune.copia")) },
+                        onClick = {
+                            menu = false
+                            appunti.setText(AnnotatedString(testo ?: ""))
+                        },
+                    )
+                }
+                if (puoRitirare) {
+                    DropdownMenuItem(
+                        text = { Text(Frasi.t("app_messaggi.ritira"), color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        },
+                        onClick = {
+                            menu = false
+                            onRitira()
+                        },
+                    )
                 }
             }
         }
         if (!mio) Spacer(Modifier.weight(1f))
+    }
+}
+
+/** Il messaggio citato, dentro la nuvoletta che gli risponde. */
+@Composable
+private fun Citato(citazione: Citazione, mio: Boolean, onCitazione: (String) -> Unit) {
+    val inchiostro = if (mio) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val fondo = if (mio) {
+        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHighest
+    }
+    val barra = if (mio) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.primary
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(fondo)
+            .clickable(enabled = citazione.autore != null) { onCitazione(citazione.id) }
+            .padding(end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(34.dp)
+                .background(barra, RoundedCornerShape(2.dp)),
+        )
+        Column(Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp)) {
+            citazione.autore?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = inchiostro)
+            }
+            Text(
+                citazione.testo,
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = if (citazione.autore == null) FontStyle.Italic else FontStyle.Normal,
+                color = inchiostro,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -481,14 +815,12 @@ private fun NuovaConversazione(casa: Casa, onChiudi: () -> Unit, onCreata: (Conv
     val ambito = rememberCoroutineScope()
 
     fun comincia() {
-        val parti = chi.trim().trim('@').split("@", limit = 2)
-        val username = parti.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val persona = personaDaInvitare(chi) ?: return
         inCorso = true
         errore = null
         ambito.launch {
             try {
-                val creata = casa.sessioniPronte().creaDiretta(PersonaDaInvitare(username, parti.getOrNull(1)))
-                onCreata(creata)
+                onCreata(casa.sessioniPronte().creaDiretta(persona))
             } catch (e: Exception) {
                 errore = Frasi.t("messaggi.errore_avvio")
             } finally {
@@ -519,7 +851,7 @@ private fun NuovaConversazione(casa: Casa, onChiudi: () -> Unit, onCreata: (Conv
             }
         },
         confirmButton = {
-            TextButton(onClick = { comincia() }, enabled = !inCorso && chi.isNotBlank()) {
+            TextButton(onClick = { comincia() }, enabled = !inCorso && personaDaInvitare(chi) != null) {
                 Text(Frasi.t("app_messaggi.comincia"))
             }
         },

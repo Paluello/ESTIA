@@ -906,6 +906,151 @@ async fn chi_e_fra_i_membri_senza_una_foglia_risulta_assente() {
     );
 }
 
+/* ---------- uscire, ritirare ---------- */
+
+/// Gli eventi dell'ultima pagina, come li legge quel telefono.
+async fn eventi(chi: &Telefono, conversazione: &str) -> Vec<Evento> {
+    chi.motore
+        .cronologia(conversazione.into(), None)
+        .await
+        .unwrap()
+        .messaggi
+        .into_iter()
+        .filter_map(|m| m.evento)
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chi_esce_lo_racconta_poi_esce_e_chi_resta_toglie_la_sua_foglia() {
+    let (istanza, anna, bruno, carla, conv) = in_tre().await;
+
+    carla.motore.esci(conv.clone()).await.unwrap();
+    // Nessun commit parte da chi esce: la sua foglia c'è ancora.
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1]);
+
+    // Il racconto l'ha scritto lei, prima di uscire.
+    let uscita = Evento {
+        tipo: TipoEvento::Uscita,
+        chi: membro("carla"),
+    };
+    assert_eq!(eventi(&bruno, &conv).await, [uscita]);
+
+    // Per lei la conversazione è chiusa, e non scrive più.
+    assert_eq!(carla.aggiorna(&conv).await.apertura, Apertura::Tolto);
+    assert!(carla
+        .motore
+        .invia(conv.clone(), "ci sono ancora?".into(), None)
+        .await
+        .is_err());
+
+    // La casa che ordina la toglie dall'albero al primo giro, e la catena
+    // ruota: ciò che si scrive dopo lei non lo apre.
+    let giro = anna.aggiorna(&conv).await;
+    assert!(giro.estranei.is_empty());
+    assert_eq!(anna.epoch(&conv), 2);
+    assert_eq!(anna.membri_nell_albero(&conv), ["anna", "bruno"]);
+    let dopo = anna.scrive(&conv, "siamo in due").await;
+    let voce = istanza
+        .voci(&conv)
+        .into_iter()
+        .find(|v| v.id == dopo.id)
+        .unwrap();
+    assert_eq!(voce.voce.chiave_n, 2);
+    assert_eq!(
+        bruno.legge(&conv).await,
+        coppie(&[("anna", "siamo in due")])
+    );
+    assert!(carla
+        .motore
+        .dispositivo()
+        .rileggi(
+            conv.clone(),
+            VoceCifrata {
+                busta: voce.voce.busta.clone(),
+                chiave_n: voce.voce.chiave_n,
+            },
+            None,
+        )
+        .is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn se_la_casa_non_lascia_uscire_il_racconto_si_ritira_e_si_resta() {
+    let (istanza, anna, _bruno, carla, conv) = in_tre().await;
+
+    istanza.spegni_la_casa_che_ordina(true);
+    let esito = carla.motore.esci(conv.clone()).await;
+    assert!(
+        matches!(&esito, Err(ErroreNucleo::Casa { stato: 503, codice }) if codice == "casa_che_ordina_non_raggiungibile"),
+        "{esito:?}"
+    );
+    // Niente resta scritto: né il racconto, né un commit.
+    assert!(istanza.voci(&conv).is_empty());
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1]);
+    // E si scrive come prima.
+    assert_eq!(carla.aggiorna(&conv).await.apertura, Apertura::Pronta);
+    carla.scrive(&conv, "sono ancora qui").await;
+    assert_eq!(
+        anna.legge(&conv).await,
+        coppie(&[("carla", "sono ancora qui")])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn da_una_chat_a_due_non_si_esce() {
+    let (istanza, anna, _bruno, conv) = in_due().await;
+    let esito = anna.motore.esci(conv.clone()).await;
+    assert!(
+        matches!(&esito, Err(ErroreNucleo::Casa { stato: 400, codice }) if codice == "non_un_gruppo"),
+        "{esito:?}"
+    );
+    assert!(istanza.voci(&conv).is_empty());
+    assert_eq!(anna.aggiorna(&conv).await.apertura, Apertura::Pronta);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn un_messaggio_ritirato_sparisce_dalla_pagina_di_tutti_e_solo_chi_l_ha_scritto_lo_ritira() {
+    let (istanza, anna, bruno, conv) = in_due().await;
+    let primo = anna.scrive(&conv, "ops").await;
+    let secondo = anna.scrive(&conv, "volevo dire ciao").await;
+    // Scritti nello stesso millisecondo, l'ordine fra i due lo decide l'id:
+    // qui conta che ci siano tutti e due.
+    let mut pagina = bruno.aggiorna(&conv).await.pagina;
+    pagina.sort();
+    let mut attesi = vec![primo.id.clone(), secondo.id.clone()];
+    attesi.sort();
+    assert_eq!(pagina, attesi);
+
+    // Bruno non ritira ciò che ha scritto Anna.
+    let esito = bruno.motore.ritira(conv.clone(), primo.id.clone()).await;
+    assert!(
+        matches!(&esito, Err(ErroreNucleo::Casa { stato: 404, codice }) if codice == "messaggio_inesistente"),
+        "{esito:?}"
+    );
+    assert_eq!(istanza.voci(&conv).len(), 2);
+
+    // Anna sì: la voce esce dall'archivio, e al giro dopo non è nella pagina.
+    anna.motore
+        .ritira(conv.clone(), primo.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(istanza.voci(&conv).len(), 1);
+    let giro = bruno.aggiorna(&conv).await;
+    assert_eq!(giro.pagina, std::slice::from_ref(&secondo.id));
+    assert!(giro.nuovi.is_empty());
+    assert_eq!(
+        anna.aggiorna(&conv).await.pagina,
+        std::slice::from_ref(&secondo.id)
+    );
+    assert_eq!(
+        bruno.legge(&conv).await,
+        coppie(&[("anna", "volevo dire ciao")])
+    );
+
+    // Una seconda volta non c'è più niente da ritirare.
+    assert!(anna.motore.ritira(conv.clone(), primo.id).await.is_err());
+}
+
 /* ---------- il registro delle chiavi di firma ---------- */
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -110,6 +110,7 @@ struct Mondo {
     depositi_persi: u32,
     registro_spento: bool,
     sorpasso: Option<Depositata>,
+    casa_che_ordina_spenta: bool,
 }
 
 impl Mondo {
@@ -338,6 +339,12 @@ impl IstanzaFinta {
         } else {
             mondo.in_disordine.remove(conversazione);
         }
+    }
+
+    /// La casa che ordina non risponde a chi chiede di uscire: è il 503 che
+    /// la rotta vera dà quando il gruppo lo ordina una casa spenta.
+    pub fn spegni_la_casa_che_ordina(&self, spenta: bool) {
+        self.mondo().casa_che_ordina_spenta = spenta;
     }
 
     /// Quante buste per pagina di handshake.
@@ -667,6 +674,27 @@ impl Istanza for VistaFinta {
         mondo.vista(id)
     }
 
+    async fn esci(&self, id: &str) -> Esito<()> {
+        let mut mondo = self.mondo();
+        let io = self.io();
+        mondo.richiedi_membro(id, &io)?;
+        let c = mondo.conversazioni.get_mut(id).expect("conversazione");
+        if !c.gruppo {
+            return Err(no(400, "non_un_gruppo"));
+        }
+        if c.congelata {
+            return Err(no(409, "gruppo_congelato"));
+        }
+        if mondo.casa_che_ordina_spenta {
+            return Err(no(503, "casa_che_ordina_non_raggiungibile"));
+        }
+        let c = mondo.conversazioni.get_mut(id).expect("conversazione");
+        c.membri.retain(|m| m != &io);
+        c.ruoli.remove(&io);
+        c.rimossi.push(format!("{}@{CASA}", nome_di(&io)));
+        Ok(())
+    }
+
     async fn handshake_dopo(&self, id: &str, dopo: Option<&str>) -> Esito<PaginaHandshake> {
         let mondo = self.mondo();
         mondo.richiedi_membro(id, &self.io())?;
@@ -852,6 +880,20 @@ impl Istanza for VistaFinta {
             }
         }
         attuali.extend(nuove);
+        Ok(())
+    }
+
+    async fn ritira_voce(&self, id: &str, voce: &str) -> Esito<()> {
+        let mut mondo = self.mondo();
+        mondo.richiedi_membro(id, &self.io())?;
+        let io = self.io();
+        let voci = mondo.archivio.entry(id.to_string()).or_default();
+        let prima = voci.len();
+        // Come `ritiraVoce` del repository: soltanto la propria.
+        voci.retain(|v| !(v.voce.id == voce && v.autore == io));
+        if voci.len() == prima {
+            return Err(no(404, "messaggio_inesistente"));
+        }
         Ok(())
     }
 }
