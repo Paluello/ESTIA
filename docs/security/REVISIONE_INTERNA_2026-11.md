@@ -36,6 +36,7 @@ Ogni rilievo «alto» è stato riprodotto prima di correggerlo. Ogni correzione 
 | Bassa   | Profili     | Nella ricerca dei membri `_` e `%` valevano «qualunque carattere»                                                               | [#45](https://github.com/Paluello/ESTIA/pull/45) |
 | Bassa   | Federazione | La prova di rete accettava connessioni senza tetto né tempo massimo, anche da chi non è collegato                               | [#46](https://github.com/Paluello/ESTIA/pull/46) |
 | Bassa   | Identità    | Un solo invito poteva tenere in attesa quante richieste voleva, e con loro i nomi utente                                        | [#47](https://github.com/Paluello/ESTIA/pull/47) |
+| Bassa   | Backup      | Un archivio non diceva da quale istanza veniva: uno cifrato da altri con la chiave pubblica sostituiva l'istanza                | [#48](https://github.com/Paluello/ESTIA/pull/48) |
 | Bassa   | Operazioni  | Il ripristino da root seguiva link già presenti e aveva tutte le capability                                                     | [#19](https://github.com/Paluello/ESTIA/pull/19) |
 | Bassa   | CI          | I workflow di verifica non limitavano i permessi del token                                                                      | [#14](https://github.com/Paluello/ESTIA/pull/14) |
 
@@ -46,7 +47,6 @@ Sono noti e hanno un responsabile. Qui sono descritti solo a grandi linee: il de
 - **Approvazione dei dispositivi.** Ci sono percorsi in cui un dispositivo nuovo risulta approvato senza esserlo. C'è una correzione pronta. Una parte tocca il comportamento dopo il logout, e quella è una scelta di prodotto ancora da fare.
 - **Provenienza dei messaggi nell'archivio delle conversazioni.** Il precondizionale di ADR 0043, «provenienza autenticata», non è ancora soddisfatto.
 - **Federazione verso istanze sconosciute.** Va decisa la richiesta delle chiavi da parte di Case non collegate.
-- **Backup.** Gli archivi non dicono da quale istanza vengono.
 - **Minori.** Qualche campo non limitato in lunghezza.
 
 ## Che cosa è risultato a posto

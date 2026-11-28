@@ -365,6 +365,8 @@ Or with Docker directly (the key is asked on screen, so it does not end up in yo
 docker run --rm -it --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --network none -v /folder/of/the/file:/backup:ro -v /volume1/docker/estia-restore:/restore --entrypoint node ghcr.io/paluello/estia:latest dist/backup/cli.js ripristina /backup/ARCHIVE.tar.age /restore
 ```
 
+**An archive says which instance it belongs to.** It carries the instance key, which only that instance holds, and the restore shows it at the end ("Istanza: …"): it is the same key the panel shows in EstiaNet as this home's key, when the network is on. Over an existing instance, an archive from another instance is refused without touching anything, because anyone who knows the public backup key can encrypt one. If you really mean to replace one instance with another, add `--altra-istanza` (`estia ripristino-backup ARCHIVE.tar.age --altra-istanza`).
+
 And worth knowing: **an archive opens without ESTIA**, with standard tools ([ADR 0013](../adr/0013-backup-cifrati-in-formato-age.md)):
 
 ```sh
