@@ -18,6 +18,9 @@ cartella_profilo=$([ "$profilo" = debug ] && echo debug || echo release)
 opzione_profilo=$([ "$profilo" = debug ] && echo "" || echo "--release")
 
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim >/dev/null
+# Lo stesso minimo di project.yml. Senza, rustc collega per iOS 10 e manca
+# `___chkstk_darwin`, che c'è solo dalle versioni nuove.
+export IPHONEOS_DEPLOYMENT_TARGET=18.0
 ( cd "$nucleo"
   cargo build --locked --lib $opzione_profilo --target aarch64-apple-ios
   cargo build --locked --lib $opzione_profilo --target aarch64-apple-ios-sim
