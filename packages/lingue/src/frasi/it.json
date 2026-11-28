@@ -311,7 +311,7 @@
   "ingresso_app.collego": "Collego…",
   "ingresso_app.non_accettato": "La Casa non ha accettato il codice. Forse è scaduto (dura dieci minuti) o è già stato usato: chiedine uno nuovo.",
   "ingresso_app.non_raggiungibile": "Non riesco a raggiungere la Casa. Controlla che sia accesa e riprova.",
-  "ingresso_app.spiegazione": "Su un dispositivo già collegato, o dal computer di casa, apri Impostazioni → Dispositivi → Aggiungi un dispositivo. Inquadra il codice QR, oppure copia qui il collegamento che compare sotto.",
+  "ingresso_app.spiegazione": "Su un dispositivo già collegato, o dal computer di casa, apri Impostazioni → Dispositivi → Aggiungi un dispositivo. Poi tocca «Inquadra il codice QR» qui sotto, oppure incolla il collegamento che compare sotto il QR.",
   "ingresso_app.titolo": "Collega questo dispositivo alla tua Casa",
   "invito.link.locale": "Questo link punta a {host}, raggiungibile solo da qui. Raggiungi l'istanza dall'indirizzo che ha sulla rete di casa — quello che vedi nel pannello del NAS — e crea di nuovo l'invito da lì.",
   "invito.link.poi": "Chi lo riceve apre il link, sceglie un nome e chiede di entrare. Poi tocca a te aprirgli la porta: avere un invito non fa entrare nessuno da solo.",
@@ -1417,5 +1417,15 @@
   "app_dispositivi.revocato": "Revocato: non legge più le tue conversazioni.",
   "app_dispositivi.revoca.errore": "Il dispositivo non è stato revocato. Riprova.",
   "app_dispositivi.lavoro.approvo": "Lo faccio entrare nelle conversazioni…",
-  "app_dispositivi.lavoro.revoco": "Lo tolgo dalle conversazioni…"
+  "app_dispositivi.lavoro.revoco": "Lo tolgo dalle conversazioni…",
+  "ingresso_app.collegamento_incolla": "Oppure incolla il collegamento",
+  "ingresso_app.scanner.apri": "Inquadra il codice QR",
+  "ingresso_app.scanner.ancora": "Inquadra un altro codice QR",
+  "ingresso_app.scanner.titolo": "Inquadra il codice QR",
+  "ingresso_app.scanner.annulla": "Annulla",
+  "ingresso_app.scanner.aiuto": "Inquadra il QR dell'invito o del collegamento: si legge da solo.",
+  "ingresso_app.scanner.negato": "ESTIA non può usare la fotocamera. Puoi permetterlo dalle Impostazioni, oppure tornare indietro e incollare il collegamento.",
+  "ingresso_app.scanner.impostazioni": "Apri Impostazioni",
+  "ingresso_app.scanner.non_supportato": "Questo dispositivo non sa leggere i codici QR dall'app. Torna indietro e incolla il collegamento, oppure inquadra il QR con la Fotocamera.",
+  "ingresso_app.scanner.non_disponibile": "La fotocamera adesso non è disponibile. Riprova tra poco, oppure torna indietro e incolla il collegamento."
 }

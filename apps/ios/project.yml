@@ -33,6 +33,7 @@ targets:
         CFBundleDevelopmentRegion: it
         CFBundleLocalizations: [it, en]
         UILaunchScreen: {}
+        NSCameraUsageDescription: ESTIA usa la fotocamera solo per leggere il codice QR con cui entri nella tua Casa.
         UIAppFonts:
           - Besley.ttf
           - AtkinsonHyperlegibleNext.ttf

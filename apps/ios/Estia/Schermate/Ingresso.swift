@@ -1,7 +1,7 @@
 // La prima schermata: collegare il telefono alla propria Casa con il codice
 // monouso del QR (ADR 0044, docs/ACCESSO_DEL_DISPOSITIVO.md). Il QR si
-// inquadra con la fotocamera di sistema, che apre `estia://ingresso`; in
-// alternativa il collegamento si incolla qui.
+// inquadra dall'app (`FoglioScanner`) o con la fotocamera di sistema, che apre
+// `estia://ingresso`; in alternativa il collegamento si incolla qui.
 
 import SwiftUI
 
@@ -14,6 +14,7 @@ struct SchermataIngresso: View {
     @State private var password = ""
     @State private var nome = ""
     @State private var messaggio = ""
+    @State private var scanner = false
 
     /// Un QR d'invito: chi non è ancora membro chiede di entrare.
     private var conInvito: Bool {
@@ -38,8 +39,10 @@ struct SchermataIngresso: View {
                     .font(Tema.corpo())
                     .foregroundStyle(Tema.testoTenue)
 
+                pulsanteScanner
+
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(Frasi.t("ingresso_app.collegamento"))
+                    Text(Frasi.t("ingresso_app.collegamento_incolla"))
                         .font(Tema.corpo(.subheadline, peso: .semibold))
                         .foregroundStyle(Tema.testo)
                     TextField("estia://ingresso?…", text: $collegamento, axis: .vertical)
@@ -77,7 +80,7 @@ struct SchermataIngresso: View {
                         .background(Tema.sfondoPericolo, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
-                pulsante
+                if !vuoto { pulsante }
             }
             .padding(24)
             .frame(maxWidth: 560)
@@ -86,10 +89,45 @@ struct SchermataIngresso: View {
         .background(Tema.sfondo)
         .onChange(of: casa.collegamentoArrivato, initial: true) { _, arrivato in
             guard let arrivato else { return }
-            collegamento = arrivato
             casa.collegamentoArrivato = nil
-            // Un QR d'invito aspetta il modulo; quello d'ingresso entra subito.
-            if !conInvito { Task { await collega() } }
+            arriva(arrivato)
+        }
+        .sheet(isPresented: $scanner) {
+            FoglioScanner { arriva($0) }
+        }
+    }
+
+    private var vuoto: Bool { collegamento.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    /// Un collegamento letto dal QR, dall'app o dalla Fotocamera di sistema.
+    private func arriva(_ testo: String) {
+        collegamento = testo
+        errore = nil
+        // Un QR d'invito aspetta il modulo; quello d'ingresso entra subito.
+        if !conInvito { Task { await collega() } }
+    }
+
+    /// Il gesto che chi arriva si aspetta: inquadrare. Pieno finché non c'è un
+    /// collegamento, poi diventa secondario, per inquadrarne un altro.
+    @ViewBuilder private var pulsanteScanner: some View {
+        let etichetta = Label(
+            Frasi.t(vuoto ? "ingresso_app.scanner.apri" : "ingresso_app.scanner.ancora"),
+            systemImage: "qrcode.viewfinder"
+        )
+            .font(Tema.corpo(.headline, peso: .semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+        if vuoto {
+            Button { scanner = true } label: { etichetta }
+                .buttonStyle(.borderedProminent)
+                .tint(Tema.accento)
+                .foregroundStyle(Tema.sopraAccento)
+                .disabled(inCorso)
+        } else {
+            Button { scanner = true } label: { etichetta }
+                .buttonStyle(.bordered)
+                .tint(Tema.accento)
+                .disabled(inCorso)
         }
     }
 

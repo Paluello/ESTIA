@@ -311,7 +311,7 @@
   "ingresso_app.collego": "Connecting…",
   "ingresso_app.non_accettato": "The Home did not accept the code. It may have expired (it lasts ten minutes) or already been used: ask for a new one.",
   "ingresso_app.non_raggiungibile": "I can't reach the Home. Check that it is on and try again.",
-  "ingresso_app.spiegazione": "On a device that is already connected, or on the computer at home, open Settings → Devices → Add a device. Scan the QR code, or paste here the link shown below it.",
+  "ingresso_app.spiegazione": "On a device that is already connected, or on the computer at home, open Settings → Devices → Add a device. Then tap «Scan the QR code» below, or paste the link shown under the QR code.",
   "ingresso_app.titolo": "Connect this device to your Home",
   "invito.link.locale": "This link points to {host}, reachable only from here. Reach the instance from the address it has on the home network — the one you see in the NAS panel — and create the invite again from there.",
   "invito.link.poi": "Whoever receives it opens the link, chooses a name and asks to join. Then it is up to you to open the door: having an invite does not let anyone in on its own.",
@@ -1417,5 +1417,15 @@
   "app_dispositivi.revocato": "Revoked: it no longer reads your conversations.",
   "app_dispositivi.revoca.errore": "The device was not revoked. Try again.",
   "app_dispositivi.lavoro.approvo": "Letting it into your conversations…",
-  "app_dispositivi.lavoro.revoco": "Removing it from your conversations…"
+  "app_dispositivi.lavoro.revoco": "Removing it from your conversations…",
+  "ingresso_app.collegamento_incolla": "Or paste the link",
+  "ingresso_app.scanner.apri": "Scan the QR code",
+  "ingresso_app.scanner.ancora": "Scan another QR code",
+  "ingresso_app.scanner.titolo": "Scan the QR code",
+  "ingresso_app.scanner.annulla": "Cancel",
+  "ingresso_app.scanner.aiuto": "Point at the invite or link QR code: it reads by itself.",
+  "ingresso_app.scanner.negato": "ESTIA can't use the camera. You can allow it in Settings, or go back and paste the link.",
+  "ingresso_app.scanner.impostazioni": "Open Settings",
+  "ingresso_app.scanner.non_supportato": "This device can't read QR codes from the app. Go back and paste the link, or scan the QR code with the Camera.",
+  "ingresso_app.scanner.non_disponibile": "The camera isn't available right now. Try again shortly, or go back and paste the link."
 }
