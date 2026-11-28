@@ -1137,6 +1137,7 @@
   "diagnostica.connessione.loopback": "You are looking at the instance from the machine that hosts it.",
   "diagnostica.connessione.overlay": "You are coming from outside home, through the pilot's private network. Content stays encrypted all the way to the instance, but whoever runs that network sees that you connected, when and from where.",
   "diagnostica.connessione.public": "You are coming from an address that belongs neither to the home network nor to the pilot's private network. It can mean the instance is reachable from the Internet, or that there is a proxy between you and it: whoever administers it should check which of the two.",
+  "diagnostica.connessione.dispositivo": "You are coming from the app, with this device's key, over an encrypted direct connection to your Casa. No web port is open to let you in.",
   "diagnostica.schema.created.one": "Before applying one migration the instance wrote an encrypted backup: {archivio}. It is the way back for this update.",
   "diagnostica.schema.created.other": "Before applying {n} migrations the instance wrote an encrypted backup: {archivio}. It is the way back for this update.",
   "diagnostica.schema.not_configured.one": "The instance applied one migration without writing a backup, because none is configured. Migrations only go forward: this update has no way back, and cannot get one later. Set a public key in Settings → Backup so the next one has it.",

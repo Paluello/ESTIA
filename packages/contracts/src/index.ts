@@ -1221,13 +1221,19 @@ export const backupArchiveListSchema = {
  * ISP uses for carrier-grade NAT. The instance cannot tell those apart from the
  * socket, so it does not pretend to.
  */
-export type ConnectionOrigin = "loopback" | "local" | "overlay" | "public";
+export type ConnectionOrigin = "loopback" | "local" | "overlay" | "public" | "dispositivo";
 
+/**
+ * `dispositivo`: la richiesta è arrivata da un'app ammessa, su
+ * `estia/dispositivo/1`. L'indirizzo, lì, è quello di `app.inject()`, e non
+ * dice da dove viene davvero.
+ */
 export const CONNECTION_ORIGINS: readonly ConnectionOrigin[] = [
   "loopback",
   "local",
   "overlay",
   "public",
+  "dispositivo",
 ];
 
 /** Counts and last-seen only. No address is kept anywhere. */

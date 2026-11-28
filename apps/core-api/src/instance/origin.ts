@@ -21,7 +21,7 @@
  * announcing a breach it has not established.
  */
 
-export type ConnectionOrigin = "loopback" | "local" | "overlay" | "public";
+export type ConnectionOrigin = "loopback" | "local" | "overlay" | "public" | "dispositivo";
 
 /** No address is ever stored — only which of the four kinds it was. */
 export interface OriginSighting {
