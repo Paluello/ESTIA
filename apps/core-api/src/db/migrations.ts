@@ -1021,4 +1021,44 @@ export const migrations: readonly Migration[] = [
        ) STRICT`,
     ],
   },
+  {
+    version: 35,
+    name: "gruppi",
+    statements: [
+      // I gruppi (M8 Fase 1). Il `tipo` c'era dalla migrazione 21 e niente
+      // creava mai un gruppo: mancavano il nome, chi può cambiare chi c'è, e
+      // la memoria di chi è stato tolto.
+      //
+      // Il nome è del gruppo; una conversazione diretta non ne ha.
+      `ALTER TABLE conversazioni ADD COLUMN nome TEXT`,
+      // La composizione ha una versione, e la assegna **la casa che ordina**
+      // ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3) a
+      // ogni cambio. Le altre case tengono uno specchio e lo sostituiscono
+      // solo con una versione non più bassa: una spinta vecchia arrivata tardi non
+      // rimette dentro chi è stato tolto.
+      `ALTER TABLE conversazioni ADD COLUMN versione_composizione INTEGER NOT NULL DEFAULT 0`,
+      // Risposta del proprietario, 2026-09-17: aggiungono e tolgono membri il
+      // creatore e gli amministratori che nomina. Chi c'era prima è `membro`,
+      // ed è vero: in una conversazione diretta non c'è niente da amministrare.
+      `ALTER TABLE conversazione_membri ADD COLUMN ruolo TEXT NOT NULL DEFAULT 'membro'
+         CHECK (ruolo IN ('creatore', 'amministratore', 'membro'))`,
+      // Chi è stato tolto, o è uscito, e quando. Serve a tre cose: l'istanza
+      // rifiuta di servirgli la conversazione dicendo perché, invece di un
+      // «non sei membro» che non spiega niente (criterio 3 di M8); la casa che
+      // ordina sa a quali case dire che la composizione è cambiata anche
+      // quando non hanno più nessuno dentro — custodiscono ancora quello che i
+      // loro avevano scritto ([ADR 0043](../../../../docs/adr/0043-custodia-lato-mittente.md));
+      // e chi riammette sa che sta riammettendo.
+      //
+      // `da` è chi ha tolto: uguale a `user_id` quando è un'uscita, che è
+      // un'operazione di chi esce e non di chi resta.
+      `CREATE TABLE conversazione_rimossi (
+         conversazione_id TEXT NOT NULL REFERENCES conversazioni (id) ON DELETE CASCADE,
+         user_id TEXT NOT NULL,
+         rimosso_il TEXT NOT NULL,
+         da TEXT NOT NULL,
+         PRIMARY KEY (conversazione_id, user_id)
+       ) STRICT`,
+    ],
+  },
 ];

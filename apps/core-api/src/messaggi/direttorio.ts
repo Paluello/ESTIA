@@ -24,7 +24,12 @@ import type { FederationService, MessaggiDirectory } from "../federation/service
 import type { FollowRepository } from "../profile/follows.js";
 import type { ProfileRepository } from "../profile/repository.js";
 
-import type { ChiPuoScrivere, MessaggiService, ReteFraCase } from "./service.js";
+import {
+  eMotivoDiRifiuto,
+  type ChiPuoScrivere,
+  type MessaggiService,
+  type ReteFraCase,
+} from "./service.js";
 
 /** Quello che questa casa risponde alle altre sulle conversazioni. */
 export function direttorioMessaggi(
@@ -32,7 +37,10 @@ export function direttorioMessaggi(
   dispositivi: DispositiviService,
 ): Required<MessaggiDirectory> {
   return {
+    cambiaMembri: (richiesta) => messaggi.cambiaMembriRemoto(richiesta),
     chiaviDiFirmaDi: (username) => dispositivi.chiaviDiFirmaDi(username).chiavi,
+    composizionePerCasa: (conversazioneId, remoteKey) =>
+      messaggi.composizionePerCasa(conversazioneId, remoteKey),
     depositaHandshake: (record) => messaggi.depositaHandshakeRemoto(record),
     depositaStato: (conversazioneId, remoteKey, tipo, stato) =>
       messaggi.depositaStatoRemoto(conversazioneId, remoteKey, tipo, stato),
@@ -43,6 +51,8 @@ export function direttorioMessaggi(
     handshakeDa: (conversazioneId, remoteKey, options) =>
       messaggi.handshakeRemoti(conversazioneId, remoteKey, options),
     partecipa: (remoteKey) => messaggi.casaPartecipa(remoteKey),
+    riceviComposizione: (conversazioneId, remoteKey, composizione) =>
+      messaggi.riceviComposizione(conversazioneId, remoteKey, composizione),
     riceviSegnapostiSpinti: (spinta) => messaggi.riceviSegnapostiSpinti(spinta),
     segnapostiPerCasa: (conversazioneId, remoteKey, dopo) =>
       messaggi.segnapostiPerCasa(conversazioneId, remoteKey, dopo),
@@ -56,7 +66,22 @@ export function direttorioMessaggi(
 /** Quello che questa casa chiede alle altre. `casa` è la sua chiave (ADR 0042 §0). */
 export function reteFraCase(federation: FederationService, casa: string): ReteFraCase {
   return {
+    annunciaComposizione: (altra, conversazioneId, composizione) =>
+      federation.annunciaComposizioneA(altra, conversazioneId, composizione),
+    async cambiaMembri(altra, conversazioneId, richiesta) {
+      const esito = await federation.cambiaMembriPresso(altra, conversazioneId, richiesta);
+      if (esito.esito !== "negato") {
+        return esito;
+      }
+
+      // Un motivo che questa casa non conosce non diventa una frase inventata:
+      // resta un rifiuto.
+      return eMotivoDiRifiuto(esito.motivo)
+        ? { esito: "negato", motivo: esito.motivo }
+        : { esito: "rifiutato" };
+    },
     casa,
+    composizione: (altra, conversazioneId) => federation.composizionePresso(altra, conversazioneId),
     coda: (altra, conversazioneId, dopo) => federation.fetchHandshake(altra, conversazioneId, dopo),
     deposita: (altra, conversazioneId, busta) =>
       federation.depositaHandshakePresso(altra, conversazioneId, busta),
