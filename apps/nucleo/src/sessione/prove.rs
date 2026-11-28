@@ -1013,10 +1013,13 @@ async fn un_messaggio_ritirato_sparisce_dalla_pagina_di_tutti_e_solo_chi_l_ha_sc
     let (istanza, anna, bruno, conv) = in_due().await;
     let primo = anna.scrive(&conv, "ops").await;
     let secondo = anna.scrive(&conv, "volevo dire ciao").await;
-    assert_eq!(
-        bruno.aggiorna(&conv).await.pagina,
-        [primo.id.clone(), secondo.id.clone()]
-    );
+    // Scritti nello stesso millisecondo, l'ordine fra i due lo decide l'id:
+    // qui conta che ci siano tutti e due.
+    let mut pagina = bruno.aggiorna(&conv).await.pagina;
+    pagina.sort();
+    let mut attesi = vec![primo.id.clone(), secondo.id.clone()];
+    attesi.sort();
+    assert_eq!(pagina, attesi);
 
     // Bruno non ritira ciò che ha scritto Anna.
     let esito = bruno.motore.ritira(conv.clone(), primo.id.clone()).await;
