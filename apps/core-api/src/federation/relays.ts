@@ -24,6 +24,7 @@
  */
 
 import type { SettingsRepository } from "../backup/settings.js";
+import { DomainError } from "../errors.js";
 
 /** Un relay adottato, con ciò che l'amministratore ha visto quando l'ha adottato. */
 export interface AdoptedRelay {
@@ -105,6 +106,49 @@ export function writeAdoptedRelays(
 }
 
 /**
+ * Adotta un relay (§3): con un gesto, mai in automatico, e con il nome di chi
+ * lo gestisce, che è quello che l'amministratore deve sapere quando adotta.
+ */
+export function adoptRelay(
+  repository: SettingsRepository,
+  input: { url: string; gestore: string },
+  now: Date,
+): AdoptedRelay[] {
+  const url = canonicalRelayUrl(input.url);
+  if (url === undefined) throw new DomainError("relay_indirizzo_non_valido", 400);
+
+  const gestore = input.gestore.trim();
+  if (gestore === "") throw new DomainError("relay_gestore_mancante", 400);
+
+  const relays = readAdoptedRelays(repository);
+  if (relays.some((relay) => relay.url === url)) throw new DomainError("relay_gia_adottato", 409);
+  if (relays.length >= MAX_ADOPTED_RELAYS) {
+    throw new DomainError("troppi_relay", 409, { massimo: MAX_ADOPTED_RELAYS });
+  }
+
+  const next = [...relays, { url, gestore, adottatoIl: now.toISOString() }];
+  writeAdoptedRelays(repository, next, now.toISOString());
+
+  return next;
+}
+
+/** Toglie un relay adottato. Tolti tutti, la Casa torna alla mappa di n0. */
+export function removeRelay(
+  repository: SettingsRepository,
+  input: string,
+  now: Date,
+): AdoptedRelay[] {
+  const url = canonicalRelayUrl(input) ?? input;
+  const relays = readAdoptedRelays(repository);
+  const next = relays.filter((relay) => relay.url !== url);
+
+  if (next.length === relays.length) throw new DomainError("relay_non_adottato", 404);
+  writeAdoptedRelays(repository, next, now.toISOString());
+
+  return next;
+}
+
+/**
  * Gli URL che la mappa deve contenere adesso.
  *
  * `healthy` sono gli adottati che all'ultimo controllo hanno risposto; `n0`
@@ -138,6 +182,8 @@ export interface RelayMapTarget {
   /** Gli URL dei relay di n0, o `undefined` se il binding non c'è. */
   n0RelayUrls(): string[] | undefined;
   setRelayMap(urls: readonly string[]): Promise<void>;
+  /** Il relay attraverso cui la Casa si fa trovare adesso. */
+  readonly homeRelay?: string | undefined;
 }
 
 export type RelayPing = (url: string, signal: AbortSignal) => Promise<boolean>;
@@ -215,6 +261,33 @@ export class RelayWatch {
       gestore,
       ...this.#status.get(url),
     }));
+  }
+
+  /** Che cosa mostra il pannello (`CommunityRelaysView`). */
+  public view(): {
+    attivi: boolean;
+    relays: (AdoptedRelay & { risponde?: boolean; controllatoIl?: string })[];
+    inUso?: string;
+    ripiegoSuN0: boolean;
+    massimo: number;
+  } {
+    const n0 = this.#target.n0RelayUrls();
+    const relays = readAdoptedRelays(this.#settings).map((relay) => ({
+      ...relay,
+      ...this.#status.get(relay.url),
+    }));
+    const inUso = n0 === undefined ? undefined : this.#target.homeRelay;
+
+    return {
+      attivi: n0 !== undefined,
+      relays,
+      ...(inUso === undefined ? {} : { inUso }),
+      ripiegoSuN0:
+        n0 !== undefined &&
+        relays.length > 0 &&
+        (this.#applied ?? []).some((url) => n0.includes(url)),
+      massimo: MAX_ADOPTED_RELAYS,
+    };
   }
 
   /** La mappa che l'ultimo controllo ha dato all'endpoint, se gliene ha data una. */

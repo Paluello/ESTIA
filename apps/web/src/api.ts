@@ -1,5 +1,7 @@
 import type {
   AdminDiagnostics,
+  AdoptCommunityRelay,
+  CommunityRelaysView,
   ErrorResponse,
   BackupArchiveView,
   ConnectedInstanceView,
@@ -308,6 +310,17 @@ export const api = {
 
   probeNetwork: (token: string, ticket: string): Promise<NetworkProbeResult> =>
     request("/api/v1/admin/network/probe", { body: { ticket }, method: "POST", token }),
+
+  // I relay della comunità (ADR 0045 §3): ogni azione rende la vista intera,
+  // con il controllo già rifatto.
+  communityRelays: (token: string): Promise<CommunityRelaysView> =>
+    request("/api/v1/admin/network/relays", { token }),
+
+  adoptCommunityRelay: (token: string, body: AdoptCommunityRelay): Promise<CommunityRelaysView> =>
+    request("/api/v1/admin/network/relays", { body, method: "POST", token }),
+
+  removeCommunityRelay: (token: string, url: string): Promise<CommunityRelaysView> =>
+    request("/api/v1/admin/network/relays/remove", { body: { url }, method: "POST", token }),
 
   // Le connessioni fra istanze (ADR 0021). Ogni azione restituisce la vista
   // intera invece di una riga: lo stato di un collegamento cambia anche

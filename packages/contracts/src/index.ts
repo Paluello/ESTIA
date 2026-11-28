@@ -3537,3 +3537,83 @@ export const ingressoEmessoViewSchema = {
     scadeIl: { type: "string" },
   },
 } as const;
+
+/**
+ * I relay della comunità che una Casa ha adottato (ADR 0045 §2-3).
+ *
+ * Solo per chi amministra. Nessun elenco di chi parla con chi: il relay lo
+ * vede, questa vista no (§5).
+ */
+export interface CommunityRelayView {
+  /** Forma canonica, `https://host[:porta]/`. */
+  url: string;
+  /** Chi lo gestisce, come l'ha scritto chi l'ha adottato. */
+  gestore: string;
+  adottatoIl: string;
+  /** All'ultimo controllo; assente finché non è stato controllato. */
+  risponde?: boolean;
+  controllatoIl?: string;
+}
+
+export interface CommunityRelaysView {
+  /** False quando la rete non è su «internet»: lì non si usano relay. */
+  attivi: boolean;
+  relays: CommunityRelayView[];
+  /** Il relay attraverso cui la Casa si fa trovare adesso, se c'è. */
+  inUso?: string;
+  /** True quando nessun adottato risponde e la Casa sta usando n0. */
+  ripiegoSuN0: boolean;
+  massimo: number;
+}
+
+const communityRelaySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["url", "gestore", "adottatoIl"],
+  properties: {
+    url: { type: "string" },
+    gestore: { type: "string" },
+    adottatoIl: { type: "string" },
+    risponde: { type: "boolean" },
+    controllatoIl: { type: "string" },
+  },
+} as const;
+
+export const communityRelaysViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["attivi", "relays", "ripiegoSuN0", "massimo"],
+  properties: {
+    attivi: { type: "boolean" },
+    relays: { type: "array", items: communityRelaySchema },
+    inUso: { type: "string" },
+    ripiegoSuN0: { type: "boolean" },
+    massimo: { type: "integer", minimum: 1 },
+  },
+} as const;
+
+export interface AdoptCommunityRelay {
+  url: string;
+  gestore: string;
+}
+
+export const adoptCommunityRelaySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["url", "gestore"],
+  properties: {
+    url: { type: "string", minLength: 1, maxLength: 512 },
+    gestore: { type: "string", maxLength: 120 },
+  },
+} as const;
+
+export interface RemoveCommunityRelay {
+  url: string;
+}
+
+export const removeCommunityRelaySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["url"],
+  properties: { url: { type: "string", minLength: 1, maxLength: 512 } },
+} as const;

@@ -72,6 +72,7 @@ import { SqliteSegnalazioniRepository } from "./segnalazioni/repository.js";
 import { registerSegnalazioniRoutes } from "./segnalazioni/routes.js";
 import { SegnalazioniService } from "./segnalazioni/service.js";
 import { BattitoDelleIstanze } from "./federation/battito.js";
+import { registerRelayRoutes } from "./federation/relay-routes.js";
 import { RelayWatch } from "./federation/relays.js";
 import { SqliteRemoteInstanceRepository } from "./federation/repository.js";
 import { FederationService } from "./federation/service.js";
@@ -625,7 +626,11 @@ export async function buildApp(
   // La mappa dei relay (ADR 0045 §2): gli adottati, e n0 solo quando tacciono
   // tutti. Si riapplica a ogni apertura del socket, perché la sonda può
   // chiuderlo e riaprirlo cambiando modo.
-  const relayWatch = new RelayWatch({ settings: settingsRepository, target: endpoint });
+  const relayWatch = new RelayWatch({
+    settings: settingsRepository,
+    target: endpoint,
+    ...(options.now === undefined ? {} : { now: () => new Date(options.now?.() ?? Date.now()) }),
+  });
   endpoint.onOpen(() => void relayWatch.check());
   relayWatch.start();
   app.decorate("relayWatch", relayWatch);
@@ -701,6 +706,12 @@ export async function buildApp(
   app.decorate("battito", battito);
 
   registerFederationRoutes(app, { battito, endpoint, federation, identity: identityService });
+  registerRelayRoutes(app, {
+    identity: identityService,
+    now: () => new Date(options.now?.() ?? Date.now()),
+    relayWatch,
+    settings: settingsRepository,
+  });
 
   // Le segnalazioni si visitano ([ADR 0047], [ADR 0049]): quelle dei membri di
   // qui rispondono alle collegate, quelle delle altre case si chiedono al
