@@ -63,6 +63,9 @@ const DEFAULTS = {
   unknown: { requests: 5, windowMs: 60_000 },
 } as const;
 
+/** Below this many entries a map is not worth walking. */
+const SWEEP_AT = 256;
+
 interface Window {
   startedAt: number;
   count: number;
@@ -137,6 +140,10 @@ export class RemoteBudgets {
     const existing = this.#contentWindows.get(publicKey);
 
     if (existing === undefined || now - existing.startedAt >= this.#content.windowMs) {
+      if (existing === undefined && !this.#roomIn(this.#contentWindows, this.#content, now)) {
+        return false;
+      }
+
       this.#contentWindows.set(publicKey, { connected: true, count: 1, startedAt: now });
 
       return true;
@@ -156,6 +163,10 @@ export class RemoteBudgets {
     const existing = this.#deliveryWindows.get(publicKey);
 
     if (existing === undefined || now - existing.startedAt >= this.#delivery.windowMs) {
+      if (existing === undefined && !this.#roomIn(this.#deliveryWindows, this.#delivery, now)) {
+        return false;
+      }
+
       this.#deliveryWindows.set(publicKey, { connected: true, count: 1, startedAt: now });
       return true;
     }
@@ -168,13 +179,42 @@ export class RemoteBudgets {
     return true;
   }
 
+  /**
+   * Room for a new key in the content or delivery map.
+   *
+   * These maps used to only grow (internal review, 2026-11-27): a key is
+   * nothing but a fresh handshake, so a stranger minting keys could fill
+   * memory one entry at a time. Expired windows are swept when the map is
+   * large enough for it to matter, and past the ceiling a new key waits for
+   * the next window, the same fail-closed rule as for unknown instances.
+   */
+  #roomIn(map: Map<string, Window>, budget: Budget, now: number): boolean {
+    if (map.size < SWEEP_AT) {
+      return true;
+    }
+
+    for (const [key, window] of map) {
+      if (now - window.startedAt >= budget.windowMs) {
+        map.delete(key);
+      }
+    }
+
+    return map.size < Math.max(SWEEP_AT, this.#maxTrackedUnknown * 4);
+  }
+
   #roomForAnotherUnknown(now: number): boolean {
     let tracked = 0;
 
     for (const [key, window] of this.#windows) {
       // Expired windows are swept here rather than on a timer: the only moment
       // this map's size matters is the moment something is being added to it.
+      // A connected window is swept too once it has expired, or the entries of
+      // every instance ever connected would stay for the life of the process.
       if (window.connected) {
+        if (now - window.startedAt >= this.#connected.windowMs) {
+          this.#windows.delete(key);
+        }
+
         continue;
       }
 

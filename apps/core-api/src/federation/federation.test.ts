@@ -542,6 +542,37 @@ describe("i budget per istanza", () => {
     expect(budgets.allow("tranquilla", "sconosciuta")).toBe(true);
   });
 
+  /**
+   * Revisione interna, 2026-11-27: le finestre dei contenuti e delle
+   * consegne non si svuotavano mai. Una chiave è solo un handshake nuovo,
+   * quindi chi ne coniava a raffica riempiva la memoria una riga alla volta.
+   */
+  it("le finestre dei contenuti scadono, e chi conia chiavi trova un tetto", () => {
+    let adesso = 0;
+    const budgets = new RemoteBudgets({
+      content: { requests: 5, windowMs: 1000 },
+      delivery: { requests: 5, windowMs: 1000 },
+      maxTrackedUnknown: 100,
+      now: () => adesso,
+    });
+
+    for (let i = 0; i < 400; i += 1) {
+      expect(budgets.allowContent(`chiave-${String(i)}`)).toBe(true);
+      expect(budgets.allowDelivery(`chiave-${String(i)}`)).toBe(true);
+    }
+
+    // Pieno: una chiave nuova aspetta la finestra dopo...
+    expect(budgets.allowContent("una-di-troppo")).toBe(false);
+    expect(budgets.allowDelivery("una-di-troppo")).toBe(false);
+    // ...ma chi c'era già continua dentro il proprio budget.
+    expect(budgets.allowContent("chiave-0")).toBe(true);
+
+    // Scaduta la finestra, le righe vecchie se ne vanno e c'è di nuovo posto.
+    adesso = 1000;
+    expect(budgets.allowContent("una-di-troppo")).toBe(true);
+    expect(budgets.allowDelivery("una-di-troppo")).toBe(true);
+  });
+
   it("non si lascia riempire la memoria dalle sconosciute", () => {
     const budgets = new RemoteBudgets({
       maxTrackedUnknown: 2,
