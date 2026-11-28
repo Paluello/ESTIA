@@ -24,6 +24,8 @@ targets:
         embed: false
       - sdk: SystemConfiguration.framework
       - sdk: Security.framework
+      # netdev su iOS legge lo stato della rete con nw_path_monitor.
+      - sdk: Network.framework
     info:
       path: Estia/Info.plist
       properties:

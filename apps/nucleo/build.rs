@@ -6,4 +6,8 @@ fn main() {
     if os == "ios" || os == "macos" {
         println!("cargo:rustc-link-lib=framework=SystemConfiguration");
     }
+    // netdev su iOS legge lo stato della rete con nw_path_monitor.
+    if os == "ios" {
+        println!("cargo:rustc-link-lib=framework=Network");
+    }
 }
