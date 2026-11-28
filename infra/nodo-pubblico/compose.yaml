@@ -1,0 +1,26 @@
+# Il Nodo pubblico della comunità: docs/NODO_PUBBLICO.md.
+#
+#   NODO_DOMINIO=relay.esempio.it NODO_EMAIL=chi@esempio.it docker compose up -d
+#
+# Va su una macchina raggiungibile da Internet, con le porte qui sotto aperte.
+# Non è l'installazione di una Casa e non ne ha bisogno.
+
+services:
+  nodo:
+    image: ghcr.io/paluello/estia-nodo-pubblico:latest
+    restart: unless-stopped
+    environment:
+      NODO_DOMINIO: ${NODO_DOMINIO:?imposta NODO_DOMINIO, il nome DNS di questa macchina}
+      NODO_EMAIL: ${NODO_EMAIL:?imposta NODO_EMAIL, il contatto per Let's Encrypt}
+      NODO_BANDA_KIB: ${NODO_BANDA_KIB:-1024}
+      NODO_RAFFICA_KIB: ${NODO_RAFFICA_KIB:-4096}
+      NODO_LE_STAGING: ${NODO_LE_STAGING:-0}
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "7842:7842/udp"
+    volumes:
+      - nodo-dati:/dati
+
+volumes:
+  nodo-dati:

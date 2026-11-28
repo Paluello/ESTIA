@@ -1,0 +1,39 @@
+name: relay-lab
+
+# Laboratorio dei relay di ADR 0045 §«Prima di costruire», verifiche 1-3.
+#
+# Gira sul runner perché lì c'è quello che una macchina di sviluppo dietro un
+# proxy non ha: Docker e la rete aperta verso la scoperta DNS di n0. Parte
+# quando cambia il laboratorio, e a mano; non è un controllo obbligatorio,
+# perché le prove 1c-1e dipendono da un servizio di terzi.
+
+on:
+  pull_request:
+    paths:
+      - "infra/relay-lab/**"
+      - "infra/nodo-pubblico/**"
+      - ".github/workflows/relay-lab.yml"
+  workflow_dispatch:
+
+jobs:
+  relay-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Verifiche 1-3
+        run: infra/relay-lab/run.sh
+
+      - name: Risultati grezzi
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-lab-results
+          path: infra/relay-lab/results/out/
+          if-no-files-found: ignore

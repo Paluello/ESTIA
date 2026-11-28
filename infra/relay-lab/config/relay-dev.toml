@@ -1,0 +1,4 @@
+# Relay del laboratorio, in modalità `--dev`: HTTP in chiaro sulla 3340, nessun
+# certificato. Va bene solo dentro la rete di Docker del laboratorio.
+http_bind_addr = "0.0.0.0:3340"
+enable_metrics = false

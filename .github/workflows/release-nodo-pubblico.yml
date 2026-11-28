@@ -1,0 +1,84 @@
+name: release-nodo-pubblico
+
+# Costruisce e pubblica l'immagine del Nodo pubblico (ADR 0045 §1,
+# docs/NODO_PUBBLICO.md) per linux/amd64 e linux/arm64.
+#
+# Un lavoro solo, senza emulazione: l'immagine è quella ufficiale di
+# iroh-relay, già multi-architettura, più uno script di shell. Non c'è niente
+# da compilare, quindi buildx assembla le due architetture sullo stesso runner.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "infra/nodo-pubblico/**"
+      - ".github/workflows/release-nodo-pubblico.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/estia-nodo-pubblico
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nome dell'immagine, in minuscolo
+        run: echo "IMAGE_REF=${REGISTRY}/${IMAGE,,}" >> "$GITHUB_ENV"
+
+      # Prima di pubblicare: il contenitore deve rifiutare una configurazione
+      # incompleta e partire in modalità di prova.
+      - name: Prova l'avvio
+        run: |
+          docker build -t nodo-prova infra/nodo-pubblico
+          if docker run --rm nodo-prova; then
+            echo "Senza NODO_DOMINIO doveva rifiutare di partire" >&2
+            exit 1
+          fi
+          docker run -d --name nodo-prova -p 3340:3340 -e NODO_PROVA=1 nodo-prova
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:3340/ping && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3340/ping
+          docker rm -f nodo-prova
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_REF }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: infra/nodo-pubblico
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+
+      - name: Controlla che ci siano entrambe le architetture
+        run: |
+          docker buildx imagetools inspect "${IMAGE_REF}:${TAG}" --format '{{json .Manifest}}' \
+            | jq -e '[.manifests[].platform | select(.architecture != "unknown") | .os + "/" + .architecture] | sort == ["linux/amd64","linux/arm64"]'
+        env:
+          TAG: ${{ steps.meta.outputs.version }}
