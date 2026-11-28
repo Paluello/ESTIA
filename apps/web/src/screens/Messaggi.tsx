@@ -1,15 +1,25 @@
-import type { ConversazioneView } from "@estia/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { AuthorView, ConversazioneView } from "@estia/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "../api.js";
+import { api, ApiError } from "../api.js";
 import { base64InBytes } from "../mls/adattatori.js";
-import { apriConversazione, leggi, manda, type Riga } from "../mls/conversazione.js";
-import { leggiKeyPackage } from "../mls/gruppo.js";
-import { contestoChat, ripristina } from "../mls/motore.js";
-import type { Sessione } from "../mls/sessione.js";
+import {
+  annuncia,
+  apriConversazione,
+  faiEntrare,
+  faiUscire,
+  leggi,
+  manda,
+  type Evento,
+  type Invitato,
+  type Riga,
+} from "../mls/conversazione.js";
+import { leggiKeyPackage, scriviIdentita, TroppeFoglie, type Confronto } from "../mls/gruppo.js";
+import { contestoChat, ripristina, type ContestoChat } from "../mls/motore.js";
+import { ChiaveDiUnAltro, type Sessione } from "../mls/sessione.js";
 import { useSignedIn } from "../state.js";
 import { useAvvisi } from "../avvisi.js";
-import { t, tc, useT } from "../lingua.js";
+import { t, tc, tn, useT } from "../lingua.js";
 import {
   Alert,
   Avatar,
@@ -25,6 +35,20 @@ import {
 } from "../ui/index.js";
 import { PersonLink } from "../components/PersonLink.js";
 import { impedimentoDi, siPuoScrivere, spiegazioneDi } from "./chat-impedimento.js";
+import type { Persona } from "./gruppi/CercaPersone.js";
+import {
+  assentiFra,
+  comeInput,
+  composizioneDi,
+  creaQui,
+  eUnGruppo,
+  idAtteso,
+  nomeDi,
+  nomeNellEvento,
+} from "./gruppi/logica.js";
+import { MembriGruppo, type GestiDelGruppo } from "./gruppi/MembriGruppo.js";
+import { NuovoGruppo } from "./gruppi/NuovoGruppo.js";
+import { membroDi } from "./sicurezza/membri.js";
 import { apriNumeroDiSicurezza } from "./sicurezza/apri.js";
 import { SicurezzaConversazione } from "./sicurezza/SicurezzaConversazione.js";
 import { ora, quandoPreciso } from "../tempo.js";
@@ -43,6 +67,13 @@ interface DecryptedMessage {
    */
   nonDisponibile?: boolean;
   pending?: boolean;
+  /** Non è una frase: è qualcosa che è successo al gruppo, e si disegna come tale. */
+  evento?: Evento | undefined;
+  /**
+   * Chi e quando li dichiara soltanto l'istanza: una voce di prima che
+   * venissero sigillati con il testo ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §1).
+   */
+  nonAttestata?: boolean;
 }
 
 /** Ogni quanto si rilegge una chat aperta. Ogni giro chiede qualcosa alle case degli autori. */
@@ -72,7 +103,13 @@ function versoSchermata(
     return { ...base, text: "", unreadable: true };
   }
 
-  return { ...base, replyTo: riga.risponde, text: riga.testo };
+  return {
+    ...base,
+    evento: riga.evento,
+    nonAttestata: riga.attestata === false,
+    replyTo: riga.risponde,
+    text: riga.testo,
+  };
 }
 
 /**
@@ -111,9 +148,12 @@ function SwipeableBubble({
   replyMessage,
   replyAuthor,
   peerVistoFinoA,
+  autore,
 }: {
   message: DecryptedMessage;
   isMe: boolean;
+  /** Chi ha scritto, da mostrare sopra la riga: serve in un gruppo, dove non è ovvio. */
+  autore?: string | undefined;
   onReply: (id: string) => void;
   onInfo: (message: DecryptedMessage) => void;
   replyMessage?: DecryptedMessage | undefined;
@@ -217,7 +257,11 @@ function SwipeableBubble({
           </div>
         ) : (
           <div className="chat-bubble__body">
+            {autore !== undefined && <span className="chat-bubble__reply-author">{autore}</span>}
             <p className="chat-bubble__text">{message.text}</p>
+            {message.nonAttestata === true && (
+              <span className="chat-bubble__nota muted">{t("messaggi.non_attestato")}</span>
+            )}
             <div className="chat-bubble__meta">
               <time className="chat-time">{ora(message.createdAt)}</time>
               {isMe &&
@@ -299,8 +343,34 @@ export function Messaggi(): React.ReactElement {
    * lo è» dell'euristica 5.
    */
   const [inApertura, setInApertura] = useState(false);
+  /** L'albero cifrato accanto alle persone della conversazione: chi è di troppo, chi manca. */
+  const [confronto, setConfronto] = useState<Confronto | undefined>();
+  /** Questo dispositivo ha applicato il commit che lo toglie dal gruppo. */
+  const [tolto, setTolto] = useState(false);
+  /** La chiave di questa casa, da quando la si sa: serve a dire chi abita qui. */
+  const [casaMia, setCasaMia] = useState<string | undefined>();
+  const [nuovoGruppoAperto, setNuovoGruppoAperto] = useState(false);
+  const [membriAperti, setMembriAperti] = useState<"elenco" | "conferma-esci" | undefined>();
   /** La sessione MLS della conversazione aperta. Vive in memoria, e si riapre cambiando chat. */
   const sessioneRef = useRef<Sessione | undefined>(undefined);
+  /**
+   * Una cosa alla volta sulla sessione. La rilettura periodica, l'invio e i
+   * gesti del gruppo partono tutti dallo stesso stato MLS e lo portano avanti:
+   * due insieme costruirebbero due commit sulla stessa epoch, e chi perde
+   * resterebbe con uno stato che nessun altro conosce.
+   */
+  const codaRef = useRef<Promise<unknown>>(Promise.resolve());
+  const inSerie = useCallback(<T,>(lavoro: () => Promise<T>): Promise<T> => {
+    const prossimo = codaRef.current.then(lavoro, lavoro);
+    codaRef.current = prossimo.catch(() => undefined);
+    return prossimo;
+  }, []);
+  /**
+   * L'ultima conversazione aperta, com'era: chi viene tolto da un gruppo non
+   * la trova più nell'elenco, e la schermata deve poter dire **di quale**
+   * gruppo non fa più parte invece di svuotarsi.
+   */
+  const ricordataRef = useRef<ConversazioneView | undefined>(undefined);
   /** Le conversazioni dell'ultimo caricamento, per leggerle senza rifare gli effetti a ogni render. */
   const conversazioniRef = useRef<ConversazioneView[]>([]);
 
@@ -326,8 +396,30 @@ export function Messaggi(): React.ReactElement {
   const [messaggioInfo, setMessaggioInfo] = useState<DecryptedMessage | undefined>();
 
   const fineMessaggiRef = useRef<HTMLDivElement>(null);
-  const selezionata = conversazioni.find((c) => c.id === selezionataId);
-  const altroMembro = selezionata?.membri.find((m) => m.id !== user.id);
+  /**
+   * Quale conversazione si sta guardando **adesso**. I giri di lettura stanno
+   * in fila: quello di una chat da cui si è già usciti non deve scrivere i suoi
+   * messaggi, o il suo impedimento, sopra quella che si è aperta dopo.
+   */
+  const guardataRef = useRef<string | undefined>(undefined);
+  guardataRef.current = selezionataId;
+  const nellElenco = conversazioni.find((c) => c.id === selezionataId);
+  if (nellElenco !== undefined) {
+    ricordataRef.current = nellElenco;
+  }
+  const selezionata =
+    nellElenco ?? (ricordataRef.current?.id === selezionataId ? ricordataRef.current : undefined);
+  const gruppo = eUnGruppo(selezionata);
+  const altroMembro = gruppo ? undefined : selezionata?.membri.find((m) => m.id !== user.id);
+
+  /** Il nome di chi ha scritto una riga, per chi la guarda. */
+  const nomeDiChi = useCallback(
+    (id: string, ripiego: string): string => {
+      const autore = selezionata?.membri.find((m) => m.id === id);
+      return autore === undefined ? ripiego : nomeDi(autore);
+    },
+    [selezionata],
+  );
 
   const caricaConversazioni = useCallback(async (): Promise<void> => {
     try {
@@ -341,6 +433,20 @@ export function Messaggi(): React.ReactElement {
     }
   }, [token]);
 
+  /** La chiave d'ingresso di una persona, chiesta alla sua casa. Monouso. */
+  const chiaveDi = useCallback(
+    async (altro: AuthorView, casa: string) => {
+      const preso = await api.keyPackageMls(token, membroDi(altro, casa).casa, altro.username);
+      const keyPackage = leggiKeyPackage(base64InBytes(preso.keyPackage));
+      if (keyPackage === undefined) {
+        throw new Error(t("messaggi.chiave_illeggibile", { nome: nomeDi(altro) }));
+      }
+
+      return keyPackage;
+    },
+    [token],
+  );
+
   /**
    * La chiave d'ingresso di chi si invita, quando si crea il gruppo.
    *
@@ -350,25 +456,32 @@ export function Messaggi(): React.ReactElement {
    * membro, perché è con quello che la casa che ordina consegna il Welcome.
    */
   const invitoPer = useCallback(
-    (conv: ConversazioneView, casa: string) => async () => {
-      const altro = conv.membri.find((m) => m.id !== user.id);
-      if (altro === undefined) {
+    (conv: ConversazioneView, casa: string) => async (): Promise<Invitato[]> => {
+      const altri = conv.membri.filter((m) => m.id !== user.id);
+      if (altri.length === 0) {
         throw new Error(t("messaggi.nessuno_da_invitare"));
       }
 
-      const parti = altro.id.startsWith("remote:") ? altro.id.split(":") : undefined;
-      const suaCasa = parti?.[1] ?? casa;
-      const preso = await api.keyPackageMls(token, suaCasa, altro.username);
-      const keyPackage = leggiKeyPackage(base64InBytes(preso.keyPackage));
-      if (keyPackage === undefined) {
-        throw new Error(
-          t("messaggi.chiave_illeggibile", { nome: altro.displayName || altro.username }),
-        );
+      // In un gruppo entra chi ha un dispositivo pronto, e gli altri restano
+      // «non ancora dentro»: li fa entrare dopo chi amministra. Se non entra
+      // nessuno, la ragione del primo è la ragione che si dice.
+      const invitati: Invitato[] = [];
+      let primaCausa: unknown;
+      for (const altro of altri) {
+        try {
+          invitati.push({ idDiChiEntra: altro.id, keyPackage: await chiaveDi(altro, casa) });
+        } catch (causa) {
+          primaCausa ??= causa;
+        }
       }
 
-      return { idDiChiEntra: altro.id, keyPackage };
+      if (invitati.length === 0) {
+        throw primaCausa;
+      }
+
+      return invitati;
     },
-    [token, user.id],
+    [chiaveDi, user.id],
   );
 
   /**
@@ -379,65 +492,112 @@ export function Messaggi(): React.ReactElement {
    * browser ([ADR 0043](../../../../docs/adr/0043-custodia-lato-mittente.md) §5).
    */
   const caricaMessaggi = useCallback(
-    async (id: string): Promise<void> => {
-      const conv = conversazioniRef.current.find((c) => c.id === id);
-      if (conv === undefined) {
-        return;
-      }
+    (id: string): Promise<void> =>
+      inSerie(async () => {
+        const nota =
+          conversazioniRef.current.find((c) => c.id === id) ??
+          (ricordataRef.current?.id === id ? ricordataRef.current : undefined);
+        if (nota === undefined || guardataRef.current !== id) {
+          return;
+        }
 
-      try {
-        const { casa, ctx } = await contestoChat(token, user.username);
+        try {
+          const { casa, ctx } = await contestoChat(token, user.username);
+          setCasaMia(casa);
 
-        let sessione =
-          sessioneRef.current?.conversazioneId === id ? sessioneRef.current : undefined;
-        if (sessione === undefined) {
-          const apertura = await apriConversazione(
-            ctx,
-            { id, ordinataQui: conv.ordinataQui },
-            invitoPer(conv, casa),
-          );
-
-          if (apertura.kind === "in-attesa") {
-            setInAttesa(true);
-            setSenzaCronologia(false);
-            setErroreChiave(undefined);
-            setMessaggi([]);
-            return;
+          // Di un gruppo si chiede ogni volta chi c'è: è la domanda che fa
+          // rileggere la composizione alla casa che ordina, e quella a cui
+          // l'istanza risponde «non sei più in questo gruppo» a chi è stato tolto.
+          const conv = eUnGruppo(nota)
+            ? (await api.getConversazione(token, id)).conversazione
+            : nota;
+          if (ricordataRef.current?.id === id) {
+            ricordataRef.current = conv;
           }
 
-          sessione = apertura.sessione;
+          let sessione =
+            // Una sessione da cui si risulta tolti non si riusa: si riapre a
+            // ogni giro, perché è lì che si trova l'invito di chi ci ha fatti
+            // rientrare.
+            sessioneRef.current?.conversazioneId === id && sessioneRef.current.tolto !== true
+              ? sessioneRef.current
+              : undefined;
+          if (sessione === undefined) {
+            const apertura = await apriConversazione(
+              ctx,
+              { creaQui: creaQui(conv, user.id), id, ordinataQui: conv.ordinataQui },
+              invitoPer(conv, casa),
+            );
+
+            if (guardataRef.current !== id) {
+              return;
+            }
+
+            if (apertura.kind === "tolto") {
+              setTolto(true);
+              setInAttesa(false);
+              setErroreChiave(undefined);
+              setMessaggi([]);
+              return;
+            }
+
+            if (apertura.kind === "in-attesa") {
+              setInAttesa(true);
+              setSenzaCronologia(false);
+              setErroreChiave(undefined);
+              setMessaggi([]);
+              return;
+            }
+
+            sessione = apertura.sessione;
+          }
+
+          // L'albero si mette accanto alle persone a ogni giro. In un gruppo è
+          // anche il momento in cui la foglia di chi è uscito viene tolta.
+          const lettura = await leggi(ctx, sessione, undefined, composizioneDi(conv, casa));
+          if (guardataRef.current !== id) {
+            return;
+          }
+          sessioneRef.current = lettura.sessione;
+          setConfronto(lettura.confronto);
+          setTolto(lettura.sessione.tolto === true);
+
+          const righe = lettura.righe.map((r) =>
+            versoSchermata(r, casa, { id: user.id, username: user.username }, conv.membri),
+          );
+          setMessaggi(righe);
+          setInAttesa(false);
+          setSenzaCronologia(lettura.sessione.catena === undefined);
+          setErroreChiave(undefined);
+
+          // Fin dove l'altra persona ha letto, e fin dove abbiamo letto noi: sono
+          // cursori di questa casa. Il primo arriva con la conversazione, che
+          // l'elenco rilegge da solo; di chi abita altrove qui non c'è.
+          setPeerVistoFinoA(conv.peerVistoFinoA ?? null);
+          const ultimoRicevuto = [...righe]
+            .reverse()
+            .find((m) => m.senderUserId !== user.id && !m.nonDisponibile);
+          if (ultimoRicevuto) {
+            void api.segnaConversazioneLetta(token, id, ultimoRicevuto.createdAt).catch(() => {});
+          }
+        } catch (err) {
+          if (guardataRef.current !== id) {
+            return;
+          }
+          // Non è rumore da console: è la ragione per cui questa chat non si può
+          // usare adesso, e va detta a chi ci sta dentro.
+          setErroreChiave(err);
+          // Chi non è più nel gruppo non tiene sullo schermo quello che
+          // l'istanza ha smesso di servirgli: la spiegazione dice perché.
+          if (err instanceof ApiError && err.code === "rimosso_dal_gruppo") {
+            setMessaggi([]);
+            sessioneRef.current = undefined;
+          }
+        } finally {
+          setInApertura(false);
         }
-
-        const lettura = await leggi(ctx, sessione);
-        sessioneRef.current = lettura.sessione;
-
-        const righe = lettura.righe.map((r) =>
-          versoSchermata(r, casa, { id: user.id, username: user.username }, conv.membri),
-        );
-        setMessaggi(righe);
-        setInAttesa(false);
-        setSenzaCronologia(lettura.sessione.catena === undefined);
-        setErroreChiave(undefined);
-
-        // Fin dove l'altra persona ha letto, e fin dove abbiamo letto noi: sono
-        // cursori di questa casa. Il primo arriva con la conversazione, che
-        // l'elenco rilegge da solo; di chi abita altrove qui non c'è.
-        setPeerVistoFinoA(conv.peerVistoFinoA ?? null);
-        const ultimoRicevuto = [...righe]
-          .reverse()
-          .find((m) => m.senderUserId !== user.id && !m.nonDisponibile);
-        if (ultimoRicevuto) {
-          void api.segnaConversazioneLetta(token, id, ultimoRicevuto.createdAt).catch(() => {});
-        }
-      } catch (err) {
-        // Non è rumore da console: è la ragione per cui questa chat non si può
-        // usare adesso, e va detta a chi ci sta dentro.
-        setErroreChiave(err);
-      } finally {
-        setInApertura(false);
-      }
-    },
-    [invitoPer, token, user.id, user.username],
+      }),
+    [inSerie, invitoPer, token, user.id, user.username],
   );
 
   const eseguiRipristinoChiavi = async (e: React.FormEvent): Promise<void> => {
@@ -521,6 +681,9 @@ export function Messaggi(): React.ReactElement {
     setMessaggi([]);
     setInAttesa(false);
     setSenzaCronologia(false);
+    setConfronto(undefined);
+    setTolto(false);
+    setMembriAperti(undefined);
 
     if (selezionataId) {
       setPeerVistoFinoA(null);
@@ -629,13 +792,20 @@ export function Messaggi(): React.ReactElement {
         throw new Error(t("messaggi.non_ancora_aperta"));
       }
 
-      const { ctx } = await contestoChat(token, user.username);
-      await manda(
-        ctx,
-        sessione,
-        { testo: testoDaInviare, ...(repId === undefined ? {} : { risponde: repId }) },
-        idMessaggio,
-        quando,
+      const { casa, ctx } = await contestoChat(token, user.username);
+      const conv = ricordataRef.current;
+      await inSerie(() =>
+        manda(
+          ctx,
+          sessioneRef.current ?? sessione,
+          { testo: testoDaInviare, ...(repId === undefined ? {} : { risponde: repId }) },
+          idMessaggio,
+          quando,
+          // Chi dovrebbe esserci: se nell'albero c'è qualcun altro, la riga non parte.
+          conv?.id === selezionataId
+            ? composizioneDi(conv, casa).membri.map((m) => m.membro)
+            : undefined,
+        ),
       );
       await caricaMessaggi(selezionataId);
       await caricaConversazioni();
@@ -665,6 +835,203 @@ export function Messaggi(): React.ReactElement {
     }
   };
 
+  /* ------------------------------ i gruppi (M8) ------------------------------ */
+
+  /**
+   * Scrive nella conversazione che cosa è successo al gruppo. Se non riesce il
+   * gesto è fatto lo stesso: è un racconto, non il gesto.
+   */
+  const racconta = async (ambiente: ContestoChat, evento: Evento): Promise<void> => {
+    const sessione = sessioneRef.current;
+    if (sessione === undefined) {
+      return;
+    }
+
+    await annuncia(
+      ambiente.ctx,
+      sessione,
+      evento,
+      crypto.randomUUID(),
+      new Date().toISOString(),
+    ).catch(() => undefined);
+  };
+
+  /** Fa entrare nel gruppo cifrato una persona che è già fra i membri. */
+  const entraNelGruppo = async (ambiente: ContestoChat, autore: AuthorView): Promise<void> => {
+    const sessione = sessioneRef.current;
+    if (sessione === undefined) {
+      throw new Error(t("gruppi.non_pronto"));
+    }
+
+    const membro = membroDi(autore, ambiente.casa);
+    const keyPackage = await chiaveDi(autore, ambiente.casa);
+    sessioneRef.current = await faiEntrare(ambiente.ctx, sessione, { id: autore.id, membro }, [
+      keyPackage,
+    ]);
+    await racconta(ambiente, { chi: scriviIdentita(membro), tipo: "ingresso" });
+  };
+
+  /** Che cosa dire quando una persona non è riuscita a entrare nel gruppo cifrato. */
+  const percheNonEntra = (causa: unknown, nome: string): void => {
+    if (causa instanceof ApiError && causa.code === "no_device_available") {
+      mostraErrore(undefined, t("gruppi.entra.senza_dispositivo", { nome }));
+    } else if (causa instanceof ChiaveDiUnAltro) {
+      mostraErrore(undefined, t("gruppi.entra.chiave_di_un_altro", { nome }));
+    } else if (causa instanceof TroppeFoglie) {
+      mostraErrore(undefined, t("errori.gruppo_pieno"));
+    } else {
+      mostraErrore(causa, t("gruppi.entra.errore", { nome }));
+    }
+  };
+
+  const dopoUnGesto = async (): Promise<void> => {
+    await caricaConversazioni();
+    if (selezionataId) {
+      await caricaMessaggi(selezionataId);
+    }
+  };
+
+  const gestiDelGruppo: GestiDelGruppo = {
+    aggiungi: async (persona: Persona) => {
+      if (!selezionataId) return;
+      const id = selezionataId;
+      try {
+        const ambiente = await contestoChat(token, user.username);
+        const { conversazione } = await api.aggiungiAlGruppo(
+          token,
+          id,
+          comeInput(persona, ambiente.casa),
+        );
+        ricordataRef.current = conversazione;
+
+        const autore = conversazione.membri.find(
+          (m) => m.id === idAtteso(persona, conversazione.membri, ambiente.casa),
+        );
+        if (autore !== undefined) {
+          try {
+            await inSerie(() => entraNelGruppo(ambiente, autore));
+            mostraSuccesso(t("gruppi.aggiungi.fatto", { nome: persona.displayName }));
+          } catch (causa) {
+            // È fra le persone del gruppo, ma non nel gruppo cifrato: si dice
+            // qual è delle due cose, perché la seconda si può riprovare.
+            percheNonEntra(causa, persona.displayName);
+          }
+        }
+      } catch (causa) {
+        mostraErrore(causa, t("gruppi.aggiungi.errore"));
+      } finally {
+        await dopoUnGesto();
+      }
+    },
+    cambiaRuolo: async (autore, ruolo) => {
+      if (!selezionataId) return;
+      try {
+        const { conversazione } = await api.cambiaRuoloNelGruppo(
+          token,
+          selezionataId,
+          autore.id,
+          ruolo,
+        );
+        ricordataRef.current = conversazione;
+        mostraSuccesso(
+          t(ruolo === "amministratore" ? "gruppi.ruolo.nominato" : "gruppi.ruolo.revocato", {
+            nome: nomeDi(autore),
+          }),
+        );
+      } catch (causa) {
+        mostraErrore(causa, t("gruppi.ruolo.errore"));
+      } finally {
+        await caricaConversazioni();
+      }
+    },
+    esci: async () => {
+      if (!selezionataId) return;
+      const id = selezionataId;
+      try {
+        const ambiente = await contestoChat(token, user.username);
+        // Prima lo si scrive, finché si può ancora scrivere: dopo l'uscita
+        // l'istanza non accetta più niente da chi è uscito.
+        await inSerie(() =>
+          racconta(ambiente, {
+            chi: scriviIdentita({ casa: ambiente.casa, username: user.username }),
+            tipo: "uscita",
+          }),
+        );
+        await api.esciDalGruppo(token, id);
+        mostraSuccesso(t("gruppi.esci.fatto"));
+        setMembriAperti(undefined);
+        setSelezionataId(undefined);
+        setMessaggi([]);
+        await caricaConversazioni();
+      } catch (causa) {
+        mostraErrore(causa, t("gruppi.esci.errore"));
+      }
+    },
+    faiEntrare: async (autore) => {
+      try {
+        const ambiente = await contestoChat(token, user.username);
+        await inSerie(() => entraNelGruppo(ambiente, autore));
+        mostraSuccesso(t("gruppi.entra.fatto", { nome: nomeDi(autore) }));
+      } catch (causa) {
+        percheNonEntra(causa, nomeDi(autore));
+      } finally {
+        await dopoUnGesto();
+      }
+    },
+    togli: async (autore) => {
+      if (!selezionataId) return;
+      const id = selezionataId;
+      const nome = nomeDi(autore);
+      try {
+        const ambiente = await contestoChat(token, user.username);
+        const { conversazione } = await api.togliDalGruppo(token, id, autore.id);
+        ricordataRef.current = conversazione;
+
+        const membro = membroDi(autore, ambiente.casa);
+        try {
+          await inSerie(async () => {
+            const sessione = sessioneRef.current;
+            if (sessione === undefined) {
+              throw new Error(t("gruppi.non_pronto"));
+            }
+
+            // Tutte le sue foglie in un commit, e la catena d'archivio guadagna
+            // la chiave che non avrà: è questo che «non riceverà più» vuol dire.
+            sessioneRef.current = await faiUscire(ambiente.ctx, sessione, membro);
+            await racconta(ambiente, { chi: scriviIdentita(membro), tipo: "rimozione" });
+          });
+          mostraSuccesso(t("gruppi.togli.fatto", { nome }));
+        } catch {
+          // Non è più fra le persone, ma la sua foglia c'è ancora: la toglie
+          // il prossimo giro di chiunque. Finché c'è, legge — e va detto.
+          mostraErrore(undefined, t("gruppi.togli.a_meta", { nome }));
+        }
+      } catch (causa) {
+        mostraErrore(causa, t("gruppi.togli.errore"));
+      } finally {
+        await dopoUnGesto();
+      }
+    },
+  };
+
+  const assenti = useMemo(
+    () =>
+      selezionata === undefined || casaMia === undefined || !gruppo
+        ? new Set<string>()
+        : assentiFra(selezionata, casaMia, confronto),
+    [casaMia, confronto, gruppo, selezionata],
+  );
+
+  /** Chi ha un dispositivo nel gruppo cifrato senza essere fra le persone, per nome. */
+  const estranei = (confronto?.estranei ?? []).map((m) =>
+    m.username === "" ? t("messaggi.utente") : `@${m.username}`,
+  );
+
+  const creatore = selezionata?.membri.find((m) => selezionata.ruoli?.[m.id] === "creatore");
+  const titoloChat = gruppo
+    ? selezionata?.nome || t("gruppi.senza_nome")
+    : (altroMembro?.displayName ?? altroMembro?.username);
+
   const abbastanza = termine.trim().length >= MINIMO;
 
   const inChat = selezionataId !== undefined;
@@ -673,10 +1040,16 @@ export function Messaggi(): React.ReactElement {
   const impedimento = impedimentoDi({
     crittografiaDisponibile: isCryptoAvailable,
     erroreChiave,
+    estranei,
+    gruppo,
     inAttesa,
-    nomeDestinatario:
-      altroMembro?.displayName ?? altroMembro?.username ?? t("messaggi.questa_persona"),
+    nomeDestinatario: gruppo
+      ? inAttesa && creatore !== undefined
+        ? nomeDi(creatore)
+        : t("gruppi.qualcuno")
+      : (altroMembro?.displayName ?? altroMembro?.username ?? t("messaggi.questa_persona")),
     senzaCronologia,
+    tolto,
   });
   const spiegazione = spiegazioneDi(impedimento);
   const puoScrivere = siPuoScrivere(impedimento) && !inApertura;
@@ -694,33 +1067,53 @@ export function Messaggi(): React.ReactElement {
                   label={t("messaggi.torna_elenco")}
                   onClick={() => setSelezionataId(undefined)}
                 />
-                {(() => {
-                  const remoteKey = altroMembro?.id.startsWith("remote:")
-                    ? altroMembro.id.split(":")[1]
-                    : undefined;
-                  return (
-                    <PersonLink
-                      className="chat-header-link"
-                      instanceKey={remoteKey}
-                      username={altroMembro?.username ?? "utente"}
-                    >
-                      <Avatar
-                        displayName={
-                          altroMembro?.displayName ?? altroMembro?.username ?? t("messaggi.utente")
-                        }
-                        size="sm"
-                        username={altroMembro?.username ?? "utente"}
-                      />
-                      <span className="chat-header__name">
-                        <strong>{altroMembro?.displayName ?? altroMembro?.username}</strong>
-                        <span className="muted">
-                          (@{altroMembro?.username}
-                          {remoteKey ? t("messaggi.remota") : ""})
-                        </span>
+                {gruppo && selezionata !== undefined ? (
+                  <button
+                    aria-label={t("gruppi.membri.apri", { nome: titoloChat ?? "" })}
+                    className="chat-header-link chat-header-link--gruppo"
+                    disabled={tolto || impedimento.kind === "tolto-dal-gruppo"}
+                    onClick={() => setMembriAperti("elenco")}
+                    type="button"
+                  >
+                    <Avatar displayName={titoloChat ?? ""} size="sm" username={selezionata.id} />
+                    <span className="chat-header__name">
+                      <strong>{titoloChat}</strong>
+                      <span className="muted">
+                        {tn("gruppi.persone", selezionata.membri.length)}
                       </span>
-                    </PersonLink>
-                  );
-                })()}
+                    </span>
+                  </button>
+                ) : (
+                  (() => {
+                    const remoteKey = altroMembro?.id.startsWith("remote:")
+                      ? altroMembro.id.split(":")[1]
+                      : undefined;
+                    return (
+                      <PersonLink
+                        className="chat-header-link"
+                        instanceKey={remoteKey}
+                        username={altroMembro?.username ?? "utente"}
+                      >
+                        <Avatar
+                          displayName={
+                            altroMembro?.displayName ??
+                            altroMembro?.username ??
+                            t("messaggi.utente")
+                          }
+                          size="sm"
+                          username={altroMembro?.username ?? "utente"}
+                        />
+                        <span className="chat-header__name">
+                          <strong>{altroMembro?.displayName ?? altroMembro?.username}</strong>
+                          <span className="muted">
+                            (@{altroMembro?.username}
+                            {remoteKey ? t("messaggi.remota") : ""})
+                          </span>
+                        </span>
+                      </PersonLink>
+                    );
+                  })()
+                )}
               </div>
               <div className="chat-header__right">
                 <Badge tone="on">{t("messaggi.cifrata")}</Badge>
@@ -729,6 +1122,17 @@ export function Messaggi(): React.ReactElement {
                   occupato={eliminazioneInCorso}
                   titolo={t("messaggi.opzioni")}
                   voci={[
+                    ...(gruppo && impedimento.kind !== "tolto-dal-gruppo"
+                      ? [
+                          {
+                            icon: "users" as const,
+                            id: "membri",
+                            note: t("gruppi.membri.nota"),
+                            onClick: () => setMembriAperti("elenco"),
+                            title: t("gruppi.membri.voce"),
+                          },
+                        ]
+                      : []),
                     ...(altroMembro
                       ? [
                           {
@@ -761,25 +1165,54 @@ export function Messaggi(): React.ReactElement {
                       onClick: () => setSheetRipristinoAperto(true),
                       title: t("ripristino.rimetti"),
                     },
-                    {
-                      conferma: {
-                        etichetta: t("messaggi.elimina.conferma"),
-                        testo: t("messaggi.elimina.testo"),
-                        titolo: t("messaggi.elimina.titolo"),
-                      },
-                      icon: "close" as const,
-                      id: "elimina",
-                      note: t("messaggi.elimina.nota"),
-                      onClick: () => void eseguiEliminazioneConversazione(),
-                      title: t("messaggi.elimina.voce"),
-                      tono: "danger" as const,
-                    },
+                    // Un gruppo non si elimina: se ne esce, e gli altri restano.
+                    ...(gruppo
+                      ? impedimento.kind === "tolto-dal-gruppo"
+                        ? []
+                        : [
+                            {
+                              icon: "logout" as const,
+                              id: "esci",
+                              note: t("gruppi.esci.nota"),
+                              onClick: () => setMembriAperti("conferma-esci"),
+                              title: t("gruppi.esci.voce"),
+                              tono: "danger" as const,
+                            },
+                          ]
+                      : [
+                          {
+                            conferma: {
+                              etichetta: t("messaggi.elimina.conferma"),
+                              testo: t("messaggi.elimina.testo"),
+                              titolo: t("messaggi.elimina.titolo"),
+                            },
+                            icon: "close" as const,
+                            id: "elimina",
+                            note: t("messaggi.elimina.nota"),
+                            onClick: () => void eseguiEliminazioneConversazione(),
+                            title: t("messaggi.elimina.voce"),
+                            tono: "danger" as const,
+                          },
+                        ]),
                   ]}
                 />
               </div>
             </header>
 
             {selezionata && <SicurezzaConversazione conversazione={selezionata} />}
+
+            {gruppo && assenti.size > 0 && impedimento.kind === "nessuno" && (
+              <div className="chat-detail-alert">
+                <Alert tone="neutral">
+                  <p className="chiavi__testo">{tn("gruppi.assenti.avviso", assenti.size)}</p>
+                  <div className="cluster avviso-sicurezza__azioni">
+                    <Button onClick={() => setMembriAperti("elenco")} variant="secondary">
+                      {t("gruppi.assenti.vedi")}
+                    </Button>
+                  </div>
+                </Alert>
+              </div>
+            )}
 
             {messaggi.some((m) => m.nonDisponibile) && (
               <div className="chat-detail-alert">
@@ -806,17 +1239,39 @@ export function Messaggi(): React.ReactElement {
               )}
               {messaggi.map((m) => {
                 const isMe = m.senderUserId === user.id;
+                if (m.evento !== undefined && selezionata !== undefined) {
+                  // Qualcosa che è successo al gruppo: una riga al centro, non
+                  // una nuvoletta — non è una frase di nessuno.
+                  const nome =
+                    casaMia === undefined
+                      ? m.evento.chi
+                      : nomeNellEvento(m.evento, selezionata, casaMia);
+                  const chi = isMe
+                    ? t("messaggi.tu")
+                    : nomeDiChi(m.senderUserId, t("messaggi.interlocutore"));
+                  return (
+                    <p className="chat-evento muted" key={m.id}>
+                      {m.evento.tipo === "uscita"
+                        ? t("gruppi.evento.uscita", { nome })
+                        : t(`gruppi.evento.${m.evento.tipo}`, { chi, nome })}
+                    </p>
+                  );
+                }
+
                 const repMsg = m.replyTo ? messaggi.find((x) => x.id === m.replyTo) : undefined;
                 const repAuthor = repMsg
                   ? repMsg.senderUserId === user.id
                     ? t("messaggi.tu")
-                    : altroMembro?.displayName ||
-                      altroMembro?.username ||
-                      t("messaggi.interlocutore")
+                    : nomeDiChi(repMsg.senderUserId, t("messaggi.interlocutore"))
                   : undefined;
                 return (
                   <SwipeableBubble
                     key={m.id}
+                    autore={
+                      gruppo && !isMe && !m.nonDisponibile && !m.unreadable
+                        ? nomeDiChi(m.senderUserId, t("messaggi.interlocutore"))
+                        : undefined
+                    }
                     isMe={isMe}
                     message={m}
                     onInfo={setMessaggioInfo}
@@ -850,9 +1305,10 @@ export function Messaggi(): React.ReactElement {
                           nome:
                             targetMsg.senderUserId === user.id
                               ? t("messaggi.te_stesso")
-                              : altroMembro?.displayName ||
-                                altroMembro?.username ||
-                                t("messaggi.interlocutore_minuscolo"),
+                              : nomeDiChi(
+                                  targetMsg.senderUserId,
+                                  t("messaggi.interlocutore_minuscolo"),
+                                ),
                         });
                       })()}
                     </span>
@@ -897,7 +1353,15 @@ export function Messaggi(): React.ReactElement {
         nav={
           <>
             <header className="screen-head">
-              <h1 className="screen-head__title">{t("messaggi.titolo")}</h1>
+              <h1 className="screen-head__title grow">{t("messaggi.titolo")}</h1>
+              <Button
+                disabled={!isCryptoAvailable}
+                icon="users"
+                onClick={() => setNuovoGruppoAperto(true)}
+                variant="secondary"
+              >
+                {t("gruppi.nuovo.voce")}
+              </Button>
             </header>
 
             {!isCryptoAvailable && (
@@ -1006,8 +1470,12 @@ export function Messaggi(): React.ReactElement {
                     <div className="list-block">
                       {conversazioni.map((c) => {
                         const altro = c.membri.find((m) => m.id !== user.id) ?? c.membri[0];
-                        const nome = altro?.displayName ?? altro?.username ?? t("messaggi.utente");
-                        const userHandle = altro?.username ?? "anon";
+                        const unGruppo = eUnGruppo(c);
+                        const nome = unGruppo
+                          ? c.nome || t("gruppi.senza_nome")
+                          : (altro?.displayName ?? altro?.username ?? t("messaggi.utente"));
+                        // Il colore dell'avatar di un gruppo viene dal suo id: non cambia col nome.
+                        const userHandle = unGruppo ? c.id : (altro?.username ?? "anon");
                         const isActive = c.id === selezionataId;
                         return (
                           <button
@@ -1029,7 +1497,10 @@ export function Messaggi(): React.ReactElement {
                                 >
                                   <span className="row__title truncate">{nome}</span>
                                   <span className="row__note truncate">
-                                    @{userHandle} ·{" "}
+                                    {unGruppo
+                                      ? tn("gruppi.persone", c.membri.length)
+                                      : `@${userHandle}`}{" "}
+                                    ·{" "}
                                     {c.ultimoMessaggio
                                       ? ora(c.ultimoMessaggio.createdAt)
                                       : ora(c.createdAt)}
@@ -1053,6 +1524,27 @@ export function Messaggi(): React.ReactElement {
         navLabel={t("messaggi.elenco")}
         showNav={!inChat}
       />
+      <NuovoGruppo
+        aperto={nuovoGruppoAperto}
+        casa={async () => (await contestoChat(token, user.username)).casa}
+        onChiudi={() => setNuovoGruppoAperto(false)}
+        onCreato={(conversazione) => {
+          setNuovoGruppoAperto(false);
+          void caricaConversazioni().then(() => setSelezionataId(conversazione.id));
+        }}
+      />
+      {gruppo && selezionata !== undefined && (
+        <MembriGruppo
+          aperto={membriAperti !== undefined}
+          assenti={assenti}
+          casa={casaMia}
+          conversazione={selezionata}
+          gesti={gestiDelGruppo}
+          iniziale={membriAperti ?? "elenco"}
+          ioId={user.id}
+          onChiudi={() => setMembriAperti(undefined)}
+        />
+      )}
       <Sheet
         open={sheetRipristinoAperto}
         onClose={() => {
@@ -1128,9 +1620,28 @@ export function Messaggi(): React.ReactElement {
                 <strong>
                   {messaggioInfo.senderUserId === user.id
                     ? t("messaggi.tu_handle", { utente: user.username })
-                    : `${altroMembro?.displayName ?? t("messaggi.utente")} (@${altroMembro?.username ?? ""})`}
+                    : (() => {
+                        const autore = selezionata?.membri.find(
+                          (m) => m.id === messaggioInfo.senderUserId,
+                        );
+                        return `${autore === undefined ? t("messaggi.utente") : nomeDi(autore)} (@${autore?.username ?? ""})`;
+                      })()}
                 </strong>
               </div>
+
+              {!messaggioInfo.pending && (
+                <div
+                  className="cluster"
+                  style={{ justifyContent: "space-between", fontSize: "var(--t-sm)" }}
+                >
+                  <span className="muted">{t("messaggi.provenienza")}</span>
+                  <span>
+                    {messaggioInfo.nonAttestata === true
+                      ? t("messaggi.provenienza.non_attestata")
+                      : t("messaggi.provenienza.attestata")}
+                  </span>
+                </div>
+              )}
 
               <div
                 className="cluster"

@@ -2745,6 +2745,42 @@ a.post__author:hover {
   margin: 0;
 }
 
+/* Qualcosa che è successo al gruppo: una riga al centro, non una nuvoletta. */
+.chat-evento {
+  align-self: center;
+  max-inline-size: 36ch;
+  margin: var(--s-2) auto;
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.chat-bubble__nota {
+  display: block;
+  font-size: var(--t-xs);
+}
+
+/* L'intestazione di un gruppo è un pulsante: apre le persone. */
+.chat-header-link--gruppo {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gruppi-elenco {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Una riga che non porta da nessuna parte: stessa forma, nessun gesto. */
+.gruppi-elenco__riga {
+  cursor: default;
+}
+
 .chat-unreadable__action {
   margin-block-start: var(--s-1);
 }

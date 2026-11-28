@@ -48,20 +48,20 @@ function daBase64(s: string): Uint8Array {
   return bytes;
 }
 
-function sigilla(chiave: Uint8Array, dati: Uint8Array): Uint8Array {
+function sigilla(chiave: Uint8Array, dati: Uint8Array, legato?: Uint8Array): Uint8Array {
   const iv = randomBytes(12);
-  const cifrato = gcm(chiave, iv).encrypt(dati);
+  const cifrato = gcm(chiave, iv, legato).encrypt(dati);
   const insieme = new Uint8Array(iv.length + cifrato.length);
   insieme.set(iv, 0);
   insieme.set(cifrato, iv.length);
   return insieme;
 }
 
-function apri(chiave: Uint8Array, insieme: Uint8Array): Uint8Array {
+function apri(chiave: Uint8Array, insieme: Uint8Array, legato?: Uint8Array): Uint8Array {
   if (insieme.length < 12) {
     throw new Error("Busta d'archivio troppo corta per contenere qualcosa.");
   }
-  return gcm(chiave, insieme.subarray(0, 12)).decrypt(insieme.subarray(12));
+  return gcm(chiave, insieme.subarray(0, 12), legato).decrypt(insieme.subarray(12));
 }
 
 /**
@@ -79,8 +79,8 @@ export function catenaNuova(): Catena {
  * quelle che aveva — e lì la crittografia non può niente, quelle chiavi le ha
  * avute — ma non ottiene questa, quindi non legge il seguito.
  */
-export function catenaRuotata(catena: Catena): Catena {
-  return [...catena, randomBytes(32)];
+export function catenaRuotata(catena: Catena, nuova: Uint8Array = randomBytes(32)): Catena {
+  return [...catena, nuova];
 }
 
 /** Avvolge il mazzo sotto la serratura dell'epoch corrente. */
@@ -124,6 +124,100 @@ export function rileggi(catena: Catena, voce: VoceCifrata): string | undefined {
 
   try {
     return td.decode(apri(chiave, daBase64(voce.busta)));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Ciò a cui una voce è legata ([ADR 0052](../../../../docs/adr/0052-l-archivio-dei-gruppi.md) §1).
+ *
+ * Sono i quattro campi che **l'istanza** dichiara accanto a una voce, e che
+ * fino al 2026-11-27 il client mostrava sulla sua parola: una casa poteva
+ * servire il testo cifrato di Anna dicendo che l'aveva scritto Bruno, o ieri, o
+ * in un'altra conversazione, e la voce si apriva lo stesso.
+ */
+export interface Legame {
+  conversazioneId: string;
+  id: string;
+  /** `username@casa` di chi scrive. */
+  mittente: string;
+  createdAt: string;
+}
+
+/**
+ * I dati autenticati di AES-GCM: entrano nel sigillo e non nella busta.
+ *
+ * Un array JSON di stringhe, non una concatenazione: nessuna scelta dei campi
+ * ne produce un'altra con gli stessi byte. Il primo elemento dice che cosa si
+ * sta legando, così che gli stessi quattro valori non valgano altrove.
+ */
+function datiLegati(legame: Legame): Uint8Array {
+  return te.encode(
+    JSON.stringify([
+      "estia-archivio-v2",
+      legame.conversazioneId,
+      legame.id,
+      legame.mittente,
+      legame.createdAt,
+    ]),
+  );
+}
+
+/** Ricifra un testo con l'ultima chiave della catena, **legato** a chi, dove e quando. */
+export function archiviaLegata(catena: Catena, testo: string, legame: Legame): VoceCifrata {
+  const ultima = catena.at(-1);
+  if (ultima === undefined) {
+    throw new Error("Una catena vuota non archivia niente.");
+  }
+
+  return {
+    busta: base64(sigilla(ultima, te.encode(testo), datiLegati(legame))),
+    chiaveN: catena.length,
+  };
+}
+
+export interface VoceRiletta {
+  testo: string;
+  /**
+   * `true` se la voce si è aperta **con** il suo legame: mittente, data e
+   * conversazione sono quelli che chi ha scritto ha sigillato. `false` per una
+   * voce di prima del legame, che si apre senza: lì chi e quando restano la
+   * parola dell'istanza, e chi la mostra lo deve dire.
+   */
+  legata: boolean;
+}
+
+/**
+ * Rilegge una voce verificandone il legame.
+ *
+ * Una voce sigillata con un legame **non** si apre con un altro, e nemmeno
+ * senza: è così che una casa che cambia il mittente ottiene una voce che non
+ * si apre, invece di una voce attribuita a un altro. Il secondo tentativo,
+ * senza legame, apre soltanto le voci nate prima — che nessuna casa può
+ * fabbricare, perché non ha la chiave.
+ */
+export function rileggiLegata(
+  catena: Catena,
+  voce: VoceCifrata,
+  legame: Legame | undefined,
+): VoceRiletta | undefined {
+  const chiave = catena[voce.chiaveN - 1];
+  if (chiave === undefined) {
+    return undefined;
+  }
+
+  const busta = daBase64(voce.busta);
+  if (legame !== undefined) {
+    try {
+      return { legata: true, testo: td.decode(apri(chiave, busta, datiLegati(legame))) };
+    } catch {
+      // Si prova senza: può essere una voce di prima del legame.
+    }
+  }
+
+  try {
+    return { legata: false, testo: td.decode(apri(chiave, busta)) };
   } catch {
     return undefined;
   }

@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
-import { apriConversazione, leggi, manda, type Invito } from "./conversazione.js";
+import { annuncia, apriConversazione, leggi, manda, type Invito } from "./conversazione.js";
 import type { Contesto } from "./sessione.js";
 import type { KeyPackage } from "ts-mls";
 
@@ -143,5 +143,54 @@ describe("il giro completo che la schermata fa", () => {
     const letta = await leggi(anna, apertura.sessione);
     expect(letta.righe[0]).toMatchObject({ id: "m1", stato: "non-si-apre" });
     expect(letta.righe[0]?.testo).toBeUndefined();
+  });
+
+  it("ciò che succede al gruppo si legge come un evento, non come una frase", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+    const apertura = await apriConversazione(anna, QUI, invitaBruno);
+    const diBruno = await apriConversazione(bruno, ALTROVE, nessunInvito);
+    if (apertura.kind !== "pronta" || diBruno.kind !== "pronta") {
+      throw new Error("Le sessioni dovevano essere pronte");
+    }
+
+    await annuncia(
+      anna,
+      apertura.sessione,
+      { chi: "carla@casa-di-prova", tipo: "ingresso" },
+      "e1",
+      "2026-08-26T10:00:00.000Z",
+    );
+
+    const letta = await leggi(bruno, diBruno.sessione);
+    // Lo dice Anna, sigillato come una sua riga: è lei che l'ha fatta entrare.
+    expect(letta.righe).toEqual([
+      {
+        attestata: true,
+        createdAt: "2026-08-26T10:00:00.000Z",
+        evento: { chi: "carla@casa-di-prova", tipo: "ingresso" },
+        id: "e1",
+        mittente: "anna@casa-di-prova",
+        stato: "letta",
+        testo: "",
+      },
+    ]);
+  });
+
+  it("in un gruppo crea solo chi deve: gli altri della stessa casa aspettano", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+
+    // Bruno sta nella casa che ordina, ma il gruppo non l'ha creato lui.
+    expect(await apriConversazione(bruno, { ...QUI, creaQui: false }, nessunInvito)).toEqual({
+      kind: "in-attesa",
+    });
+
+    // Anna sì, e invita tutti quelli che hanno una chiave: qui uno.
+    const invitaTutti: Invito = async () => [await invitaBruno()].flat();
+    expect((await apriConversazione(anna, { ...QUI, creaQui: true }, invitaTutti)).kind).toBe(
+      "pronta",
+    );
+    expect((await apriConversazione(bruno, { ...QUI, creaQui: false }, nessunInvito)).kind).toBe(
+      "pronta",
+    );
   });
 });

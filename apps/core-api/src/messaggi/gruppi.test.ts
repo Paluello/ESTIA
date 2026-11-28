@@ -570,6 +570,15 @@ describe("la rimozione", () => {
       // e chi è rimasto lo legge ancora.
       const pagina = await borgo.messaggi.cronologia(bruno, conv);
       expect(pagina.righe).toMatchObject([{ id: "m-carla", stato: "disponibile" }]);
+
+      // E ogni casa dice ai suoi chi è stato tolto, con il suo indirizzo: è
+      // ciò che serve a un client per togliere la foglia di chi non c'è più.
+      expect((await aia.messaggi.getConversazione(anna, conv)).rimossi).toEqual([
+        `carla@${colle.chiave}`,
+      ]);
+      expect((await borgo.messaggi.getConversazione(bruno, conv)).rimossi).toEqual([
+        `carla@${colle.chiave}`,
+      ]);
     });
   });
 
