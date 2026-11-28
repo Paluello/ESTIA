@@ -27,6 +27,11 @@ Ogni rilievo «alto» è stato riprodotto prima di correggerlo. Ogni correzione 
 | Media   | Federazione | La chat MLS fra Case non era collegata nell'app, e alcune verifiche sugli epoch e sulle quote mancavano                         | [#20](https://github.com/Paluello/ESTIA/pull/20) |
 | Bassa   | Media       | Le foto restavano un anno nella cache del browser                                                                               | [#14](https://github.com/Paluello/ESTIA/pull/14) |
 | Bassa   | Federazione | Una foto si serviva anche se il suo post era solo per la Casa o nascosto                                                        | [#40](https://github.com/Paluello/ESTIA/pull/40) |
+| Media   | Federazione | Una Casa sconosciuta poteva accumulare follow in attesa senza limite, e i budget non venivano mai ripuliti                      | [#41](https://github.com/Paluello/ESTIA/pull/41) |
+| Media   | Federazione | Chi entrava non aveva tetti: connessioni per chiave, stream per connessione e tempo di lettura                                  | [#42](https://github.com/Paluello/ESTIA/pull/42) |
+| Media   | Web         | Il materiale MLS del browser non era legato alla persona e alla Casa che l'avevano creato                                       | [#43](https://github.com/Paluello/ESTIA/pull/43) |
+| Bassa   | Feed        | Il testo di un commento pubblico si leggeva per id senza sessione                                                               | [#43](https://github.com/Paluello/ESTIA/pull/43) |
+| Bassa   | Federazione | Allo scadere del tempo una richiesta in uscita lasciava aperta la connessione                                                   | [#44](https://github.com/Paluello/ESTIA/pull/44) |
 | Bassa   | Operazioni  | Il ripristino da root seguiva link già presenti e aveva tutte le capability                                                     | [#19](https://github.com/Paluello/ESTIA/pull/19) |
 | Bassa   | CI          | I workflow di verifica non limitavano i permessi del token                                                                      | [#14](https://github.com/Paluello/ESTIA/pull/14) |
 
@@ -35,11 +40,10 @@ Ogni rilievo «alto» è stato riprodotto prima di correggerlo. Ogni correzione 
 Sono noti e hanno un responsabile. Qui sono descritti solo a grandi linee: il dettaglio arriva con la correzione.
 
 - **Approvazione dei dispositivi.** Ci sono percorsi in cui un dispositivo nuovo risulta approvato senza esserlo. C'è una correzione pronta. Una parte tocca il comportamento dopo il logout, e quella è una scelta di prodotto ancora da fare.
-- **Materiale MLS nel browser.** Va legato all'account e alla Casa che l'hanno creato.
 - **Provenienza dei messaggi nell'archivio delle conversazioni.** Il precondizionale di ADR 0043, «provenienza autenticata», non è ancora soddisfatto.
-- **Federazione verso istanze sconosciute.** Mancano tetti sul numero di follow in attesa, timeout sulle connessioni in entrata e pulizia dei budget. Va anche decisa la richiesta delle chiavi da parte di Case non collegate.
+- **Federazione verso istanze sconosciute.** Va decisa la richiesta delle chiavi da parte di Case non collegate.
 - **Backup.** Gli archivi non dicono da quale istanza vengono.
-- **Minori.** Una corsa sulla quota dei media, il commento pubblico leggibile per id, la ricerca dei membri e qualche campo non limitato in lunghezza.
+- **Minori.** Una corsa sulla quota dei media, la ricerca dei membri e qualche campo non limitato in lunghezza.
 
 ## Che cosa è risultato a posto
 
