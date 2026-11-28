@@ -70,7 +70,7 @@ export function CommentItem({
     setError(false);
 
     api
-      .getPublicComment(comment.remoteInstanceKey!, comment.remoteCommentId!)
+      .getPublicComment(token, comment.remoteInstanceKey!, comment.remoteCommentId!)
       .then((res) => {
         if (active) {
           setLoadedBody(res.body);
@@ -87,7 +87,7 @@ export function CommentItem({
     return () => {
       active = false;
     };
-  }, [isRemote, comment.remoteInstanceKey, comment.remoteCommentId]);
+  }, [isRemote, token, comment.remoteInstanceKey, comment.remoteCommentId]);
 
   const [busy, setBusy] = useState(false);
   const [likeLocale, setLikeLocale] = useState<{ liked: boolean; count: number } | undefined>();
