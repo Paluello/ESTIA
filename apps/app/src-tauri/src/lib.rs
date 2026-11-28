@@ -6,22 +6,25 @@
 //!
 //! - **la cassaforte** ([`cassaforte`]): una chiave nella cassaforte del
 //!   sistema, e i segreti del dispositivo sigillati con quella;
-//! - **la rete** ([`rete`]): iroh, per chiave, solo verso la propria Casa;
-//! - **il filo** ([`filo`]): come una richiesta dell'API viaggia su uno stream.
+//! - **la rete** ([`estia_nucleo::rete`]): iroh, per chiave, solo verso la
+//!   propria Casa;
+//! - **il filo** ([`estia_nucleo::filo`]): come una richiesta dell'API viaggia
+//!   su uno stream.
+//!
+//! Rete e filo sono quelli del nucleo delle app del telefono (`apps/nucleo`,
+//! ADR 0051), così che le tre app parlino alla Casa nello stesso modo.
 //!
 //! [ADR 0044]: ../../../../docs/adr/0044-il-dispositivo-e-l-app.md
 
 mod cassaforte;
-mod filo;
-mod rete;
 
 use std::{collections::BTreeMap, sync::Mutex};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use cassaforte::{Cassaforte, Stato};
-use filo::{CollegamentoIngresso, IntestazioneRichiesta};
+use estia_nucleo::filo::{CollegamentoIngresso, IntestazioneRichiesta};
+use estia_nucleo::rete::{Casa, Rete};
 use iroh::SecretKey;
-use rete::{Casa, Rete};
 use serde::Serialize;
 use tauri::{Manager, State};
 use tokio::sync::OnceCell;

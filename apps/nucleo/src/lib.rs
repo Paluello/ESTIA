@@ -6,9 +6,8 @@
 //! mai una chiave.
 //!
 //! Il filo verso la Casa (iroh, `estia/ingresso/1` e `estia/dispositivo/1`)
-//! è in [`casa`]. `filo.rs` e `rete.rs` sono per ora una copia di quelli di
-//! `apps/app/src-tauri`: l'app del PC passerà a usare questo crate, e allora
-//! la copia sparisce.
+//! è in [`casa`], sopra [`rete`] e [`filo`]. Anche l'app del PC
+//! (`apps/app/src-tauri`) usa questi due moduli, senza UniFFI.
 
 uniffi::setup_scaffolding!();
 

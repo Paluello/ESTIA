@@ -9,7 +9,7 @@ Contiene ciò che non è interfaccia. L'interfaccia chiede «cifra questo per qu
 | `mls.rs`             | MLS con OpenMLS 0.9.2, interoperabile con il client web ([S7](../../docs/spike/S7-openmls-e-ts-mls.md)): KeyPackage, Welcome, commit, rientro, messaggi            |
 | `deposito.rs`        | Le due cose che chiede all'app: un `Deposito` (la cassaforte del telefono) e un `Registro` (le chiavi di firma che l'istanza riconosce)                            |
 | `casa.rs`            | Il collegamento con la Casa via iroh: la chiave di rete del dispositivo, l'ingresso con il QR (`estia/ingresso/1`) e le richieste dell'API (`estia/dispositivo/1`) |
-| `filo.rs`, `rete.rs` | Il formato del filo e l'endpoint iroh. Per ora sono copie di quelli di `apps/app/src-tauri`, finché l'app del PC non passa a questo crate                          |
+| `filo.rs`, `rete.rs` | Il formato del filo e l'endpoint iroh. Li usa anche l'app del PC (`apps/app/src-tauri`), senza UniFFI                                                              |
 | `errore.rs`          | Codici d'errore, non frasi: la frase la sceglie l'app da `packages/lingue`                                                                                         |
 
 ## Regole che il codice mantiene

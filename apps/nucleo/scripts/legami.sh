@@ -16,7 +16,7 @@ case "$(uname)" in
 esac
 
 for lingua in swift kotlin; do
-  cargo run -q --bin uniffi-bindgen -- generate --library "$libreria" \
+  cargo run -q --features legami --bin uniffi-bindgen -- generate --library "$libreria" \
     --language "$lingua" --out-dir "$uscita/$lingua" --no-format
 done
 
