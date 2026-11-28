@@ -45,7 +45,22 @@ export function registerBackupRoutes(
         tags: ["admin"],
       },
     },
-    async (request) => services.backups.update(request.body),
+    async (request) => {
+      const before = services.backups.view().publicKey;
+      const view = await services.backups.update(request.body, (password) =>
+        services.identity.confirmPassword(request.caller!.user.id, password),
+      );
+
+      if (before !== undefined && view.publicKey !== before) {
+        // Never the key itself in the log: only that it changed, and who.
+        request.log.warn(
+          { event: "backup_key_changed", userId: request.caller!.user.id },
+          "backup public key changed",
+        );
+      }
+
+      return view;
+    },
   );
 
   /**

@@ -82,6 +82,7 @@ export function Backup(): React.ReactElement {
   const [keep, setKeep] = useState(7);
   const [privateKey, setPrivateKey] = useState<string | undefined>();
   const [modificaChiave, setModificaChiave] = useState(false);
+  const [password, setPassword] = useState("");
   const [lavoro, setLavoro] = useState<Lavoro | undefined>();
   const [esito, setEsito] = useState<string | undefined>();
   const [errore, setErrore] = useState<string | undefined>();
@@ -139,11 +140,13 @@ export function Backup(): React.ReactElement {
         intervalHours,
         keep,
         publicKey,
+        ...(password === "" ? {} : { password }),
       });
 
       setSettings(saved);
       setPrivateKey(undefined);
       setModificaChiave(false);
+      setPassword("");
       await carica();
     });
 
@@ -299,6 +302,17 @@ export function Backup(): React.ReactElement {
               placeholder={t("backup.pubblica.esempio")}
               value={publicKey}
             />
+            {configurati && (
+              <TextField
+                autoComplete="current-password"
+                disabled={!modificabili || busy}
+                hint={t("backup.conferma_password.aiuto")}
+                label={t("backup.conferma_password")}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                value={password}
+              />
+            )}
             <div className="cluster">
               {configurati ? (
                 <Button
@@ -324,6 +338,7 @@ export function Backup(): React.ReactElement {
                   onClick={() => {
                     setModificaChiave(false);
                     setPrivateKey(undefined);
+                    setPassword("");
                     setPublicKey(settings.publicKey ?? "");
                   }}
                   variant="secondary"

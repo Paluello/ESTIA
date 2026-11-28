@@ -342,6 +342,21 @@ export class IdentityService {
     return { sessionId: session.id, user: this.toAuthenticatedUser(user) };
   }
 
+  /**
+   * Chiede di nuovo la password a chi ha già una sessione, prima di un gesto
+   * che una sessione rubata non deve poter fare da sola.
+   */
+  public async confirmPassword(userId: string, password: string): Promise<boolean> {
+    const user = this.users.findById(userId);
+
+    if (user === undefined || user.deletedAt !== null) {
+      await verifyPassword(password, await getDecoyHash());
+      return false;
+    }
+
+    return verifyPassword(password, user.passwordHash);
+  }
+
   /** Se la sessione vale adesso, senza toccarla. */
   public isSessionLive(sessionId: string): boolean {
     const session = this.sessions.findById(sessionId);
