@@ -63,6 +63,19 @@ export interface FollowServiceOptions {
   now?: () => Date;
 }
 
+/**
+ * Quanti follower può far nascere qui una sola istanza di fuori.
+ *
+ * `da` in `segui` è dichiarato e mai verificato (ADR 0020 §5): senza un tetto
+ * una casa qualsiasi inventa nomi e riempie `followers` di righe, e con i
+ * profili a follow aperti ognuna diventa un follow accettato che la mette «in
+ * contatto» (revisione interna, 2026-11-27). Le case di ESTIA sono piccole:
+ * 256 persone di là che seguono qualcuno di qua è già un quartiere intero.
+ */
+export const MAX_FOLLOWER_DA_UNA_CASA = 256;
+/** Le richieste ancora da decidere, che finiscono nella casella di qualcuno. */
+export const MAX_IN_ATTESA_DA_UNA_CASA = 32;
+
 export class FollowService implements FollowDirectory {
   readonly #follows: FollowRepository;
   readonly #profiles: ProfileRepository;
@@ -123,6 +136,19 @@ export class FollowService implements FollowDirectory {
     // stato accettato: non serve nessuna casella d'ingresso.
     if (existing !== undefined) {
       return this.#conProva(existing, existing.state);
+    }
+
+    // Oltre il tetto, la stessa risposta di un nome che non c'è: dire «troppi»
+    // confermerebbe che il nome esiste.
+    if (!this.#isLocal(input.instance)) {
+      const giaQui = this.#follows.countFollowersFrom(input.instance);
+
+      if (
+        giaQui.totale >= MAX_FOLLOWER_DA_UNA_CASA ||
+        (state === "in_attesa" && giaQui.inAttesa >= MAX_IN_ATTESA_DA_UNA_CASA)
+      ) {
+        return undefined;
+      }
     }
 
     const nato = this.#follows.addFollower({

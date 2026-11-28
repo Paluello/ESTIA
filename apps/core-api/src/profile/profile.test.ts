@@ -10,7 +10,11 @@ import { SqliteRemoteInstanceRepository } from "../federation/repository.js";
 import { FederationService } from "../federation/service.js";
 import { SqliteUserRepository } from "../identity/repository.js";
 
-import { FollowService } from "./follow-service.js";
+import {
+  FollowService,
+  MAX_FOLLOWER_DA_UNA_CASA,
+  MAX_IN_ATTESA_DA_UNA_CASA,
+} from "./follow-service.js";
 import type { EsitoFollow, FollowNetwork } from "./follow-service.js";
 import { SqliteFollowRepository } from "./follows.js";
 import { SqliteProfileRepository } from "./repository.js";
@@ -363,6 +367,42 @@ describe("il follow fra istanze", () => {
       expect(via.follows.listFollowers(marco)).toMatchObject([
         { followerUsername: "anna", state: "in_attesa" },
       ]);
+    });
+  });
+
+  /**
+   * Revisione interna, 2026-11-27: `da` è dichiarato, quindi una casa
+   * qualsiasi poteva inventare nomi e far nascere righe di follower senza
+   * fine. Oltre il tetto la risposta è quella di un nome che non c'è.
+   */
+  it("una sola casa di fuori non fa nascere follower senza fine", async () => {
+    await withTempDataDir(async (dataDir) => {
+      const via = await casa(dataDir);
+      const marco = via.aggiungi("marco", "Marco");
+      const anna = via.aggiungi("anna", "Anna");
+
+      via.profiles.update(marco, { bio: "", openFollows: false, presence: "presente_pubblico" });
+      via.profiles.update(anna, { bio: "", openFollows: true, presence: "presente_pubblico" });
+
+      const segue = (target: string, follower: string, instance = "altrove"): unknown =>
+        via.follows.receiveFollow({ follower, instance, target });
+
+      for (let i = 0; i < MAX_IN_ATTESA_DA_UNA_CASA; i += 1) {
+        expect(segue("marco", `finto-${String(i)}`)).toMatchObject({ stato: "in_attesa" });
+      }
+      expect(segue("marco", "uno-di-troppo")).toBeUndefined();
+
+      // Le richieste che si accettano da sole contano nel tetto totale.
+      const restano = MAX_FOLLOWER_DA_UNA_CASA - MAX_IN_ATTESA_DA_UNA_CASA;
+      for (let i = 0; i < restano; i += 1) {
+        expect(segue("anna", `aperto-${String(i)}`)).toMatchObject({ stato: "accettato" });
+      }
+      expect(segue("anna", "ancora-uno")).toBeUndefined();
+
+      // Chi c'era già resta com'era, e un'altra casa ha il suo tetto.
+      expect(segue("anna", "aperto-0")).toMatchObject({ stato: "accettato" });
+      expect(segue("marco", "lucia", "un-altra-casa")).toMatchObject({ stato: "in_attesa" });
+      expect(via.follows.listFollowers(marco)).toHaveLength(MAX_IN_ATTESA_DA_UNA_CASA + 1);
     });
   });
 
