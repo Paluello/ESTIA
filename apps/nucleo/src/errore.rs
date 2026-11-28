@@ -41,6 +41,25 @@ pub enum ErroreNucleo {
     /// L'archivio non ha sigillato: non dice mai che cosa c'era dentro.
     #[error("archivio: {0}")]
     Archivio(String),
+    /// La Casa ha risposto di no: lo stato HTTP e il suo codice d'errore
+    /// (`rimosso_dal_gruppo`, `no_device_available`, …), che l'app traduce.
+    #[error("casa {stato}: {codice}")]
+    Casa { stato: u16, codice: String },
+    /// La chiave di firma di questo dispositivo non è ancora nel registro
+    /// della Casa: aspetta il sì di un dispositivo già approvato (ADR 0040).
+    /// Finché è così non crea e non rientra: gli altri rifiuterebbero la sua
+    /// foglia, e il suo commit resterebbe in fila davanti a tutti.
+    #[error("il dispositivo aspetta ancora il sì")]
+    DispositivoInAttesa,
+    /// Una chiave d'ingresso che dice di essere di qualcun altro.
+    #[error("chiave di un altro")]
+    ChiaveDiUnAltro,
+    /// L'albero ha un tetto di foglie (`MAX_FOGLIE_GRUPPO`).
+    #[error("gruppo pieno")]
+    GruppoPieno,
+    /// Nell'albero c'è chi non è fra i membri: finché resta, non si scrive.
+    #[error("presenza estranea: {0}")]
+    PresenzaEstranea(String),
 }
 
 impl From<crate::archivio::ErroreArchivio> for ErroreNucleo {
