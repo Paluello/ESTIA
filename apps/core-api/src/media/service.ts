@@ -55,6 +55,12 @@ export class MediaService {
   private readonly storage: MediaStorage;
   private readonly limits: MediaConfig;
   private readonly now: () => Date;
+  /**
+   * Bytes of uploads still being decoded, per member. The database only knows
+   * an image once it is written, so without this several uploads sent
+   * together would each see the same free space.
+   */
+  private readonly inFlight = new Map<string, number>();
 
   public constructor(options: MediaServiceOptions) {
     this.repository = options.repository;
@@ -101,11 +107,35 @@ export class MediaService {
     // Cheap and approximate on purpose: the exact size is known only after the
     // thumbnail exists, but the quota has to bite before anything is written.
     const used = this.repository.bytesUsedBy(caller.id);
+    const pending = this.inFlight.get(caller.id) ?? 0;
 
-    if (used + bytes.byteLength > this.limits.quotaBytesPerUser) {
+    if (used + pending + bytes.byteLength > this.limits.quotaBytesPerUser) {
       throw new DomainError("media_quota_exceeded", 413);
     }
 
+    // Reserved before the first await, released once the record is written
+    // (or the upload failed): from then on the database counts it.
+    this.inFlight.set(caller.id, pending + bytes.byteLength);
+
+    try {
+      return await this.decodeAndStore(caller, bytes, format, dimensions);
+    } finally {
+      const left = (this.inFlight.get(caller.id) ?? 0) - bytes.byteLength;
+
+      if (left > 0) {
+        this.inFlight.set(caller.id, left);
+      } else {
+        this.inFlight.delete(caller.id);
+      }
+    }
+  }
+
+  private async decodeAndStore(
+    caller: AuthenticatedUser,
+    bytes: Uint8Array,
+    format: ImageFormat,
+    dimensions: { width: number; height: number },
+  ): Promise<MediaView> {
     const thumbnail = await this.makeThumbnailOrReject(bytes, format);
     // Kept as uploaded, minus what is not needed to draw it: a photo from a
     // phone carries the coordinates of where it was taken, and the feed of a
