@@ -232,8 +232,11 @@ export interface BoardDirectory {
 }
 
 export interface MessaggiDirectory {
-  /** Un KeyPackage MLS di un membro di questa casa, consumato al prelievo. */
-  getKeyPackages(username: string): Array<{ id: string; blob: string }>;
+  /**
+   * I KeyPackage MLS di un membro di questa casa, consumati al prelievo: uno,
+   * o uno per dispositivo con `tutti`.
+   */
+  getKeyPackages(username: string, tutti?: boolean): Array<{ id: string; blob: string }>;
   /**
    * Le chiavi di firma **approvate** di un membro di questa casa
    * ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §1).
@@ -1125,7 +1128,7 @@ export class FederationService implements AlpnService {
       return errorResponse("troppe_richieste", "Troppe richieste in poco tempo.");
     }
 
-    const packages = this.#messaggi.getKeyPackages(request.destinatario);
+    const packages = this.#messaggi.getKeyPackages(request.destinatario, request.tutti === true);
     return { ok: true, packages };
   }
 
@@ -1967,7 +1970,7 @@ export class FederationService implements AlpnService {
   public async fetchChiavi(
     instanceKey: string,
     chi: { nome: string; prova: string },
-    options: { da: string; destinatario: string; algoritmo?: string },
+    options: { da: string; destinatario: string; algoritmo?: string; tutti?: boolean },
   ): Promise<EsitoChiavi> {
     try {
       const { response } = await this.#ask(instanceKey, {
@@ -1977,6 +1980,7 @@ export class FederationService implements AlpnService {
         nome: this.#instanceName(),
         tipo: "chiavi",
         ...(options.algoritmo === undefined ? {} : { algoritmo: options.algoritmo }),
+        ...(options.tutti === true ? { tutti: true } : {}),
       });
 
       // Ha risposto no: puo' essere «quella persona non c'e'» o «non ti

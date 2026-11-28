@@ -771,9 +771,11 @@ async function chiaveDi(chi: Casa, altro: { id: string; username: string }) {
     chi.app,
     chi.token,
     "GET",
-    `/api/v1/mls/key-package/${casa}/${altro.username}`,
-  )) as { keyPackage: string };
-  const keyPackage = leggiKeyPackage(daB64(preso.keyPackage));
+    `/api/v1/mls/key-packages/${casa}/${altro.username}`,
+  )) as { keyPackages: { keyPackage: string }[] };
+  // Il prelievo per persona, anche attraverso le case: qui ognuno ha un dispositivo solo.
+  expect(preso.keyPackages).toHaveLength(1);
+  const keyPackage = leggiKeyPackage(daB64(preso.keyPackages[0]!.keyPackage));
   if (keyPackage === undefined) {
     throw new Error("KeyPackage illeggibile");
   }

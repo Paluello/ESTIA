@@ -332,6 +332,71 @@ describe("il prelievo di un KeyPackage MLS", () => {
     });
   });
 
+  it("per persona: uno per ciascun dispositivo approvato, e chi aspetta resta fuori", async () => {
+    await withRig(async ({ app, annaToken }) => {
+      const casa = (
+        await app.inject({ headers: bearer(annaToken), method: "GET", url: "/api/v1/mls/casa" })
+      ).json().casa as string;
+
+      await app.identityService.createUser({
+        password: "password-lunga-carla",
+        role: "member",
+        username: "carla",
+      });
+      const accedi = async (): Promise<string> =>
+        (await app.identityService.login({ password: "password-lunga-carla", username: "carla" }))
+          .token;
+      const dispositivo = async (token: string, firma: string, kp: string[]): Promise<string> => {
+        const id = (
+          await app.inject({
+            headers: bearer(token),
+            method: "POST",
+            payload: { algorithm: "MLS-P256-v1", publicKey: firma },
+            url: "/api/v1/dispositivi/chiave",
+          })
+        ).json<{ device: { id: string } }>().device.id;
+        await app.inject({
+          headers: bearer(token),
+          method: "POST",
+          payload: { keyPackages: kp },
+          url: "/api/v1/dispositivi/key-packages",
+        });
+        return id;
+      };
+
+      // Il telefono è il primo; il PC lo approva il telefono; il tablet aspetta.
+      const telefono = await accedi();
+      const idTelefono = await dispositivo(telefono, "FIRMA_TELEFONO", ["KP_TELEFONO"]);
+      const idPc = await dispositivo(await accedi(), "FIRMA_PC", ["KP_PC"]);
+      await app.inject({
+        headers: bearer(telefono),
+        method: "POST",
+        url: `/api/v1/dispositivi/${idPc}/approva`,
+      });
+      await dispositivo(await accedi(), "FIRMA_TABLET", ["KP_TABLET"]);
+
+      const res = await app.inject({
+        headers: bearer(annaToken),
+        method: "GET",
+        url: `/api/v1/mls/key-packages/${casa}/carla`,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const presi = res.json<{ keyPackages: { deviceId: string; keyPackage: string }[] }>()
+        .keyPackages;
+      expect(presi.map((p) => p.keyPackage).sort()).toEqual(["KP_PC", "KP_TELEFONO"]);
+      expect(presi.map((p) => p.deviceId).sort()).toEqual([idPc, idTelefono].sort());
+
+      // Monouso anche qui: la scorta è finita.
+      const ancora = await app.inject({
+        headers: bearer(annaToken),
+        method: "GET",
+        url: `/api/v1/mls/key-packages/${casa}/carla`,
+      });
+      expect(ancora.statusCode).toBe(404);
+    });
+  });
+
   it("chi ha soltanto un dispositivo di prima del passaggio non ne consegna uno", async () => {
     await withRig(async ({ app, annaToken }) => {
       const casa = (

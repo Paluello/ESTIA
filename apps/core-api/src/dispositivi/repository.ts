@@ -1,5 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 
+/**
+ * Quanti dispositivi di una persona entrano in un prelievo solo. Un tetto, non
+ * una regola d'uso: chi ne ha di più ne fa entrare dieci, e gli altri li
+ * aggiunge il «sì» di ADR 0040 da un dispositivo già dentro.
+ */
+export const DISPOSITIVI_MAX_PER_PRELIEVO = 10;
+
 export interface DeviceKeyRecord {
   id: string;
   sessionId: string;
@@ -95,6 +102,12 @@ export interface DeviceKeysRepository {
     /** Solo i dispositivi di questo algoritmo, e solo uno che abbia un KeyPackage. */
     algoritmo: string,
   ): { device: DeviceKeyRecord; keyPackage: KeyPackageRecord } | undefined;
+  /** Uno per ciascun dispositivo utilizzabile che ne abbia ancora: ADR 0040, più foglie per persona. */
+  claimKeyPackagesForUser(
+    userId: string,
+    consumedAt: string,
+    algoritmo: string,
+  ): Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }>;
   saveKeyBackup(record: {
     userId: string;
     encryptedBlob: string;
@@ -372,13 +385,41 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
     consumedAt: string,
     algoritmo: string,
   ): { device: DeviceKeyRecord; keyPackage: KeyPackageRecord } | undefined {
+    return this.#preleva(userId, consumedAt, algoritmo, 1)[0];
+  }
+
+  /**
+   * Il prelievo per tutti i dispositivi: uno ciascuno, perché ogni dispositivo
+   * di una persona è una foglia sua nella conversazione
+   * ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+   * Chi non ha più scorta resta fuori, gli altri entrano.
+   */
+  claimKeyPackagesForUser(
+    userId: string,
+    consumedAt: string,
+    algoritmo: string,
+  ): Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }> {
+    return this.#preleva(userId, consumedAt, algoritmo, DISPOSITIVI_MAX_PER_PRELIEVO);
+  }
+
+  #preleva(
+    userId: string,
+    consumedAt: string,
+    algoritmo: string,
+    quanti: number,
+  ): Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }> {
     const trova = this.db.prepare(
       `SELECT id, device_id, user_id, key_package, created_at FROM key_packages
          WHERE device_id = ? AND consumed_at IS NULL
          ORDER BY created_at ASC LIMIT 1`,
     );
+    const consuma = this.db.prepare(`UPDATE key_packages SET consumed_at = ? WHERE id = ?`);
+    const presi: Array<{ device: DeviceKeyRecord; keyPackage: KeyPackageRecord }> = [];
 
     for (const device of this.getActiveDeviceKeysByUserId(userId, consumedAt)) {
+      if (presi.length >= quanti) {
+        break;
+      }
       if (device.algorithm !== algoritmo) {
         continue;
       }
@@ -396,11 +437,8 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
         continue;
       }
 
-      this.db
-        .prepare(`UPDATE key_packages SET consumed_at = ? WHERE id = ?`)
-        .run(consumedAt, row.id);
-
-      return {
+      consuma.run(consumedAt, row.id);
+      presi.push({
         device,
         keyPackage: {
           consumedAt,
@@ -410,10 +448,10 @@ export class SqliteDeviceKeysRepository implements DeviceKeysRepository {
           keyPackage: row.key_package,
           userId: row.user_id,
         },
-      };
+      });
     }
 
-    return undefined;
+    return presi;
   }
 
   saveKeyBackup(record: {

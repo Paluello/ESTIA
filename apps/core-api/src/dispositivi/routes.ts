@@ -2,6 +2,7 @@ import {
   casaViewSchema,
   chiaviDiFirmaViewSchema,
   keyPackageMlsViewSchema,
+  keyPackagesMlsViewSchema,
   dispositiviResponseSchema,
   ingressoEmessoViewSchema,
   sfidaViewSchema,
@@ -15,6 +16,7 @@ import {
   type CasaView,
   type ChiaviDiFirmaView,
   type KeyPackageMlsView,
+  type KeyPackagesMlsView,
   type DeviceKeyView,
   type DispositiviResponse,
   type KeyBackupView,
@@ -32,6 +34,7 @@ import type { FederationService } from "../federation/service.js";
 import type { AccessoDispositivi } from "./accesso.js";
 import type { DispositiviService } from "./service.js";
 
+import { DISPOSITIVI_MAX_PER_PRELIEVO } from "./repository.js";
 import { ALGORITMO_MLS } from "./service.js";
 
 function nessunDispositivoMls(): DomainError {
@@ -278,64 +281,103 @@ export function registerDispositiviRoutes(
   );
 
   /**
-   * Preleva un `KeyPackage` **MLS** di un membro, di qualunque casa, per farlo
-   * entrare in una conversazione.
-   *
-   * Come il registro, instrada per casa: la propria dal database, le altre con
-   * la domanda `chiavi` a loro. E come il registro distingue «non ha un
-   * dispositivo MLS» (404) da «la sua casa non risponde» (503): la prima cosa
-   * si risolve quando quella persona apre ESTIA, la seconda quando la sua casa
-   * si riaccende.
+   * Il prelievo, per casa: dalla propria il database, dalle altre la domanda
+   * `chiavi`. Distingue «non ha un dispositivo MLS» (404) da «la sua casa non
+   * risponde» (503): la prima cosa si risolve quando quella persona apre ESTIA,
+   * la seconda quando la sua casa si riaccende.
+   */
+  const preleva = async (
+    casa: string,
+    username: string,
+    chiede: string,
+    tutti: boolean,
+  ): Promise<KeyPackageMlsView[]> => {
+    if (casa === services.casa) {
+      const presi = tutti
+        ? services.dispositivi.claimKeyPackagesPerNome(username)
+        : [services.dispositivi.claimKeyPackagePerNome(username)].filter(
+            (p): p is KeyPackageMlsView => p !== null,
+          );
+      if (presi.length === 0) {
+        throw nessunDispositivoMls();
+      }
+
+      return presi;
+    }
+
+    if (services.federation === undefined) {
+      throw new DomainError("rete_non_attiva", 503);
+    }
+
+    const esito = await services.federation.fetchChiavi(
+      casa,
+      { nome: username, prova: "prova-chiavi" },
+      { algoritmo: ALGORITMO_MLS, da: chiede, destinatario: username, ...(tutti ? { tutti } : {}) },
+    );
+
+    if (esito.esito === "irraggiungibile") {
+      throw new DomainError("istanza_non_raggiungibile", 503);
+    }
+
+    // Una casa che risponde più del chiesto non ne fa entrare di più.
+    const presi = (esito.esito === "chiavi" ? esito.packages : [])
+      .slice(0, tutti ? DISPOSITIVI_MAX_PER_PRELIEVO : 1)
+      .map((p) => ({ deviceId: p.id, keyPackage: p.blob }));
+    if (presi.length === 0) {
+      throw nessunDispositivoMls();
+    }
+
+    return presi;
+  };
+
+  const paramsDelPrelievo = {
+    type: "object",
+    required: ["casa", "username"],
+    properties: { casa: { type: "string" }, username: { type: "string" } },
+  } as const;
+
+  /**
+   * Preleva un `KeyPackage` **MLS** di un membro, di qualunque casa: uno solo,
+   * del suo dispositivo più recente con scorta. Resta per chi non sa ancora
+   * delle foglie per dispositivo; il prelievo per persona è quello sotto.
    */
   app.get<{ Params: { casa: string; username: string }; Reply: KeyPackageMlsView }>(
     "/api/v1/mls/key-package/:casa/:username",
     {
       preHandler: asMember,
       // Ogni prelievo consuma un KeyPackage di qualcun altro: senza tetto, un
-      // membro solo svuoterebbe la scorta di tutti. Aprire una conversazione
-      // ne preleva uno per dispositivo, quindi trenta al minuto sono larghi.
+      // membro solo svuoterebbe la scorta di tutti.
       config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
-      schema: {
-        params: {
-          type: "object",
-          required: ["casa", "username"],
-          properties: { casa: { type: "string" }, username: { type: "string" } },
-        },
-        response: { 200: keyPackageMlsViewSchema },
-      },
+      schema: { params: paramsDelPrelievo, response: { 200: keyPackageMlsViewSchema } },
+    },
+    async (request) => {
+      const { casa, username } = request.params;
+      const [primo] = await preleva(casa, username, request.caller!.user.username, false);
+
+      return primo!;
+    },
+  );
+
+  /**
+   * Un `KeyPackage` **MLS** per ciascun dispositivo di un membro, di qualunque
+   * casa: è così che una persona entra in una conversazione con il telefono e
+   * con il PC insieme ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+   */
+  app.get<{ Params: { casa: string; username: string }; Reply: KeyPackagesMlsView }>(
+    "/api/v1/mls/key-packages/:casa/:username",
+    {
+      preHandler: asMember,
+      // Consuma fino a dieci KeyPackage altrui per volta: il tetto è più
+      // stretto di quello del prelievo singolo.
+      config: { rateLimit: { max: 15, timeWindow: "1 minute" } },
+      schema: { params: paramsDelPrelievo, response: { 200: keyPackagesMlsViewSchema } },
     },
     async (request) => {
       const { casa, username } = request.params;
 
-      if (casa === services.casa) {
-        const preso = services.dispositivi.claimKeyPackagePerNome(username);
-        if (preso === null) {
-          throw nessunDispositivoMls();
-        }
-
-        return preso;
-      }
-
-      if (services.federation === undefined) {
-        throw new DomainError("rete_non_attiva", 503);
-      }
-
-      const esito = await services.federation.fetchChiavi(
-        casa,
-        { nome: username, prova: "prova-chiavi" },
-        { algoritmo: ALGORITMO_MLS, da: request.caller!.user.username, destinatario: username },
-      );
-
-      if (esito.esito === "irraggiungibile") {
-        throw new DomainError("istanza_non_raggiungibile", 503);
-      }
-
-      const primo = esito.esito === "chiavi" ? esito.packages[0] : undefined;
-      if (primo === undefined) {
-        throw nessunDispositivoMls();
-      }
-
-      return { deviceId: primo.id, keyPackage: primo.blob };
+      return {
+        keyPackages: await preleva(casa, username, request.caller!.user.username, true),
+      };
     },
   );
 

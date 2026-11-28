@@ -86,6 +86,10 @@ Ogni chiave di rete ha la sua sessione, quindi telefono e PC sono due righe in `
 
 Una sessione d'app si allunga a ogni uso: un'app che si fa vedere resta dentro, una revocata no. Reinstallare l'app produce una chiave nuova, quindi un dispositivo nuovo che deve rientrare con un QR (verifica 4 di ADR 0044). Ripresentare con un codice nuovo una chiave già legata revoca la sessione vecchia.
 
+## Una persona entra con tutti i suoi dispositivi
+
+`GET /api/v1/mls/key-packages/:casa/:username` consegna un KeyPackage per **ciascun** dispositivo approvato e vivo del membro, fino a dieci, e li consuma. Fra Case la domanda `chiavi` porta `tutti: true`; una Casa che non lo conosce ne manda uno solo, ed è ancora una risposta giusta. Il client web la usa quando apre una conversazione e quando fa entrare qualcuno in un gruppo, così telefono e PC della stessa persona sono due foglie dal primo commit. La rotta al singolare resta per chi non lo sa ancora.
+
 ## Che cosa manca, detto per intero
 
 - **La rimozione della foglia MLS da ogni conversazione** quando si revoca un dispositivo (ADR 0040, obbligo 3). È un commit per conversazione fatto da un altro dispositivo del membro: lo fa il client. La Casa smette di consegnare al dispositivo revocato, e la sua chiave di firma esce dal registro perché `getActiveDeviceKeysByUserId` legge la sessione.
