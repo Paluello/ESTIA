@@ -1,0 +1,51 @@
+# Il progetto Xcode dell'app iPhone si genera da qui con XcodeGen
+# (`xcodegen generate`): il .xcodeproj non si committa. Vedi README.md.
+name: Estia
+options:
+  bundleIdPrefix: org.estia
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+targets:
+  Estia:
+    type: application
+    platform: iOS
+    sources:
+      - path: Estia
+      - path: Generato/EstiaNucleo.swift
+    dependencies:
+      - framework: Generato/EstiaNucleo.xcframework
+        embed: false
+      - sdk: SystemConfiguration.framework
+      - sdk: Security.framework
+      # netdev su iOS legge lo stato della rete con nw_path_monitor.
+      - sdk: Network.framework
+    info:
+      path: Estia/Info.plist
+      properties:
+        CFBundleDisplayName: ESTIA
+        CFBundleDevelopmentRegion: it
+        CFBundleLocalizations: [it, en]
+        UILaunchScreen: {}
+        UIAppFonts:
+          - Besley.ttf
+          - AtkinsonHyperlegibleNext.ttf
+          - AtkinsonHyperlegibleNext-Italic.ttf
+        CFBundleURLTypes:
+          - CFBundleURLName: org.estia.app
+            CFBundleURLSchemes: [estia]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.estia.app
+        TARGETED_DEVICE_FAMILY: "1"
+        # Il nucleo c'è solo per arm64: telefono e simulatore su Apple Silicon.
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+        ENABLE_USER_SCRIPT_SANDBOXING: YES

@@ -20,6 +20,10 @@ pub enum ErroreNucleo {
     /// La Casa non risponde, o ha chiuso.
     #[error("rete: {0}")]
     Rete(String),
+    /// La Casa ha chiuso l'ingresso: codice scaduto, già usato o sbagliato.
+    /// Non dice quale dei tre, perché la Casa non lo dice.
+    #[error("codice non accettato")]
+    CodiceNonAccettato,
     /// Il dispositivo non è ancora entrato in una Casa.
     #[error("nessuna Casa")]
     NessunaCasa,

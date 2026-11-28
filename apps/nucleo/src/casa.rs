@@ -106,7 +106,16 @@ impl Collegamento {
             .rete
             .entra(&collegamento, etichetta.trim())
             .await
-            .map_err(|e| rete(format!("{e:#}")))?;
+            .map_err(|e| {
+                // `Rete::entra` chiama così ogni rifiuto della Casa, e
+                // altrimenti è la rete che non arriva.
+                let testo = format!("{e:#}");
+                if testo.contains("codice non accettato") {
+                    ErroreNucleo::CodiceNonAccettato
+                } else {
+                    rete(testo)
+                }
+            })?;
         let byte = serde_json::to_vec(&casa).map_err(rete)?;
         self.deposito.scrivi(NOME_CASA.into(), byte)?;
         self.rete.chiudi().await;

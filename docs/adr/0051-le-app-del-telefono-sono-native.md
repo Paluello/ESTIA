@@ -31,7 +31,7 @@ Il proprietario ha scelto la strada nativa sapendo il costo: due interfacce inve
 
    La prova di S7 diventa un **test in CI**: ogni modifica a `apps/web/src/mls` o al nucleo la rifà.
 
-5. **Una lingua sola per le frasi.** Le app native leggono `packages/lingue`: un passo di build genera il catalogo di iOS (`.xcstrings`) e quello di Android (`strings.xml`) dalla stessa tabella. Una frase senza traduzione fa fallire la build, come oggi fa il lint sul web.
+5. **Una lingua sola per le frasi.** Le app native leggono le tabelle di `packages/lingue` così come sono: la build le copia nell'app, e le regole di lettura (lingua scelta, inglese di riserva, segnaposto) sono le stesse del web. Un controllo in CI fallisce se l'app chiede una chiave che la tabella non ha, come oggi fa il lint sul web.
 6. **I colori, i caratteri e le misure vengono da un posto solo**: i token dello studio dell'interfaccia, generati per CSS, Swift e Kotlin.
 7. **Su CI si costruiscono tutte e due**: l'app iPhone per il simulatore su un runner macOS, l'APK Android firmato nella pre-release `app-anteprima`, come oggi. La firma per TestFlight e Play arriva con gli account.
 8. **L'APK Tauri resta l'anteprima Android** finché l'app in Compose non fa almeno ingresso e messaggi; poi la sostituisce nella stessa pre-release.

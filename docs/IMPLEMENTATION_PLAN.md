@@ -783,6 +783,7 @@ Questo paragrafo resta qui perché è la prova su cui poggiano regole che oggi s
 - [x] Il nucleo Rust (`apps/nucleo`): MLS con OpenMLS, stato nel deposito dell'app, autenticazione delle foglie contro il registro, legami Swift e Kotlin con UniFFI (2026-11-28).
 - [x] Il filo verso la Casa nel nucleo (iroh, dal lato Rust di `apps/app`), con una Casa finta in rete locale nei test (2026-11-28).
 - [ ] L'app del PC usa `apps/nucleo` invece della copia di `filo.rs` e `rete.rs`.
+- [ ] L'app iPhone in SwiftUI (`apps/ios`): ingresso con il QR, bacheca della Casa, profilo; build per il simulatore in CI.
 
 **Aggiornamento del 2026-10-14: le lingue.** [ADR 0046](adr/0046-le-lingue-di-estia.md), **Accepted** il 2026-10-15. ESTIA esce almeno in inglese e in italiano, e chiunque può aggiungere una lingua riempiendo una tabella. L'istanza manda codici d'errore, il client sceglie la frase, ogni membro sceglie la propria lingua, e `install.sh` chiede quella della Casa. Non è una precondizione delle app, ma va fatta **prima di scrivere l'app**: altrimenti le frasi si estraggono da due client invece che da uno.
 

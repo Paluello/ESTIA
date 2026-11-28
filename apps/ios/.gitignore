@@ -1,0 +1,5 @@
+Generato/
+Estia.xcodeproj/
+Estia/Info.plist
+Estia/Risorse/Frasi/*.json
+build/

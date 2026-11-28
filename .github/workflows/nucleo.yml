@@ -116,6 +116,8 @@ jobs:
 
       - name: Librerie per iPhone e simulatore
         working-directory: apps/nucleo
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         run: |
           cargo build --locked --lib --release --target aarch64-apple-ios
           cargo build --locked --lib --release --target aarch64-apple-ios-sim
