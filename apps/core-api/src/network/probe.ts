@@ -31,6 +31,19 @@ export const PROBE_ALPN = "estia/prova-rete/0";
 
 const NONCE_BYTES = 16;
 
+/**
+ * How long one echo may take, and how many may be in flight. Anybody can dial
+ * this ALPN without being connected, so a connection that never opens a stream
+ * must not stay open for ever (ADR 0020 §2.2): an echo takes one round trip,
+ * not seconds.
+ */
+export interface ProbeLimits {
+  timeoutMs: number;
+  concurrent: number;
+}
+
+const DEFAULT_PROBE_LIMITS: ProbeLimits = { concurrent: 32, timeoutMs: 10_000 };
+
 export type NetworkProbeState = "off" | "unavailable" | "ready";
 
 export interface NetworkProbeReport {
@@ -80,8 +93,12 @@ export class NetworkProbe implements AlpnService {
   #mode: ProbeMode = "off";
   #editable = true;
 
-  public constructor(endpoint: InstanceEndpoint) {
+  readonly #limits: ProbeLimits;
+  #inFlight = 0;
+
+  public constructor(endpoint: InstanceEndpoint, limits: Partial<ProbeLimits> = {}) {
     this.#endpoint = endpoint;
+    this.#limits = { ...DEFAULT_PROBE_LIMITS, ...limits };
   }
 
   /** Starts, stops or restarts the shared endpoint to match `mode`. Never throws. */
@@ -100,11 +117,37 @@ export class NetworkProbe implements AlpnService {
 
   /** Echoes whatever it is sent, so the other side can measure a round trip. */
   public async serve(connection: IrohConnection): Promise<void> {
-    const stream = await connection.acceptBi();
-    const received = await stream.recv.readToEnd(NONCE_BYTES);
+    if (this.#inFlight >= this.#limits.concurrent) {
+      connection.close(0n, []);
+      return;
+    }
 
-    await stream.send.writeAll(received);
-    await stream.send.finish();
+    this.#inFlight += 1;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const expired = new Promise<"scaduta">((resolve) => {
+        timer = setTimeout(() => resolve("scaduta"), this.#limits.timeoutMs);
+      });
+      const echo = (async (): Promise<"fatta"> => {
+        const stream = await connection.acceptBi();
+        const received = await stream.recv.readToEnd(NONCE_BYTES);
+
+        await stream.send.writeAll(received);
+        await stream.send.finish();
+
+        return "fatta";
+      })();
+
+      echo.catch(() => undefined);
+
+      if ((await Promise.race([echo, expired])) === "scaduta") {
+        connection.close(0n, []);
+      }
+    } finally {
+      clearTimeout(timer);
+      this.#inFlight -= 1;
+    }
   }
 
   public report(): NetworkProbeReport {

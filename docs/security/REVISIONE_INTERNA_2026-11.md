@@ -34,6 +34,7 @@ Ogni rilievo «alto» è stato riprodotto prima di correggerlo. Ogni correzione 
 | Bassa   | Federazione | Allo scadere del tempo una richiesta in uscita lasciava aperta la connessione                                                   | [#44](https://github.com/Paluello/ESTIA/pull/44) |
 | Bassa   | Media       | Più caricamenti inviati insieme superavano la quota di spazio                                                                   | [#45](https://github.com/Paluello/ESTIA/pull/45) |
 | Bassa   | Profili     | Nella ricerca dei membri `_` e `%` valevano «qualunque carattere»                                                               | [#45](https://github.com/Paluello/ESTIA/pull/45) |
+| Bassa   | Federazione | La prova di rete accettava connessioni senza tetto né tempo massimo, anche da chi non è collegato                               | [#46](https://github.com/Paluello/ESTIA/pull/46) |
 | Bassa   | Operazioni  | Il ripristino da root seguiva link già presenti e aveva tutte le capability                                                     | [#19](https://github.com/Paluello/ESTIA/pull/19) |
 | Bassa   | CI          | I workflow di verifica non limitavano i permessi del token                                                                      | [#14](https://github.com/Paluello/ESTIA/pull/14) |
 
