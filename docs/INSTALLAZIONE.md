@@ -671,4 +671,4 @@ Detto qui perché nessuna interfaccia deve suggerire una protezione che non c'è
 
 **Chi amministra vede tutto ciò che l'istanza conserva.** È la conseguenza dell'auto-ospitalità, non un difetto da nascondere.
 
-**Il feed locale è leggibile dal server che lo serve**, per scelta: è la bacheca di chi condivide l'istanza, non una chat privata. I messaggi privati non esistono ancora, e quando esisteranno saranno cifrati end-to-end o non esisteranno affatto ([ADR 0006](adr/0006-messaggi-privati-end-to-end-o-niente.md)).
+**Il feed locale è leggibile dal server che lo serve**, per scelta: è la bacheca di chi condivide l'istanza, non una chat privata. I messaggi privati invece sono cifrati end-to-end ([ADR 0006](adr/0006-messaggi-privati-end-to-end-o-niente.md)): l'istanza ne vede i partecipanti e gli orari, non il contenuto.

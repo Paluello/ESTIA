@@ -355,7 +355,14 @@ export class BachecheServite {
 
     const ownerId = [...autori.keys()][0]!;
     const variant = input.variante === "miniatura" ? "thumbnail" : "original";
-    const letto = await this.#media.readOwnedBy(input.id, ownerId, variant);
+    // La foto segue il suo post: se il post non si serve fuori (solo in casa,
+    // nascosto, cancellato) non si serve nemmeno lei, anche a chi ha l'id
+    // (revisione interna, 2026-11-27).
+    const letto = await this.#media.readOwnedBy(input.id, ownerId, variant, (postId) => {
+      const post = this.#posts.boardPost(postId);
+
+      return post !== undefined && post.authorId === ownerId;
+    });
 
     if (letto === undefined) {
       return undefined;

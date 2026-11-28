@@ -394,6 +394,72 @@ describe("la bacheca servita a un'altra istanza", () => {
     });
   });
 
+  /**
+   * Revisione interna, 2026-11-27: la foto controllava solo l'autore, non il
+   * suo post. Chi aveva l'id di una foto di un post solo per la casa, o
+   * nascosto, la riceveva lo stesso.
+   */
+  it("una foto segue il suo post: se il post resta in casa, resta anche lei", async () => {
+    await dueCase(async (qua, la) => {
+      const lucia = qua.abita("lucia");
+      const marco = la.abita("marco");
+      const inCasa = la.scrive(marco, "Solo per Via Roma", OGGI, "local");
+      const fuori = la.scrive(marco, "Per chi mi segue", OGGI);
+      const postDi = new Map([
+        ["foto-in-casa", inCasa],
+        ["foto-fuori", fuori],
+      ]);
+      const bytes = new Uint8Array([1, 2, 3]);
+
+      const conFoto = new BachecheServite({
+        collegata: () => true,
+        comments: la.commentRepository,
+        commenti: la.commentiRemoti,
+        cuori: la.cuori,
+        follows: la.follows,
+        media: {
+          attachToPost: () => undefined,
+          imagesFor: () => new Map(),
+          imagesForWire: () => new Map(),
+          readOwnedBy: async (id, ownerId, _variante, postServito) => {
+            const post = postDi.get(id);
+
+            if (post === undefined || ownerId !== marco.id || postServito?.(post) === false) {
+              return undefined;
+            }
+
+            return { byteSize: bytes.byteLength, bytes, mediaType: "image/webp" };
+          },
+          releasePost: async () => undefined,
+        },
+        posts: la.posts,
+        profiles: la.profiles,
+      });
+
+      qua.collega(la);
+      await qua.seguire.follow(lucia.id, "lucia", {
+        instanceKey: "chiave-di-la",
+        username: "marco",
+      });
+      const prova = qua.follows.listFollowing(lucia.id)[0]?.grant ?? "";
+      const chiedi = (id: string): ReturnType<BachecheServite["immagine"]> =>
+        conFoto.immagine({
+          chi: { nome: "marco", prova },
+          id,
+          instanceKey: "chiave-di-qua",
+          maxBytes: 1024,
+          variante: "miniatura",
+        });
+
+      expect(await chiedi("foto-fuori")).toEqual({ bytes, mediaType: "image/webp" });
+      expect(await chiedi("foto-in-casa")).toBeUndefined();
+
+      // Nascosto da chi modera: la foto sparisce con lui.
+      la.posts.setHidden(fuori, OGGI, marco.id);
+      expect(await chiedi("foto-fuori")).toBeUndefined();
+    });
+  });
+
   it("non fa uscire di casa un post dell'istanza, mai e con nessuna prova", async () => {
     await dueCase(async (qua, la) => {
       const lucia = qua.abita("lucia");

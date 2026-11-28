@@ -251,6 +251,7 @@ export class MediaService {
     id: string,
     ownerId: string,
     variant: "original" | "thumbnail",
+    postServito: (postId: string) => boolean = () => true,
   ): Promise<StoredMedia | undefined> {
     const record = this.repository.find(id);
 
@@ -258,7 +259,8 @@ export class MediaService {
       record === undefined ||
       record.postId === null ||
       record.deletedAt !== null ||
-      record.ownerId !== ownerId
+      record.ownerId !== ownerId ||
+      !postServito(record.postId)
     ) {
       return undefined;
     }
