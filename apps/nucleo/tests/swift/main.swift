@@ -39,6 +39,26 @@ default:
     controlla(false, "atteso un messaggio")
 }
 
+// L'archivio: la catena nasce con chi crea, e chi entra la riceve dal mazzo.
+// L'interfaccia porta soltanto buste: nessuna chiave passa di qui.
+let quando = "2026-11-28T10:00:00.000Z"
+controlla(anna.haArchivio(conversazione: "c"), "anna, che ha creato, ha la catena")
+controlla(!bruno.haArchivio(conversazione: "c"), "bruno non ha ancora aperto il mazzo")
+controlla(try bruno.mazzoAvvolto(conversazione: "c") == nil, "chi non conosce il mazzo non lo riavvolge")
+let mazzo = try anna.mazzoAvvolto(conversazione: "c")!
+controlla(try bruno.apriMazzo(conversazione: "c", avvolto: mazzo), "bruno apre il mazzo di anna")
+
+let voce = try anna.archivia(conversazione: "c", testo: "dall'archivio", id: "m-1", creatoIl: quando)
+controlla(voce.chiaveN == 1, "la prima chiave della catena")
+let riletta = bruno.rileggi(
+    conversazione: "c", voce: voce,
+    dichiarato: Dichiarato(id: "m-1", mittente: "anna@casa", creatoIl: quando))
+controlla(riletta?.testo == "dall'archivio" && riletta?.legata == true, "bruno rilegge la voce di anna")
+let falsa = bruno.rileggi(
+    conversazione: "c", voce: voce,
+    dichiarato: Dichiarato(id: "m-1", mittente: "bruno@casa", creatoIl: quando))
+controlla(falsa == nil, "con un altro mittente la voce non si apre")
+
 do {
     let estraneo = try Dispositivo.apri(membro: "carla@casa", deposito: DepositoInMemoria(), registro: registro)
     _ = try anna.aggiungi(conversazione: "c", pacchetto: try estraneo.nuoviPacchetti(quanti: 1)[0])

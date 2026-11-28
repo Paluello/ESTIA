@@ -1,7 +1,8 @@
 name: nucleo
 
 # Il nucleo Rust delle app native (apps/nucleo, ADR 0051) e la prova che il suo
-# MLS e quello del web stanno nella stessa conversazione (S7).
+# MLS e quello del web stanno nella stessa conversazione (S7), e che leggono e
+# scrivono lo stesso archivio (infra/prova-archivio).
 
 on:
   push:
@@ -12,6 +13,8 @@ on:
       - "apps/web/package.json"
       - "patches/**"
       - "infra/spike-mls/**"
+      - "infra/prova-archivio/**"
+      - "packages/contracts/src/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/nucleo.yml"
   pull_request:
@@ -21,6 +24,8 @@ on:
       - "apps/web/package.json"
       - "patches/**"
       - "infra/spike-mls/**"
+      - "infra/prova-archivio/**"
+      - "packages/contracts/src/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/nucleo.yml"
   workflow_dispatch:
@@ -86,6 +91,11 @@ jobs:
         run: |
           cargo build --locked --manifest-path infra/spike-mls/ponte/Cargo.toml
           node infra/spike-mls/prova.mjs
+
+      - name: L'archivio, fra il nucleo e il client web
+        run: |
+          cargo build --locked --manifest-path apps/nucleo/Cargo.toml --example ponte_archivio
+          node infra/prova-archivio/prova.mjs
 
   apple:
     runs-on: macos-latest

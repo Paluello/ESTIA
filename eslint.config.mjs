@@ -53,12 +53,14 @@ export default tseslint.config(
     },
   },
   {
-    // Gli script di build dell'app e il pilota dello spike S7 girano in Node.
+    // Gli script di build dell'app e i piloti delle prove fra nucleo e web
+    // (S7, l'archivio) girano in Node.
     files: [
       "apps/app/scripts/**/*.mjs",
       "apps/ios/scripts/**/*.mjs",
       "apps/android/scripts/**/*.mjs",
       "infra/spike-mls/**/*.mjs",
+      "infra/prova-archivio/**/*.mjs",
     ],
     languageOptions: {
       globals: globals.node,

@@ -1018,7 +1018,10 @@ dependencies = [
 name = "estia-nucleo"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
  "iroh",
  "iroh-tickets",
  "openmls",
@@ -1031,6 +1034,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]
