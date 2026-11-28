@@ -185,6 +185,117 @@ describe("turning backups on without a terminal", () => {
   });
 });
 
+/**
+ * Internal review, 2026-11-27: an admin session alone could point the backups
+ * at a key of its own, run one and download the database with the instance
+ * private key inside. Changing a key already set now asks for the password.
+ */
+describe("changing a key that is already set", () => {
+  async function conChiave(
+    use: (app: FastifyInstance, token: string) => Promise<void>,
+  ): Promise<void> {
+    await withAdmin(async (app, token) => {
+      const keys = (
+        await app.inject({
+          headers: auth(token),
+          method: "POST",
+          url: "/api/v1/admin/backups/keys",
+        })
+      ).json() as { publicKey: string };
+
+      // The first key needs nothing more than the session.
+      const first = await app.inject({
+        headers: auth(token),
+        method: "PUT",
+        payload: { intervalHours: 24, keep: 7, publicKey: keys.publicKey },
+        url: "/api/v1/admin/backups/settings",
+      });
+      expect(first.statusCode).toBe(200);
+
+      await use(app, token);
+    });
+  }
+
+  it("refuses without the password, or with the wrong one, and keeps the old key", async () => {
+    await conChiave(async (app, token) => {
+      const before = (
+        await app.inject({ headers: auth(token), url: "/api/v1/admin/backups/settings" })
+      ).json().publicKey as string;
+      const other = (
+        await app.inject({
+          headers: auth(token),
+          method: "POST",
+          url: "/api/v1/admin/backups/keys",
+        })
+      ).json() as { publicKey: string };
+
+      for (const extra of [{}, { password: "non-la-mia" }]) {
+        const response = await app.inject({
+          headers: auth(token),
+          method: "PUT",
+          payload: { intervalHours: 24, keep: 7, publicKey: other.publicKey, ...extra },
+          url: "/api/v1/admin/backups/settings",
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().code).toBe("backup_key_change_needs_password");
+      }
+
+      // Turning backups off is a change of key too.
+      const off = await app.inject({
+        headers: auth(token),
+        method: "PUT",
+        payload: { intervalHours: 24, keep: 7, publicKey: "" },
+        url: "/api/v1/admin/backups/settings",
+      });
+      expect(off.statusCode).toBe(403);
+
+      expect(
+        (await app.inject({ headers: auth(token), url: "/api/v1/admin/backups/settings" })).json()
+          .publicKey,
+      ).toBe(before);
+    });
+  });
+
+  it("accepts the change with the password, and other settings without it", async () => {
+    await conChiave(async (app, token) => {
+      const same = (
+        await app.inject({ headers: auth(token), url: "/api/v1/admin/backups/settings" })
+      ).json().publicKey as string;
+
+      const interval = await app.inject({
+        headers: auth(token),
+        method: "PUT",
+        payload: { intervalHours: 6, keep: 3, publicKey: same },
+        url: "/api/v1/admin/backups/settings",
+      });
+      expect(interval.statusCode).toBe(200);
+
+      const other = (
+        await app.inject({
+          headers: auth(token),
+          method: "POST",
+          url: "/api/v1/admin/backups/keys",
+        })
+      ).json() as { publicKey: string };
+      const changed = await app.inject({
+        headers: auth(token),
+        method: "PUT",
+        payload: {
+          intervalHours: 6,
+          keep: 3,
+          password: ADMIN.password,
+          publicKey: other.publicKey,
+        },
+        url: "/api/v1/admin/backups/settings",
+      });
+
+      expect(changed.statusCode).toBe(200);
+      expect(changed.json().publicKey).toBe(other.publicKey);
+    });
+  });
+});
+
 describe("when the environment already carries the configuration", () => {
   const ENVIRONMENT = {
     ESTIA_BACKUP_DIR: "/tmp/estia-backup-di-prova",

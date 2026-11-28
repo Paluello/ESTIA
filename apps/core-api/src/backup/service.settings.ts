@@ -79,7 +79,16 @@ export class BackupSettingsService {
     return createBackupKeyPair();
   }
 
-  public update(settings: UpdateBackupSettings): BackupSettingsView {
+  /**
+   * `passwordConfirmed` is the caller's password, checked again: required to
+   * change or remove a key that is already set (internal review, 2026-11-27).
+   * Without it a stolen admin session could swap in its own key, run a backup
+   * and download the database with the instance private key inside.
+   */
+  public async update(
+    settings: UpdateBackupSettings,
+    passwordConfirmed: (password: string) => Promise<boolean>,
+  ): Promise<BackupSettingsView> {
     if (!this.view().editable) {
       throw new DomainError("backup_settings_from_environment", 409);
     }
@@ -93,6 +102,16 @@ export class BackupSettingsService {
 
     if (publicKey !== "" && !publicKey.startsWith("age1")) {
       throw new DomainError("backup_public_key_invalid", 400);
+    }
+
+    const current = readStoredSettings(this.options.repository).publicKey ?? "";
+
+    if (current !== "" && publicKey !== current) {
+      const password = settings.password ?? "";
+
+      if (password === "" || !(await passwordConfirmed(password))) {
+        throw new DomainError("backup_key_change_needs_password", 403);
+      }
     }
 
     writeStoredSettings(

@@ -1164,6 +1164,12 @@ export interface UpdateBackupSettings {
   publicKey?: string;
   intervalHours: number;
   keep: number;
+  /**
+   * The administrator's own password, needed to change or remove a key that
+   * is already set: whoever holds a session alone must not be able to point
+   * the archives — database and instance key — at a key of theirs.
+   */
+  password?: string;
 }
 
 export const updateBackupSettingsSchema = {
@@ -1174,6 +1180,7 @@ export const updateBackupSettingsSchema = {
     publicKey: { type: "string", maxLength: 200 },
     intervalHours: { type: "integer", minimum: 1, maximum: 720 },
     keep: { type: "integer", minimum: 1, maximum: 365 },
+    password: { type: "string", maxLength: 1024 },
   },
 } as const;
 
