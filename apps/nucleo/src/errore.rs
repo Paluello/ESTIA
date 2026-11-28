@@ -17,6 +17,12 @@ pub enum ErroreNucleo {
     /// Non c'è una conversazione con questo nome su questo dispositivo.
     #[error("conversazione sconosciuta: {0}")]
     ConversazioneSconosciuta(String),
+    /// La Casa non risponde, o ha chiuso.
+    #[error("rete: {0}")]
+    Rete(String),
+    /// Il dispositivo non è ancora entrato in una Casa.
+    #[error("nessuna Casa")]
+    NessunaCasa,
     /// OpenMLS ha rifiutato l'operazione.
     #[error("mls: {0}")]
     Mls(String),

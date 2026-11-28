@@ -109,7 +109,9 @@ jobs:
             -Xcc -fmodule-map-file=target/legami/swift/EstiaNucleoFFI.modulemap \
             -I target/legami/swift \
             target/legami/swift/EstiaNucleo.swift tests/swift/main.swift \
-            target/debug/libestia_nucleo.a -o target/prova-swift
+            target/debug/libestia_nucleo.a \
+            -framework SystemConfiguration -framework Security -framework CoreFoundation \
+            -o target/prova-swift
           ./target/prova-swift
 
       - name: Librerie per iPhone e simulatore

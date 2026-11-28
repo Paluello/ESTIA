@@ -6,12 +6,17 @@
 //! mai una chiave.
 //!
 //! Il filo verso la Casa (iroh, `estia/ingresso/1` e `estia/dispositivo/1`)
-//! arriva qui da `apps/app/src-tauri` nel passo successivo.
+//! è in [`casa`]. `filo.rs` e `rete.rs` sono per ora una copia di quelli di
+//! `apps/app/src-tauri`: l'app del PC passerà a usare questo crate, e allora
+//! la copia sparisce.
 
 uniffi::setup_scaffolding!();
 
+pub mod casa;
 pub mod deposito;
 pub mod errore;
+pub mod filo;
 pub mod mls;
+pub mod rete;
 
 pub use errore::ErroreNucleo;
