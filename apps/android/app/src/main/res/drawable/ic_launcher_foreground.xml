@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Una casa piena, nella zona sicura di 66 dp al centro. -->
+    <path
+        android:fillColor="@color/sopra_accento"
+        android:pathData="M54,33 L78,53 L72,53 L72,75 L60,75 L60,62 L48,62 L48,75 L36,75 L36,53 L30,53 Z" />
+</vector>
