@@ -73,6 +73,19 @@ export interface Deposito {
   leggiCursore: (conversazioneId: string) => Promise<string | undefined>;
   scriviCursore: (conversazioneId: string, cursore: string) => Promise<void>;
   /**
+   * Il mazzo d'archivio **com'è avvolto**, sotto la serratura dell'epoch dello
+   * stato che gli sta accanto: lo stesso blob che si deposita presso la casa
+   * che ordina, tenuto anche qui.
+   *
+   * Serve a una cosa sola: se quella casa è **persa** il mazzo se ne va con
+   * lei, e il gruppo di prima si deve poter leggere ancora «con le chiavi che
+   * ogni client ha già» ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md)
+   * §3, «Il trasloco»). Non è una chiave in chiaro: si apre soltanto con lo
+   * stato del gruppo, che sta già qui.
+   */
+  leggiMazzo: (conversazioneId: string) => Promise<string | undefined>;
+  scriviMazzo: (conversazioneId: string, mazzo: string) => Promise<void>;
+  /**
    * Via tutto, al logout.
    *
    * Lo stato di un gruppo è materiale di chi era entrato: lasciarlo lì
@@ -194,6 +207,26 @@ export interface Contesto {
 
 async function salva(ctx: Contesto, sessione: Sessione): Promise<void> {
   await ctx.deposito.scrivi(sessione.conversazioneId, encodeGroupState(sessione.stato));
+  await ricordaMazzo(ctx, sessione);
+}
+
+/**
+ * Tiene su questo dispositivo il mazzo avvolto sotto l'epoch in cui si è.
+ *
+ * Va di pari passo con lo stato: uno stato andato avanti senza il suo mazzo
+ * avrebbe accanto un mazzo che non apre più. Senza catena non si scrive
+ * niente — non c'è niente da ricordare, e quello di prima non lo si sostituisce
+ * con un vuoto.
+ */
+async function ricordaMazzo(ctx: Contesto, sessione: Sessione): Promise<void> {
+  if (sessione.catena === undefined || sessione.tolto === true) {
+    return;
+  }
+
+  await ctx.deposito.scriviMazzo(
+    sessione.conversazioneId,
+    avvolgi(sessione.catena, await serraturaArchivio(sessione.stato)),
+  );
 }
 
 async function ripristina(
@@ -369,12 +402,51 @@ export async function riprendi(
   const prima = await catenaDi(ctx, stato, conversazioneId);
   const sincronizzata = await sincronizza(ctx, { catena: prima, conversazioneId, stato });
 
-  return sincronizzata.catena !== undefined || sincronizzata.tolto === true
-    ? sincronizzata
-    : {
-        ...sincronizzata,
-        catena: await catenaDi(ctx, sincronizzata.stato, conversazioneId),
-      };
+  const ripresa =
+    sincronizzata.catena !== undefined || sincronizzata.tolto === true
+      ? sincronizzata
+      : {
+          ...sincronizzata,
+          catena: await catenaDi(ctx, sincronizzata.stato, conversazioneId),
+        };
+
+  // Chi ha aperto il mazzo adesso, senza che lo stato cambiasse, lo ricorda
+  // qui: è il solo passaggio in cui la catena arriva senza un salvataggio.
+  await ricordaMazzo(ctx, ripresa);
+  return ripresa;
+}
+
+/**
+ * Apre un gruppo **congelato**: quello che un trasloco ha lasciato in sola
+ * lettura ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md) §3).
+ *
+ * La casa che lo ordinava è persa, e con lei la coda, il punto di rientro e il
+ * mazzo: qui non si chiede niente a nessuno. Si riprende lo stato che questo
+ * dispositivo aveva e si apre il mazzo che aveva tenuto. `undefined` se il
+ * dispositivo nel gruppo non c'era: chi arriva dopo vede il gruppo di prima
+ * come lo vede un estraneo, cioè non lo vede — è il secondo dei due costi.
+ */
+export async function riprendiCongelata(
+  ctx: Contesto,
+  conversazioneId: string,
+): Promise<Sessione | undefined> {
+  const stato = await ripristina(ctx, conversazioneId);
+  if (stato === undefined) {
+    return undefined;
+  }
+
+  const avvolto = await ctx.deposito.leggiMazzo(conversazioneId);
+  let catena: Catena | undefined;
+  if (avvolto !== undefined) {
+    try {
+      catena = svolgi(avvolto, await serraturaArchivio(stato));
+    } catch {
+      // Un mazzo che non si apre non si indovina: le righe diranno che non si aprono.
+      catena = undefined;
+    }
+  }
+
+  return { catena, conversazioneId, stato };
 }
 
 /** Chi entra: la sua chiave d'ingresso, e l'id con cui la conversazione lo nomina. */

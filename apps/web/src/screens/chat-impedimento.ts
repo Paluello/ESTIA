@@ -73,7 +73,13 @@ export type Impedimento =
    * Chi ha una foglia apre il mazzo: scrivere sarebbe scrivere anche a lui,
    * quindi il campo si spegne e **si dice chi è**.
    */
-  | { kind: "presenza-estranea"; nomi: string };
+  | { kind: "presenza-estranea"; nomi: string }
+  /**
+   * Il gruppo è stato traslocato ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md)
+   * §3): la casa che lo gestiva è persa, e qui si legge soltanto. Non è
+   * un'attesa — non torna — e la mossa è aprire il gruppo che lo continua.
+   */
+  | { kind: "gruppo-congelato" };
 
 export interface Spiegazione {
   titolo: string;
@@ -107,6 +113,8 @@ export function impedimentoDi(condizioni: {
   tolto?: boolean;
   /** Chi ha una foglia senza essere fra i membri, già detto con il suo nome. */
   estranei?: readonly string[];
+  /** Il gruppo è congelato: è stato traslocato, e qui si legge soltanto. */
+  congelata?: boolean;
 }): Impedimento {
   if (!condizioni.crittografiaDisponibile) {
     return { kind: "connessione-non-sicura" };
@@ -120,6 +128,12 @@ export function impedimentoDi(condizioni: {
       condizioni.erroreChiave.code === "rimosso_dal_gruppo")
   ) {
     return { kind: "tolto-dal-gruppo" };
+  }
+
+  // Prima della casa che non risponde e dell'invito che non arriva: di un
+  // gruppo congelato sono vere tutte e due, e nessuna delle due è da aspettare.
+  if (condizioni.congelata === true) {
+    return { kind: "gruppo-congelato" };
   }
 
   if (condizioni.erroreChiave instanceof ApiError) {
@@ -223,6 +237,15 @@ export function spiegazioneDi(impedimento: Impedimento): Spiegazione | undefined
       segnaposto: t("chat.tolto.segnaposto"),
       testo: t("chat.tolto.testo"),
       titolo: t("chat.tolto.titolo"),
+    };
+  }
+
+  if (impedimento.kind === "gruppo-congelato") {
+    return {
+      cosaFare: t("chat.congelato.cosa_fare"),
+      segnaposto: t("chat.congelato.segnaposto"),
+      testo: t("chat.congelato.testo"),
+      titolo: t("chat.congelato.titolo"),
     };
   }
 

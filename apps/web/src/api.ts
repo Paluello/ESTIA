@@ -64,6 +64,7 @@ import type {
   ChiaviDiFirmaView,
   ConversazioneView,
   CreaGruppoRequest,
+  TraslocaGruppoRequest,
   CreateConversazioneRequest,
   MembroGruppoInput,
   RuoloGruppo,
@@ -782,6 +783,18 @@ export const api = {
       `/api/v1/conversazioni/${encodeURIComponent(id)}/membri/${encodeURIComponent(membroId)}/ruolo`,
       { body: { ruolo }, method: "PUT", token },
     ),
+
+  /** Il trasloco (ADR 0042 §3): risponde con il gruppo che continua questo. */
+  traslocaGruppo: (
+    token: string,
+    id: string,
+    body: TraslocaGruppoRequest,
+  ): Promise<{ conversazione: ConversazioneView }> =>
+    request(`/api/v1/conversazioni/${encodeURIComponent(id)}/trasloco`, {
+      body,
+      method: "POST",
+      token,
+    }),
 
   esciDalGruppo: (token: string, id: string): Promise<void> =>
     request(`/api/v1/conversazioni/${encodeURIComponent(id)}/uscita`, { method: "POST", token }),

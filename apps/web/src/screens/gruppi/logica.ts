@@ -36,8 +36,18 @@ export const nomeDi = (autore: Pick<AuthorView, "displayName" | "username">): st
 export const ruoloDi = (conv: Pick<ConversazioneView, "ruoli">, id: string): RuoloGruppo =>
   conv.ruoli?.[id] ?? "membro";
 
-/** Chi aggiunge e toglie: il creatore e gli amministratori. */
-export function gestisce(conv: Pick<ConversazioneView, "ruoli">, id: string): boolean {
+/**
+ * Chi aggiunge e toglie: il creatore e gli amministratori. In un gruppo
+ * congelato nessuno: la casa che lo ordinava è persa, e l'istanza rifiuta.
+ */
+export function gestisce(
+  conv: Pick<ConversazioneView, "ruoli" | "congelata">,
+  id: string,
+): boolean {
+  if (conv.congelata === true) {
+    return false;
+  }
+
   const ruolo = ruoloDi(conv, id);
   return ruolo === "creatore" || ruolo === "amministratore";
 }
@@ -47,7 +57,11 @@ export function gestisce(conv: Pick<ConversazioneView, "ruoli">, id: string): bo
  * amministra — un gruppo in cui nessuno può più nominare nessuno sarebbe un
  * vicolo cieco.
  */
-export function nomina(conv: Pick<ConversazioneView, "ruoli">, id: string): boolean {
+export function nomina(conv: Pick<ConversazioneView, "ruoli" | "congelata">, id: string): boolean {
+  if (conv.congelata === true) {
+    return false;
+  }
+
   const ruolo = ruoloDi(conv, id);
   const cEUnCreatore = Object.values(conv.ruoli ?? {}).includes("creatore");
   return ruolo === "creatore" || (!cEUnCreatore && ruolo === "amministratore");
@@ -55,7 +69,7 @@ export function nomina(conv: Pick<ConversazioneView, "ruoli">, id: string): bool
 
 /** Che cosa può fare chi guarda a una persona del gruppo. */
 export function gestiSu(
-  conv: Pick<ConversazioneView, "ruoli">,
+  conv: Pick<ConversazioneView, "ruoli" | "congelata">,
   ioId: string,
   bersaglioId: string,
 ): { togliere: boolean; nominare: boolean; revocare: boolean } {
@@ -156,8 +170,69 @@ export function assentiFra(
  * lui che l'evento parla.
  */
 export function nomeNellEvento(evento: Evento, conv: Gruppo, casa: string): string {
-  const trovato = conv.membri.find((m) => scriviIdentita(membroDi(m, casa)) === evento.chi);
+  return nomeDaIndirizzo(evento.chi, conv, casa);
+}
+
+/** Il nome di una persona detta per indirizzo, `username@casa`. */
+export function nomeDaIndirizzo(
+  indirizzo: string,
+  conv: Pick<ConversazioneView, "membri">,
+  casa: string,
+): string {
+  const trovato = conv.membri.find((m) => scriviIdentita(membroDi(m, casa)) === indirizzo);
   return trovato === undefined
-    ? (leggiIdentita(evento.chi)?.username ?? evento.chi)
+    ? (leggiIdentita(indirizzo)?.username ?? indirizzo)
     : nomeDi(trovato);
 }
+
+/* ------------------------- il trasloco (ADR 0042 §3) ------------------------- */
+
+/**
+ * Che cosa c'è da dire di un gruppo riguardo al trasloco, e che cosa da
+ * offrire. Tre cose possono essere vere, e la schermata le dice tutte:
+ *
+ * - `continua`: questo gruppo è un successore, e lo dichiara;
+ * - `successori`: questo gruppo è stato traslocato — una riga per ognuno, e
+ *   `mio` dice se chi guarda nel gruppo nuovo c'è;
+ * - `persa`: la casa che lo gestisce tace da oltre la soglia e nessuno l'ha
+ *   ancora traslocato. `puoi` è il gesto: solo allora, e solo a chi tocca.
+ */
+export interface StatoTrasloco {
+  continua?: NonNullable<ConversazioneView["continua"]> & { apribile: boolean };
+  congelato: boolean;
+  successori: { id: string; da: string; il: string; mio: boolean }[];
+  persa?: { dal: string; puoi: boolean };
+}
+
+export function statoTrasloco(
+  conv: Pick<
+    ConversazioneView,
+    "continua" | "congelata" | "successori" | "casaPersaDal" | "puoTraslocare"
+  >,
+  /** Gli id delle conversazioni di chi guarda. */
+  mie: ReadonlySet<string>,
+): StatoTrasloco {
+  const successori = (conv.successori ?? []).map((s) => ({ ...s, mio: mie.has(s.id) }));
+  const congelato = conv.congelata === true;
+
+  return {
+    congelato,
+    successori,
+    ...(conv.continua === undefined
+      ? {}
+      : { continua: { ...conv.continua, apribile: mie.has(conv.continua.conversazioneId) } }),
+    // Il gesto non si offre due volte dalla stessa casa: chi vede già un
+    // successore sceglie quello. Due traslochi restano possibili da due case,
+    // e allora si vedono tutti e due.
+    ...(conv.casaPersaDal === undefined || congelato || successori.length > 0
+      ? {}
+      : { persa: { dal: conv.casaPersaDal, puoi: conv.puoTraslocare === true } }),
+  };
+}
+
+/** C'è qualcosa da dire? Un gruppo qualunque non mostra niente. */
+export const haUnTrasloco = (stato: StatoTrasloco): boolean =>
+  stato.continua !== undefined ||
+  stato.congelato ||
+  stato.successori.length > 0 ||
+  stato.persa !== undefined;

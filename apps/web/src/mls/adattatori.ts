@@ -20,6 +20,8 @@ import type { Deposito, Istanza } from "./sessione.js";
 const DB = "estia_mls_v1";
 const STATI = "stati_gruppo";
 const CURSORI = "cursori_handshake";
+/** Il mazzo d'archivio com'è avvolto, per il giorno in cui la casa che lo tiene è persa. */
+const MAZZI = "mazzi_avvolti";
 /** L'identità del dispositivo e la sua scorta di `KeyPackage`. */
 const DISPOSITIVO = "dispositivo";
 
@@ -30,7 +32,7 @@ function apriDb(): Promise<IDBDatabase> {
       return;
     }
 
-    const richiesta = indexedDB.open(DB, 2);
+    const richiesta = indexedDB.open(DB, 3);
     richiesta.onupgradeneeded = () => {
       const db = richiesta.result;
       if (!db.objectStoreNames.contains(STATI)) {
@@ -41,6 +43,9 @@ function apriDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(DISPOSITIVO)) {
         db.createObjectStore(DISPOSITIVO);
+      }
+      if (!db.objectStoreNames.contains(MAZZI)) {
+        db.createObjectStore(MAZZI);
       }
     };
     richiesta.onsuccess = () => resolveDb(richiesta, risolvi);
@@ -108,11 +113,14 @@ function scriviIn(store: string, chiave: string, valore: unknown): Promise<void>
 export const depositoIndexedDb: Deposito = {
   leggi: (conversazioneId) => leggiDa<Uint8Array>(STATI, conversazioneId),
   leggiCursore: (conversazioneId) => leggiDa<string>(CURSORI, conversazioneId),
+  leggiMazzo: (conversazioneId) => leggiDa<string>(MAZZI, conversazioneId),
   scrivi: (conversazioneId, stato) => scriviIn(STATI, conversazioneId, stato),
   scriviCursore: (conversazioneId, cursore) => scriviIn(CURSORI, conversazioneId, cursore),
+  scriviMazzo: (conversazioneId, mazzo) => scriviIn(MAZZI, conversazioneId, mazzo),
   svuota: async () => {
     await svuotaStore(STATI);
     await svuotaStore(CURSORI);
+    await svuotaStore(MAZZI);
   },
 };
 

@@ -194,3 +194,51 @@ describe("il giro completo che la schermata fa", () => {
     );
   });
 });
+
+describe("un gruppo congelato (ADR 0042 §3, «Il trasloco»)", () => {
+  /** La casa che ordinava è persa: la coda, il mazzo e il punto di rientro stavano lì. */
+  const senzaChiOrdina = (ctx: Contesto): Contesto => {
+    const persa = (): Promise<never> =>
+      Promise.reject(new Error("La casa che ordina non risponde"));
+    return {
+      ...ctx,
+      istanza: { ...ctx.istanza, handshakeDopo: persa, mazzo: persa, puntoDiRientro: persa },
+    };
+  };
+
+  it("si riapre con ciò che il dispositivo aveva tenuto, senza chiedere niente a chi lo ordinava", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+    const perAnna = await apriConversazione(anna, QUI, invitaBruno);
+    const perBruno = await apriConversazione(bruno, ALTROVE, nessunInvito);
+    if (perAnna.kind !== "pronta" || perBruno.kind !== "pronta") {
+      throw new Error("Le sessioni dovevano essere pronte");
+    }
+    await manda(anna, perAnna.sessione, { testo: "prima" }, "m1", "2026-08-26T10:00:00.000Z");
+
+    // Come dopo aver ricaricato la pagina: in mano c'è solo il deposito.
+    const dopo = senzaChiOrdina(bruno);
+    await expect(apriConversazione(dopo, ALTROVE, nessunInvito)).rejects.toThrow(
+      "La casa che ordina non risponde",
+    );
+
+    const riaperta = await apriConversazione(dopo, { ...ALTROVE, congelata: true }, nessunInvito);
+    if (riaperta.kind !== "pronta") {
+      throw new Error("Il gruppo congelato doveva riaprirsi");
+    }
+    expect(riaperta.sessione.catena).toEqual(perBruno.sessione.catena);
+
+    const letta = await leggi(dopo, riaperta.sessione, undefined, undefined, { congelata: true });
+    expect(letta.righe.map((r) => [r.stato, r.testo])).toEqual([["letta", "prima"]]);
+  });
+
+  it("un dispositivo che nel gruppo non c'era non lo apre, e non prova a entrarci", async () => {
+    const { anna, bruno, invitaBruno } = await dueCase();
+    await apriConversazione(anna, QUI, invitaBruno);
+
+    // Bruno non l'ha mai aperto da qui: un Welcome ci sarebbe, ma il gruppo è
+    // fermo e chi arriva dopo lo vede come lo vede un estraneo.
+    expect(
+      await apriConversazione(senzaChiOrdina(bruno), { ...ALTROVE, congelata: true }, nessunInvito),
+    ).toEqual({ kind: "in-attesa" });
+  });
+});

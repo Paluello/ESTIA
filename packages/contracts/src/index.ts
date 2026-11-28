@@ -2912,7 +2912,68 @@ export interface ConversazioneView {
    * fra i membri ([ADR 0052](../../../docs/adr/0052-l-archivio-dei-gruppi.md) §3).
    */
   rimossi?: string[];
+  /**
+   * Da quando la casa che ordina questo gruppo non risponde, se è **persa**:
+   * oltre la soglia di [ADR 0042](../../../docs/adr/0042-come-mls-attraversa.md)
+   * §3 «Il trasloco». Assente finché non lo è — un fine settimana di silenzio
+   * non è una scomparsa — e sempre assente in un gruppo che ordina questa casa.
+   */
+  casaPersaDal?: string;
+  /**
+   * Chi guarda può traslocare questo gruppo: la casa che lo ordina è persa, e
+   * lui lo amministra — o nessun amministratore ha una casa viva.
+   */
+  puoTraslocare?: boolean;
+  /**
+   * Il gruppo è congelato: qualcuno l'ha traslocato, e qui si legge soltanto.
+   * La cronologia delle case ancora vive si continua a visitare.
+   */
+  congelata?: boolean;
+  /** I gruppi che continuano questo. Più d'uno se due persone hanno traslocato. */
+  successori?: SuccessoreView[];
+  /** Questo gruppo ne continua un altro, e lo dichiara. */
+  continua?: ContinuaView;
 }
+
+/** Un gruppo nato da un trasloco, visto dal gruppo di prima. */
+export interface SuccessoreView {
+  /** L'id del successore. Chi non ci è entrato non lo trova fra le sue conversazioni. */
+  id: string;
+  /** Chi ha traslocato, come `username@casa`. */
+  da: string;
+  il: string;
+}
+
+/**
+ * Ciò che un successore dichiara di sé ([ADR 0042](../../../docs/adr/0042-come-mls-attraversa.md)
+ * §3 «Il trasloco», punto 4): quale gruppo continua, fin dove chi ha
+ * traslocato l'aveva visto, chi è stato e quando. Lo dice la casa di chi ha
+ * traslocato: è una dichiarazione firmata con un nome, non una prova.
+ */
+export interface ContinuaView {
+  conversazioneId: string;
+  /** Il nome che il gruppo di prima aveva. */
+  nome: string;
+  /** L'ultima epoch MLS che chi ha traslocato aveva visto nel gruppo di prima. */
+  epoch: number;
+  /** Chi ha traslocato, come `username@casa`. */
+  da: string;
+  il: string;
+  /** Da quando la casa che ordinava non rispondeva, per la casa di chi ha traslocato. */
+  casaPersaDal: string;
+}
+
+/** Il trasloco di un gruppo: l'ultima epoch che il dispositivo di chi trasloca ha visto. */
+export interface TraslocaGruppoRequest {
+  epoch: number;
+}
+
+export const traslocaGruppoRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["epoch"],
+  properties: { epoch: { type: "integer", minimum: 0 } },
+} as const;
 
 /**
  * I gruppi (M8). Le risposte del proprietario del 2026-09-17:
@@ -3024,6 +3085,31 @@ export const conversazioneViewSchema = {
       additionalProperties: { type: "string", enum: [...RUOLI_GRUPPO] },
     },
     rimossi: { type: "array", items: { type: "string" } },
+    casaPersaDal: { type: "string" },
+    puoTraslocare: { type: "boolean" },
+    congelata: { type: "boolean" },
+    successori: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "da", "il"],
+        properties: { id: { type: "string" }, da: { type: "string" }, il: { type: "string" } },
+      },
+    },
+    continua: {
+      type: "object",
+      additionalProperties: false,
+      required: ["conversazioneId", "nome", "epoch", "da", "il", "casaPersaDal"],
+      properties: {
+        conversazioneId: { type: "string" },
+        nome: { type: "string" },
+        epoch: { type: "integer", minimum: 0 },
+        da: { type: "string" },
+        il: { type: "string" },
+        casaPersaDal: { type: "string" },
+      },
+    },
   },
 } as const;
 

@@ -21,6 +21,7 @@ import {
   entra,
   invia,
   riprendi,
+  riprendiCongelata,
   rientraIn,
   sincronizza,
   togliFoglie,
@@ -110,12 +111,23 @@ export type Invito = () => Promise<Invitato | readonly Invitato[]>;
  *
  * `invito` si chiama solo nel caso 4, e può fallire: chi lo scrive sa dire
  * perché (nessun dispositivo, casa che non risponde), e la schermata lo dice.
+ *
+ * **Un gruppo congelato** (`congelata`, ADR 0042 §3 «Il trasloco») non fa
+ * nessuno di questi passi oltre il primo: la casa che lo ordinava è persa, e
+ * non c'è una coda da leggere né un gruppo da creare. Si riprende ciò che
+ * questo dispositivo aveva; se non aveva niente resta `in-attesa`, e la
+ * schermata dice che è congelato, non che un invito sta arrivando.
  */
 export async function apriConversazione(
   ctx: Contesto,
-  conversazione: { id: string; ordinataQui: boolean; creaQui?: boolean },
+  conversazione: { id: string; ordinataQui: boolean; creaQui?: boolean; congelata?: boolean },
   invito: Invito,
 ): Promise<Apertura> {
+  if (conversazione.congelata === true) {
+    const ferma = await riprendiCongelata(ctx, conversazione.id);
+    return ferma === undefined ? { kind: "in-attesa" } : { kind: "pronta", sessione: ferma };
+  }
+
   const ripresa = await riprendi(ctx, conversazione.id);
   if (ripresa !== undefined && ripresa.tolto !== true) {
     return { kind: "pronta", sessione: ripresa };
@@ -288,13 +300,27 @@ export interface Lettura {
 /**
  * Un giro completo: si applicano gli handshake arretrati, si riapre il mazzo se
  * nel frattempo qualcuno l'ha riavvolto, e si legge una pagina di cronologia.
+ *
+ * Di un gruppo **congelato** si legge la cronologia e basta: la coda stava
+ * nella casa persa, e l'albero non si tocca più.
  */
 export async function leggi(
   ctx: Contesto,
   sessione: Sessione,
   prima?: string,
   composizione?: Composizione,
+  opzioni: { congelata?: boolean } = {},
 ): Promise<Lettura> {
+  if (opzioni.congelata === true) {
+    const pagina = await cronologia(ctx, sessione, prima);
+    return {
+      nonRispondono: pagina.nonRispondono,
+      righe: pagina.righe.map(dallaCronologia),
+      sessione,
+      ...(pagina.prima === undefined ? {} : { prima: pagina.prima }),
+    };
+  }
+
   // Con la catena in mano basta applicare gli handshake: la catena non dipende
   // dall'epoch, e richiedere il mazzo a ogni giro sarebbe una domanda in più
   // verso la casa che ordina ogni volta che la schermata guarda. Senza catena

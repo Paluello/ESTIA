@@ -222,11 +222,13 @@ export interface DepositoFinto extends Deposito {
 export function depositoFinto(): DepositoFinto {
   const stati = new Map<string, Uint8Array>();
   const cursori = new Map<string, string>();
+  const mazzi = new Map<string, string>();
   let scritture = 0;
 
   return {
     leggi: (id) => Promise.resolve(stati.get(id)),
     leggiCursore: (id) => Promise.resolve(cursori.get(id)),
+    leggiMazzo: (id) => Promise.resolve(mazzi.get(id)),
     quanteScritture: () => scritture,
     scrivi(id, stato) {
       scritture += 1;
@@ -237,9 +239,14 @@ export function depositoFinto(): DepositoFinto {
       cursori.set(id, cursore);
       return Promise.resolve();
     },
+    scriviMazzo(id, mazzo) {
+      mazzi.set(id, mazzo);
+      return Promise.resolve();
+    },
     svuota() {
       stati.clear();
       cursori.clear();
+      mazzi.clear();
       return Promise.resolve();
     },
   };

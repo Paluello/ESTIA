@@ -1,9 +1,11 @@
 import {
   cambiaRuoloRequestSchema,
+  traslocaGruppoRequestSchema,
   conversazioneViewSchema,
   creaGruppoRequestSchema,
   membroGruppoInputSchema,
   type CambiaRuoloRequest,
+  type TraslocaGruppoRequest,
   type CreaGruppoRequest,
   type MembroGruppoInput,
   archivioPageSchema,
@@ -208,6 +210,29 @@ export function registerMessaggiRoutes(
         request.params.membro,
         request.body.ruolo,
       ),
+  );
+
+  /**
+   * Il trasloco (ADR 0042 §3): la casa che ordina il gruppo è persa, e chi
+   * chiama ne crea da questa casa il successore dichiarato. Risponde con il
+   * successore; il gruppo di prima resta, congelato.
+   */
+  app.post<{
+    Params: { id: string };
+    Body: TraslocaGruppoRequest;
+    Reply: { conversazione: ConversazioneView };
+  }>(
+    "/api/v1/conversazioni/:id/trasloco",
+    {
+      preHandler: asMember,
+      schema: {
+        params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+        body: traslocaGruppoRequestSchema,
+        response: unaConversazione,
+      },
+    },
+    async (request) =>
+      services.messaggi.trasloca(request.caller!.user.id, request.params.id, request.body),
   );
 
   /** Uscire da un gruppo: è un'operazione di chi esce, e non chiede permesso. */

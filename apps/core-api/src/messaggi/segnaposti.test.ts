@@ -71,6 +71,7 @@ function casa(dataDir: string, chiave: string): Casa {
     deposita: () => Promise.resolve({ esito: "irraggiungibile" }),
     depositaStato: () => Promise.resolve({ esito: "irraggiungibile" }),
     leggiStato: () => Promise.resolve({ esito: "irraggiungibile" }),
+    risponde: () => Promise.resolve(false),
     segnapostiDa: (altra, conversazioneId, dopo) => {
       const lei = accese.get(altra);
       if (lei === undefined) {
@@ -88,6 +89,7 @@ function casa(dataDir: string, chiave: string): Casa {
       accese.get(altra)?.messaggi.riceviSegnapostiSpinti({ ...spinta, remoteKey: chiave });
       return Promise.resolve();
     },
+    ultimoContatto: () => undefined,
     visitaArchivio: (altra, conversazioneId, ids) => {
       const lei = accese.get(altra);
       if (lei === undefined) {
