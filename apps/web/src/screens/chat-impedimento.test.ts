@@ -264,4 +264,34 @@ describe("i gruppi", () => {
     expect(spiegazione.testo).toContain("Anna");
     expect(spiegazione.testo).not.toContain("dalla sua casa");
   });
+
+  it("un gruppo traslocato spegne la scrittura e non fa aspettare nessuno", () => {
+    // Di un gruppo congelato sono vere anche le altre due cose — la casa che
+    // lo ordinava non risponde, e nessun invito arriverà — ma nessuna delle
+    // due è da aspettare: si dice che è congelato, e dove andare.
+    const impedimento = impedimentoDi({
+      congelata: true,
+      crittografiaDisponibile: true,
+      erroreChiave: new ApiError("casa_che_ordina_non_raggiungibile", "Off.", 503),
+      gruppo: true,
+      inAttesa: true,
+      nomeDestinatario: "Anna",
+    });
+
+    expect(impedimento).toEqual({ kind: "gruppo-congelato" });
+    expect(siPuoScrivere(impedimento)).toBe(false);
+    const spiegazione = spiegazioneDi(impedimento)!;
+    expect(spiegazione.testo).toContain("si legge ancora");
+    expect(spiegazione.cosaFare).toContain("gruppo nuovo");
+
+    // Chi nel frattempo è stato tolto lo legge comunque per primo.
+    expect(
+      impedimentoDi({
+        congelata: true,
+        crittografiaDisponibile: true,
+        nomeDestinatario: "Anna",
+        tolto: true,
+      }).kind,
+    ).toBe("tolto-dal-gruppo");
+  });
 });

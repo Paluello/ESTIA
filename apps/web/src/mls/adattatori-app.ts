@@ -42,6 +42,7 @@ export function deserializza(testo: string): unknown {
 const DISPOSITIVO = "mls/dispositivo/";
 const STATI = "mls/stato/";
 const CURSORI = "mls/cursore/";
+const MAZZI = "mls/mazzo/";
 
 async function leggi(nome: string): Promise<unknown> {
   const testo = await invoke<string | null>("cassaforte_leggi", { nome });
@@ -65,10 +66,13 @@ export const cassettoCassaforte: Cassetto = {
 export const depositoCassaforte: Deposito = {
   leggi: async (id) => (await leggi(STATI + id)) as Uint8Array | undefined,
   leggiCursore: async (id) => (await leggi(CURSORI + id)) as string | undefined,
+  leggiMazzo: async (id) => (await leggi(MAZZI + id)) as string | undefined,
   scrivi: (id, stato) => scrivi(STATI + id, stato),
   scriviCursore: (id, cursore) => scrivi(CURSORI + id, cursore),
+  scriviMazzo: (id, mazzo) => scrivi(MAZZI + id, mazzo),
   svuota: async () => {
     await svuota(STATI);
     await svuota(CURSORI);
+    await svuota(MAZZI);
   },
 };

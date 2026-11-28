@@ -1061,4 +1061,39 @@ export const migrations: readonly Migration[] = [
        ) STRICT`,
     ],
   },
+  {
+    version: 36,
+    name: "trasloco",
+    statements: [
+      // Il trasloco ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md)
+      // §3): quando la casa che ordina un gruppo è persa, un amministratore ne
+      // crea dalla propria casa un **successore dichiarato**.
+      //
+      // Una riga per successore, e ci sta scritto ciò che il successore dice
+      // di sé (punto 4): quale gruppo continua, l'ultima epoch che chi ha
+      // traslocato aveva visto, chi è stato e quando, quale casa era persa e
+      // da quando taceva. La scrive la casa di chi trasloca, e le altre la
+      // ricevono con la composizione del successore: non cambia più.
+      //
+      // `conversazione_id` **non** è un riferimento: chi entra nel successore
+      // senza essere stato nel gruppo di prima ha la dichiarazione e non il
+      // gruppo. Due traslochi dello stesso gruppo sono due righe, ed è voluto:
+      // il doppio trasloco non si previene, si rende visibile.
+      `CREATE TABLE conversazione_traslochi (
+         successore_id TEXT PRIMARY KEY NOT NULL REFERENCES conversazioni (id) ON DELETE CASCADE,
+         conversazione_id TEXT NOT NULL,
+         nome_di_prima TEXT NOT NULL,
+         epoch INTEGER NOT NULL,
+         da TEXT NOT NULL,
+         il TEXT NOT NULL,
+         casa_persa TEXT NOT NULL,
+         casa_persa_dal TEXT NOT NULL
+       ) STRICT`,
+      `CREATE INDEX conversazione_traslochi_di ON conversazione_traslochi (conversazione_id)`,
+      // Il gruppo di prima resta, in sola lettura (punto 5). La data è quella
+      // in cui **questa** casa ha smesso di accettarci scritture; NULL = non è
+      // congelato.
+      `ALTER TABLE conversazioni ADD COLUMN congelata_il TEXT`,
+    ],
+  },
 ];

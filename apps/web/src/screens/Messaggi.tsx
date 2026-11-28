@@ -14,9 +14,15 @@ import {
   type Invitato,
   type Riga,
 } from "../mls/conversazione.js";
-import { leggiKeyPackage, scriviIdentita, TroppeFoglie, type Confronto } from "../mls/gruppo.js";
+import {
+  epochDi,
+  leggiKeyPackage,
+  scriviIdentita,
+  TroppeFoglie,
+  type Confronto,
+} from "../mls/gruppo.js";
 import { contestoChat, ripristina, type ContestoChat } from "../mls/motore.js";
-import { ChiaveDiUnAltro, type Sessione } from "../mls/sessione.js";
+import { ChiaveDiUnAltro, riprendiCongelata, type Sessione } from "../mls/sessione.js";
 import { useSignedIn } from "../state.js";
 import { useAvvisi } from "../avvisi.js";
 import { t, tc, tn, useT } from "../lingua.js";
@@ -43,15 +49,17 @@ import {
   creaQui,
   eUnGruppo,
   idAtteso,
+  nomeDaIndirizzo,
   nomeDi,
   nomeNellEvento,
 } from "./gruppi/logica.js";
 import { MembriGruppo, type GestiDelGruppo } from "./gruppi/MembriGruppo.js";
 import { NuovoGruppo } from "./gruppi/NuovoGruppo.js";
+import { AvvisoTrasloco } from "./gruppi/Trasloco.js";
 import { membroDi } from "./sicurezza/membri.js";
 import { apriNumeroDiSicurezza } from "./sicurezza/apri.js";
 import { SicurezzaConversazione } from "./sicurezza/SicurezzaConversazione.js";
-import { ora, quandoPreciso } from "../tempo.js";
+import { giornoDi, ora, quandoPreciso } from "../tempo.js";
 
 interface DecryptedMessage {
   id: string;
@@ -525,7 +533,12 @@ export function Messaggi(): React.ReactElement {
           if (sessione === undefined) {
             const apertura = await apriConversazione(
               ctx,
-              { creaQui: creaQui(conv, user.id), id, ordinataQui: conv.ordinataQui },
+              {
+                congelata: conv.congelata === true,
+                creaQui: creaQui(conv, user.id),
+                id,
+                ordinataQui: conv.ordinataQui,
+              },
               invitoPer(conv, casa),
             );
 
@@ -554,7 +567,11 @@ export function Messaggi(): React.ReactElement {
 
           // L'albero si mette accanto alle persone a ogni giro. In un gruppo è
           // anche il momento in cui la foglia di chi è uscito viene tolta.
-          const lettura = await leggi(ctx, sessione, undefined, composizioneDi(conv, casa));
+          // Di un gruppo congelato si legge e basta: la coda stava nella casa
+          // persa, e l'albero non si tocca più (ADR 0042 §3, «Il trasloco»).
+          const lettura = await leggi(ctx, sessione, undefined, composizioneDi(conv, casa), {
+            congelata: conv.congelata === true,
+          });
           if (guardataRef.current !== id) {
             return;
           }
@@ -891,6 +908,31 @@ export function Messaggi(): React.ReactElement {
     }
   };
 
+  /**
+   * Il trasloco: la casa che ordina è persa, e da qui nasce il gruppo che
+   * continua questo. L'epoch è l'ultima che questo dispositivo ha visto — zero
+   * se del gruppo di prima non ha lo stato. Il gruppo cifrato nuovo lo crea
+   * l'apertura, come per ogni gruppo: chi ha traslocato ne è il creatore.
+   */
+  const trasloca = async (): Promise<void> => {
+    if (!selezionataId) return;
+    const id = selezionataId;
+    try {
+      // Dallo stato che il browser ha tenuto, senza chiedere niente a nessuno:
+      // la casa a cui chiedere è quella che non risponde.
+      const { ctx } = await contestoChat(token, user.username);
+      const locale = await riprendiCongelata(ctx, id);
+      const epoch = locale === undefined ? 0 : Number(epochDi(locale.stato));
+      const { conversazione } = await api.traslocaGruppo(token, id, { epoch });
+      await caricaConversazioni();
+      setSelezionataId(conversazione.id);
+      mostraSuccesso(t("gruppi.trasloco.fatto"));
+    } catch (causa) {
+      mostraErrore(causa, t("gruppi.trasloco.errore"));
+      await caricaConversazioni();
+    }
+  };
+
   const gestiDelGruppo: GestiDelGruppo = {
     aggiungi: async (persona: Persona) => {
       if (!selezionataId) return;
@@ -1038,6 +1080,7 @@ export function Messaggi(): React.ReactElement {
 
   /** Perché questa chat non si può usare, se non si può usare. */
   const impedimento = impedimentoDi({
+    congelata: selezionata?.congelata === true,
     crittografiaDisponibile: isCryptoAvailable,
     erroreChiave,
     estranei,
@@ -1167,7 +1210,8 @@ export function Messaggi(): React.ReactElement {
                     },
                     // Un gruppo non si elimina: se ne esce, e gli altri restano.
                     ...(gruppo
-                      ? impedimento.kind === "tolto-dal-gruppo"
+                      ? impedimento.kind === "tolto-dal-gruppo" ||
+                        impedimento.kind === "gruppo-congelato"
                         ? []
                         : [
                             {
@@ -1200,6 +1244,16 @@ export function Messaggi(): React.ReactElement {
             </header>
 
             {selezionata && <SicurezzaConversazione conversazione={selezionata} />}
+
+            {gruppo && selezionata !== undefined && (
+              <AvvisoTrasloco
+                casa={casaMia}
+                conversazione={selezionata}
+                mie={new Set(conversazioni.map((c) => c.id))}
+                onApri={setSelezionataId}
+                onTrasloca={trasloca}
+              />
+            )}
 
             {gruppo && assenti.size > 0 && impedimento.kind === "nessuno" && (
               <div className="chat-detail-alert">
@@ -1497,9 +1551,19 @@ export function Messaggi(): React.ReactElement {
                                 >
                                   <span className="row__title truncate">{nome}</span>
                                   <span className="row__note truncate">
-                                    {unGruppo
-                                      ? tn("gruppi.persone", c.membri.length)
-                                      : `@${userHandle}`}{" "}
+                                    {/* Un gruppo traslocato e chi lo continua hanno lo
+                                        stesso nome: nell'elenco li distingue chi ha
+                                        traslocato, e quando (ADR 0042 §3). */}
+                                    {!unGruppo
+                                      ? `@${userHandle}`
+                                      : c.congelata === true
+                                        ? t("gruppi.trasloco.elenco_congelato")
+                                        : c.continua !== undefined
+                                          ? t("gruppi.trasloco.elenco_successore", {
+                                              chi: nomeDaIndirizzo(c.continua.da, c, casaMia ?? ""),
+                                              il: giornoDi(c.continua.il),
+                                            })
+                                          : tn("gruppi.persone", c.membri.length)}{" "}
                                     ·{" "}
                                     {c.ultimoMessaggio
                                       ? ora(c.ultimoMessaggio.createdAt)

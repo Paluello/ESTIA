@@ -9,7 +9,9 @@ import {
   type RuoloGruppo,
   type DepositaHandshakeRequest,
   type HandshakePage,
+  type ContinuaView,
   type ConversazioneView,
+  type SuccessoreView,
   type CronologiaPage,
   type GroupInfoView,
   type MazzoArchivioView,
@@ -27,6 +29,7 @@ import type {
   MessaggiRepository,
   SegnapostoInput,
   SegnapostoRecord,
+  TraslocoRecord,
 } from "./repository.js";
 
 /**
@@ -49,7 +52,35 @@ export interface Composizione {
   membri: { chi: string; ruolo: RuoloGruppo; dal: string }[];
   /** Chi è stato tolto o è uscito: `da` è chi l'ha tolto, lui stesso se è uscito. */
   rimossi: { chi: string; il: string; da: string }[];
+  /** Solo in un successore: ciò che dichiara del gruppo che continua. */
+  continua?: DichiarazioneDiTrasloco;
 }
+
+/**
+ * Ciò che un successore dichiara di sé ([ADR 0042](../../../../docs/adr/0042-come-mls-attraversa.md)
+ * §3 «Il trasloco», punto 4). Viaggia con la sua composizione, quindi la dice
+ * **la casa che lo ordina**, che è quella di chi ha traslocato: `da` è uno dei
+ * suoi, e chi riceve lo controlla.
+ */
+export interface DichiarazioneDiTrasloco {
+  /** L'id del gruppo di prima. */
+  conversazione: string;
+  nome: string;
+  /** L'ultima epoch che chi ha traslocato aveva visto. */
+  epoch: number;
+  da: string;
+  il: string;
+  casaPersa: string;
+  casaPersaDal: string;
+}
+
+/**
+ * Oltre quanto silenzio una casa è **persa** (ADR 0042 §3, «Il trasloco»,
+ * punto 1). Valore iniziale approvato dal proprietario il 2026-09-17: si
+ * guarda sul campo, e cambiarlo non è un ripensamento. La soglia non fa niente
+ * da sola: apre un gesto, e a farlo è una persona.
+ */
+export const SOGLIA_CASA_PERSA_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Un cambio di composizione chiesto a chi ordina, con le persone per indirizzo. */
 export type CambioMembri =
@@ -257,6 +288,14 @@ export interface ReteFraCase {
     | { esito: "rifiutato" }
     | { esito: "irraggiungibile" }
   >;
+  /**
+   * L'ultima volta che si è avuto un contatto con quella casa, in un verso o
+   * nell'altro: è ciò che il battito di [ADR 0041](../../../../docs/adr/0041-le-istanze-si-tengono-d-occhio.md)
+   * tiene aggiornato. `undefined` se non la si è mai vista.
+   */
+  ultimoContatto: (casa: string) => string | undefined;
+  /** Una domanda fatta adesso: quella casa risponde? */
+  risponde: (casa: string) => Promise<boolean>;
 }
 
 /**
@@ -465,7 +504,7 @@ export class MessaggiService {
       createdAt: item.conversazione.createdAt,
       ordinataQui: this.#ordinaQui(item.conversazione.id),
       peerVistoFinoA: this.repo.vistoDellAltroFinoA(item.conversazione.id, callerId),
-      ...this.#datiDelGruppo(item.conversazione),
+      ...this.#datiDelGruppo(item.conversazione, callerId),
     }));
   }
 
@@ -493,21 +532,31 @@ export class MessaggiService {
       createdAt: conv.createdAt,
       ordinataQui: this.#ordinaQui(conv.id),
       peerVistoFinoA: this.repo.vistoDellAltroFinoA(conv.id, callerId),
-      ...this.#datiDelGruppo(conv),
+      ...this.#datiDelGruppo(conv, callerId),
     };
   }
 
   /** Il nome e i ruoli, che solo un gruppo ha. */
-  #datiDelGruppo(conv: { id: string; tipo: ConversazioneTipo }): {
-    nome?: string;
-    ruoli?: Record<string, RuoloGruppo>;
-    rimossi?: string[];
-  } {
+  #datiDelGruppo(
+    conv: { id: string; tipo: ConversazioneTipo },
+    callerId: string,
+  ): Pick<
+    ConversazioneView,
+    | "nome"
+    | "ruoli"
+    | "rimossi"
+    | "casaPersaDal"
+    | "puoTraslocare"
+    | "congelata"
+    | "successori"
+    | "continua"
+  > {
     if (conv.tipo !== "gruppo") {
       return {};
     }
 
     return {
+      ...this.#datiDelTrasloco(conv.id, callerId),
       nome: this.repo.nomeDi(conv.id) ?? "",
       rimossi: this.repo
         .rimossi(conv.id)
@@ -530,6 +579,290 @@ export class MessaggiService {
     throw this.repo.rimosso(conversazioneId, callerId) === undefined
       ? new DomainError("non_membro", 403)
       : new DomainError("rimosso_dal_gruppo", 403);
+  }
+
+  /* ---------- il trasloco (ADR 0042 §3) ---------- */
+
+  /**
+   * Da quando tace la casa che ordina questa conversazione, se è **persa**.
+   *
+   * Si legge l'ultimo contatto che il battito ha registrato (ADR 0041): non
+   * si tiene una verità a parte. Di una casa mai vista vale il giorno in cui
+   * la conversazione è nata qui, che è arrivata da lei. `undefined` finché il
+   * silenzio non supera la soglia, e sempre quando ordina questa casa.
+   */
+  #persaDal(conversazioneId: string): string | undefined {
+    const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
+    if (altrove === undefined || this.rete === undefined) {
+      return undefined;
+    }
+
+    const ultimo =
+      this.rete.ultimoContatto(altrove) ??
+      this.repo.getConversazioneById(conversazioneId)?.createdAt;
+
+    return ultimo !== undefined && this.#tace(ultimo) ? ultimo : undefined;
+  }
+
+  #tace(ultimoContatto: string): boolean {
+    return Date.parse(this.now()) - Date.parse(ultimoContatto) > SOGLIA_CASA_PERSA_MS;
+  }
+
+  /**
+   * Chi può traslocare: chi amministra. E, se nessun amministratore ha una
+   * casa viva, qualunque membro — l'atto porta il suo nome, e questo conta più
+   * di chi aveva il ruolo (punto 2).
+   */
+  #puoTraslocare(conversazioneId: string, callerId: string, casaPersa: string): boolean {
+    const membri = this.repo.membriConRuolo(conversazioneId);
+    const suo = membri.find((m) => m.userId === callerId)?.ruolo;
+    if (suo === undefined) {
+      return false;
+    }
+
+    if (suo !== "membro") {
+      return true;
+    }
+
+    return !membri.some((m) => m.ruolo !== "membro" && this.#casaViva(m.userId, casaPersa));
+  }
+
+  /** La casa di questa persona è viva, per quel che se ne sa qui? Nel dubbio sì. */
+  #casaViva(userId: string, casaPersa: string): boolean {
+    if (!userId.startsWith("remote:")) {
+      return true;
+    }
+
+    const casa = userId.split(":")[1];
+    if (casa === undefined || casa === casaPersa) {
+      return false;
+    }
+
+    const ultimo = this.rete?.ultimoContatto(casa);
+    return ultimo === undefined || !this.#tace(ultimo);
+  }
+
+  /**
+   * I successori di un gruppo che questa casa riconosce: quelli dichiarati da
+   * qualcuno che **nel gruppo c'era**, e che nominano come persa la casa che
+   * lo ordinava davvero. Una dichiarazione che non torna non marca niente.
+   */
+  #successori(conversazioneId: string): TraslocoRecord[] {
+    const ordina = this.repo.casaCheOrdina(conversazioneId);
+    if (ordina === null || ordina === undefined) {
+      return [];
+    }
+
+    return this.repo.successoriDi(conversazioneId).filter((t) => {
+      const chi = this.#idDi(t.da);
+      return (
+        t.casaPersa === ordina &&
+        chi !== undefined &&
+        (this.repo.isMember(conversazioneId, chi) ||
+          this.repo.rimosso(conversazioneId, chi) !== undefined)
+      );
+    });
+  }
+
+  /**
+   * Il gruppo è congelato **per questa casa**?
+   *
+   * Lo è da quando uno dei suoi lo ha traslocato; oppure da quando un altro
+   * l'ha fatto **e anche qui** la casa che ordina risulta persa. La seconda
+   * condizione è una difesa: senza, un membro qualunque di un'altra casa
+   * spegnerebbe la scrittura qui dichiarando un trasloco di un gruppo vivo.
+   * Una volta congelato resta congelato: è scritto, e non si ricalcola.
+   */
+  #congelata(conversazioneId: string): boolean {
+    if (this.repo.congelataIl(conversazioneId) !== null) {
+      return true;
+    }
+
+    if (
+      this.#persaDal(conversazioneId) === undefined ||
+      this.#successori(conversazioneId).length === 0
+    ) {
+      return false;
+    }
+
+    this.repo.congela(conversazioneId, this.now());
+    return true;
+  }
+
+  /** In un gruppo congelato si legge soltanto (punto 5). */
+  #rifiutaSeCongelata(conversazioneId: string): void {
+    if (this.#congelata(conversazioneId)) {
+      throw new DomainError("gruppo_congelato", 409);
+    }
+  }
+
+  /** Ciò che la schermata deve sapere del trasloco, per un gruppo. */
+  #datiDelTrasloco(
+    conversazioneId: string,
+    callerId: string,
+  ): Pick<
+    ConversazioneView,
+    "casaPersaDal" | "puoTraslocare" | "congelata" | "successori" | "continua"
+  > {
+    const dichiarato = this.repo.traslocoDi(conversazioneId);
+    const continua: ContinuaView | undefined =
+      dichiarato === undefined
+        ? undefined
+        : {
+            casaPersaDal: dichiarato.casaPersaDal,
+            conversazioneId: dichiarato.conversazioneId,
+            da: dichiarato.da,
+            epoch: dichiarato.epoch,
+            il: dichiarato.il,
+            nome: dichiarato.nomeDiPrima,
+          };
+
+    const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
+    if (altrove === undefined) {
+      return continua === undefined ? {} : { continua };
+    }
+
+    const congelata = this.#congelata(conversazioneId);
+    const persaDal = this.#persaDal(conversazioneId);
+    const successori: SuccessoreView[] = this.#successori(conversazioneId).map((t) => ({
+      da: t.da,
+      id: t.successoreId,
+      il: t.il,
+    }));
+
+    return {
+      ...(continua === undefined ? {} : { continua }),
+      ...(persaDal === undefined ? {} : { casaPersaDal: persaDal }),
+      ...(successori.length === 0 ? {} : { successori }),
+      congelata,
+      puoTraslocare:
+        persaDal !== undefined && this.#puoTraslocare(conversazioneId, callerId, altrove),
+    };
+  }
+
+  /**
+   * Il trasloco: la casa che ordina è persa, e chi chiama ne crea da qui il
+   * **successore dichiarato** (ADR 0042 §3).
+   *
+   * Non si ripunta il gruppo di prima: nasce una conversazione nuova, ordinata
+   * da questa casa, con chi ha una casa che **risponde adesso**. Chi non ce
+   * l'ha non entra, e va aggiunto a mano quando torna — è il primo dei due
+   * costi dichiarati. Il secondo lo paga il client: il successore ha un gruppo
+   * MLS e un mazzo nuovi, e li crea chi ha traslocato come per ogni gruppo.
+   *
+   * Il gruppo di prima resta e si congela. **Niente qui è automatico**, e
+   * niente impedisce un secondo trasloco: due persone che traslocano danno
+   * due successori, ognuno con il suo nome e la sua data.
+   *
+   * `epoch` è l'ultima che il dispositivo di chi trasloca aveva visto: la
+   * dice lui, perché l'istanza non la conosce.
+   */
+  async trasloca(
+    callerId: string,
+    conversazioneId: string,
+    richiesta: { epoch: number },
+  ): Promise<{ conversazione: ConversazioneView }> {
+    this.#richiediMembro(conversazioneId, callerId);
+
+    const conv = this.repo.getConversazioneById(conversazioneId);
+    if (conv?.tipo !== "gruppo") {
+      throw new DomainError("non_un_gruppo", 400);
+    }
+
+    const rete = this.rete;
+    const persa = this.#casaCheOrdinaAltrove(conversazioneId);
+    const persaDal = this.#persaDal(conversazioneId);
+    const chi = this.#indirizzoDi(callerId);
+    if (rete === undefined || persa === undefined || persaDal === undefined || chi === undefined) {
+      throw new DomainError("casa_non_persa", 409);
+    }
+
+    if (!this.#puoTraslocare(conversazioneId, callerId, persa)) {
+      throw new DomainError("trasloco_solo_amministratori", 403);
+    }
+
+    // Trenta giorni di silenzio aprono il gesto, ma prima di farlo si bussa
+    // un'ultima volta: una casa che risponde adesso non è persa, qualunque
+    // cosa dica il registro — e il trasloco non è il rimedio per chi dorme.
+    // Senza `catch`: se non si riesce nemmeno a chiedere — la rete di questa
+    // casa è spenta — non lo si scambia per il silenzio dell'altra.
+    if (await rete.risponde(persa)) {
+      throw new DomainError("casa_non_persa", 409);
+    }
+
+    // Chi entra: quelli di qui, e quelli delle case che rispondono oggi.
+    const membri = this.repo.membriConRuolo(conversazioneId);
+    const caseAltrui = new Set<string>();
+    const casaDi = (userId: string): string | undefined =>
+      userId.startsWith("remote:") ? userId.split(":")[1] : undefined;
+    for (const m of membri) {
+      const casa = casaDi(m.userId);
+      if (casa !== undefined && casa !== persa) {
+        caseAltrui.add(casa);
+      }
+    }
+
+    const vive = new Set<string>();
+    await Promise.all(
+      [...caseAltrui].map(async (casa) => {
+        if (await rete.risponde(casa).catch(() => false)) {
+          vive.add(casa);
+        }
+      }),
+    );
+
+    // Il registro può essere vecchio anche per le case degli amministratori:
+    // un membro trasloca solo se nessuna di quelle risponde **adesso**.
+    if (
+      membri.find((m) => m.userId === callerId)?.ruolo === "membro" &&
+      membri.some((m) => m.ruolo !== "membro" && vive.has(casaDi(m.userId) ?? ""))
+    ) {
+      throw new DomainError("trasloco_solo_amministratori", 403);
+    }
+
+    const portati = membri.filter(
+      (m) =>
+        m.userId !== callerId &&
+        (!m.userId.startsWith("remote:") || vive.has(casaDi(m.userId) ?? "")),
+    );
+    if (portati.length === 0) {
+      throw new DomainError("trasloco_senza_nessuno", 409);
+    }
+
+    // Chi trasloca diventa il creatore del successore: è la sua casa che lo
+    // ordina. Chi amministrava continua ad amministrare.
+    const ruoli: Record<string, RuoloGruppo> = { [callerId]: "creatore" };
+    for (const m of portati) {
+      if (m.ruolo !== "membro") {
+        ruoli[m.userId] = "amministratore";
+      }
+    }
+
+    const adesso = this.now();
+    const nome = this.repo.nomeDi(conversazioneId) ?? "";
+    const successore = this.repo.createConversazione({
+      createdAt: adesso,
+      id: randomUUID(),
+      membri: [callerId, ...portati.map((m) => m.userId)],
+      nome,
+      ruoli,
+      tipo: "gruppo",
+    });
+    this.repo.dichiaraTrasloco({
+      casaPersa: persa,
+      casaPersaDal: persaDal,
+      conversazioneId,
+      da: chi,
+      epoch: richiesta.epoch,
+      il: adesso,
+      nomeDiPrima: nome,
+      successoreId: successore.id,
+    });
+    this.repo.congela(conversazioneId, adesso);
+    this.repo.avanzaVersioneComposizione(successore.id);
+    void this.#annunciaComposizione(successore.id).catch(() => undefined);
+
+    return { conversazione: this.#vista(callerId, successore.id) };
   }
 
   /* ---------- i gruppi (M8) ---------- */
@@ -664,6 +997,8 @@ export class MessaggiService {
    * risponde, vale il costo dichiarato di §3 — niente ingressi, niente uscite.
    */
   async #chiedi(callerId: string, conversazioneId: string, cambio: Cambio): Promise<void> {
+    this.#rifiutaSeCongelata(conversazioneId);
+
     const altrove = this.#casaCheOrdinaAltrove(conversazioneId);
 
     if (altrove === undefined) {
@@ -846,12 +1181,27 @@ export class MessaggiService {
       }
     }
 
+    const trasloco = this.repo.traslocoDi(conversazioneId);
+
     return {
       membri,
       nome: this.repo.nomeDi(conversazioneId),
       rimossi,
       tipo: conv.tipo,
       versione: this.repo.versioneComposizione(conversazioneId),
+      ...(trasloco === undefined
+        ? {}
+        : {
+            continua: {
+              casaPersa: trasloco.casaPersa,
+              casaPersaDal: trasloco.casaPersaDal,
+              conversazione: trasloco.conversazioneId,
+              da: trasloco.da,
+              epoch: trasloco.epoch,
+              il: trasloco.il,
+              nome: trasloco.nomeDiPrima,
+            },
+          }),
     };
   }
 
@@ -1009,6 +1359,30 @@ export class MessaggiService {
       versione: composizione.versione,
     });
 
+    // Un successore dichiara di esserlo (§3, «Il trasloco»). Chi ha traslocato
+    // è **della casa che ordina il successore**: è la chiave della
+    // connessione a dirlo, e una casa non firma un trasloco con il nome di un
+    // altro. Se la dichiarazione marchi anche il gruppo di prima lo decide
+    // questa casa, guardando il suo specchio (`#successori`).
+    const { continua } = composizione;
+    if (
+      continua !== undefined &&
+      composizione.tipo === "gruppo" &&
+      mittenteDiCasa(continua.da, remoteKey) &&
+      continua.conversazione !== conversazioneId
+    ) {
+      this.repo.dichiaraTrasloco({
+        casaPersa: continua.casaPersa,
+        casaPersaDal: continua.casaPersaDal,
+        conversazioneId: continua.conversazione,
+        da: continua.da,
+        epoch: continua.epoch,
+        il: continua.il,
+        nomeDiPrima: continua.nome,
+        successoreId: conversazioneId,
+      });
+    }
+
     return true;
   }
 
@@ -1094,6 +1468,12 @@ export class MessaggiService {
       return;
     }
 
+    // Un gruppo congelato non cambia più chi c'è, e la casa a cui chiederlo è
+    // quella che non risponde: non si aspetta il suo silenzio a ogni lettura.
+    if (this.#congelata(conversazioneId)) {
+      return;
+    }
+
     const adesso = Date.parse(this.now());
     const ultima = this.#ultimeComposizioni.get(conversazioneId);
     if (ultima !== undefined && adesso - ultima < COMPOSIZIONE_MINIMA_MS) {
@@ -1147,6 +1527,7 @@ export class MessaggiService {
     input: { groupInfo: string; epoch: number },
   ): Promise<GroupInfoView> {
     this.#richiediMembro(conversazioneId, callerId);
+    this.#rifiutaSeCongelata(conversazioneId);
 
     const depositato = await this.#depositaStatoAltrove(conversazioneId, "group-info", {
       blob: input.groupInfo,
@@ -1205,6 +1586,7 @@ export class MessaggiService {
     input: { mazzo: string; epoch: number },
   ): Promise<MazzoArchivioView> {
     this.#richiediMembro(conversazioneId, callerId);
+    this.#rifiutaSeCongelata(conversazioneId);
 
     const depositato = await this.#depositaStatoAltrove(conversazioneId, "mazzo", {
       blob: input.mazzo,
@@ -1241,6 +1623,7 @@ export class MessaggiService {
     voci: readonly VoceArchivioInput[],
   ): { scritte: number } {
     this.#richiediMembro(conversazioneId, callerId);
+    this.#rifiutaSeCongelata(conversazioneId);
 
     if (!this.users.findById(callerId)) {
       throw new DomainError("forbidden", 403);
@@ -1783,6 +2166,7 @@ export class MessaggiService {
     input: DepositaHandshakeRequest,
   ): Promise<{ id: string }> {
     this.#richiediMembro(conversazioneId, callerId);
+    this.#rifiutaSeCongelata(conversazioneId);
 
     if (input.tipo === "welcome" && input.destinatario === undefined) {
       throw new DomainError("invalid_request", 400);

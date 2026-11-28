@@ -32,6 +32,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import { loadConfig } from "@estia/config";
+import { messaggioDiProvaChiave } from "@estia/contracts";
 import { withTempDataDir } from "@estia/testing";
 import type { FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
@@ -48,7 +49,7 @@ import {
 } from "../../../web/src/mls/conversazione.js";
 import { ALGORITMO, preparaDispositivo, type Anagrafe } from "../../../web/src/mls/dispositivo.js";
 import { cassettoFinto, depositoFinto } from "../../../web/src/mls/finte.js";
-import { foglie, leggiKeyPackage } from "../../../web/src/mls/gruppo.js";
+import { epochDi, foglie, leggiKeyPackage } from "../../../web/src/mls/gruppo.js";
 import type { Contesto, Istanza, Sessione } from "../../../web/src/mls/sessione.js";
 import { composizioneDi } from "../../../web/src/screens/gruppi/logica.js";
 import { membroDi } from "../../../web/src/screens/sicurezza/membri.js";
@@ -66,6 +67,8 @@ interface Casa {
   username: string;
   /** Il client di questa persona, sul suo browser. */
   ctx: Contesto;
+  /** Ciò che il browser tiene del dispositivo: sopravvive a un accesso nuovo. */
+  cassetto: ReturnType<typeof cassettoFinto>;
 }
 
 class ErroreHttp extends Error {
@@ -178,10 +181,25 @@ function anagrafeSu(app: FastifyInstance, token: string): Anagrafe {
     pubblica: async (keyPackages) => {
       await chiama(app, token, "POST", "/api/v1/dispositivi/key-packages", { keyPackages });
     },
-    registra: async (chiave) => {
-      const r = (await chiama(app, token, "POST", "/api/v1/dispositivi/chiave", chiave)) as {
-        device: { id: string };
+    registra: async ({ firma, ...chiave }) => {
+      // Come `adattatori.ts`: la prova di possesso si manda sempre, e
+      // l'istanza la guarda quando la chiave è già approvata e si ripresenta
+      // da una sessione nuova (ADR 0040).
+      const { sfida } = (await chiama(app, token, "POST", "/api/v1/dispositivi/sfida")) as {
+        sfida: string;
       };
+      const prova =
+        firma === undefined
+          ? undefined
+          : Buffer.from(
+              await firma(
+                new TextEncoder().encode(messaggioDiProvaChiave(sfida, chiave.publicKey)),
+              ),
+            ).toString("base64");
+      const r = (await chiama(app, token, "POST", "/api/v1/dispositivi/chiave", {
+        ...chiave,
+        ...(prova === undefined ? {} : { prova }),
+      })) as { device: { id: string } };
       return { deviceId: r.device.id };
     },
     salvaBackup: async (backup) => {
@@ -196,10 +214,15 @@ async function casaNuova(
   nome: string,
   username: string,
   filo: FiloFinto,
+  now?: () => Date,
 ): Promise<Casa> {
   const app = await buildApp(
     loadConfig({ ESTIA_DATA_DIR: dataDir, ESTIA_HOST: "127.0.0.1", ESTIA_LOG_LEVEL: "silent" }),
-    { createEndpoint: filo.endpoint, setupToken: SETUP_TOKEN },
+    {
+      createEndpoint: filo.endpoint,
+      setupToken: SETUP_TOKEN,
+      ...(now === undefined ? {} : { now }),
+    },
   );
 
   const password = `password-lunga-di-${username}`;
@@ -221,14 +244,16 @@ async function casaNuova(
   const token = (JSON.parse(login.body) as { token: string }).token;
   const { casa } = (await chiama(app, token, "GET", "/api/v1/mls/casa")) as { casa: string };
 
+  const cassetto = cassettoFinto();
   const dispositivo = await preparaDispositivo(
-    { anagrafe: anagrafeSu(app, token), casa, cassetto: cassettoFinto() },
+    { anagrafe: anagrafeSu(app, token), casa, cassetto },
     username,
   );
 
   return {
     app,
     casa,
+    cassetto,
     ctx: {
       deposito: depositoFinto(),
       io: dispositivo.portachiavi,
@@ -238,6 +263,26 @@ async function casaNuova(
     token,
     username,
   };
+}
+
+/**
+ * La sessione è scaduta — dura trenta giorni — e la persona accede di nuovo
+ * **dallo stesso browser**: il token è nuovo, il dispositivo e gli stati dei
+ * gruppi sono quelli che il browser aveva.
+ */
+async function riaccede(c: Casa): Promise<void> {
+  const login = await c.app.inject({
+    method: "POST",
+    payload: { password: `password-lunga-di-${c.username}`, username: c.username },
+    url: "/api/v1/auth/login",
+  });
+  c.token = (JSON.parse(login.body) as { token: string }).token;
+
+  const dispositivo = await preparaDispositivo(
+    { anagrafe: anagrafeSu(c.app, c.token), casa: c.casa, cassetto: c.cassetto },
+    c.username,
+  );
+  c.ctx = { ...c.ctx, io: dispositivo.portachiavi, istanza: istanzaSu(c.app, c.token, c.casa) };
 }
 
 /**
@@ -676,22 +721,31 @@ interface VistaGruppo extends VistaConversazione {
   membri: { id: string; username: string; displayName: string }[];
   ruoli?: Record<string, "creatore" | "amministratore" | "membro">;
   rimossi?: string[];
+  casaPersaDal?: string;
+  puoTraslocare?: boolean;
+  congelata?: boolean;
+  successori?: { id: string; da: string; il: string }[];
+  continua?: { conversazioneId: string; nome: string; epoch: number; da: string; il: string };
 }
 
-async function treCase(use: (aia: Casa, borgo: Casa, colle: Casa) => Promise<void>): Promise<void> {
+async function treCase(
+  use: (aia: Casa, borgo: Casa, colle: Casa, filo: FiloFinto) => Promise<void>,
+  /** Un orologio finto, lo stesso per le tre case: serve a far passare un mese. */
+  now?: () => Date,
+): Promise<void> {
   await withTempDataDir(async (primo) => {
     await withTempDataDir(async (secondo) => {
       await withTempDataDir(async (terzo) => {
         const filo = new FiloFinto();
-        const aia = await casaNuova(primo, "Aia", "anna", filo);
-        const borgo = await casaNuova(secondo, "Borgo", "bruno", filo);
-        const colle = await casaNuova(terzo, "Colle", "carla", filo);
+        const aia = await casaNuova(primo, "Aia", "anna", filo, now);
+        const borgo = await casaNuova(secondo, "Borgo", "bruno", filo, now);
+        const colle = await casaNuova(terzo, "Colle", "carla", filo, now);
 
         try {
           await collega(aia, borgo);
           await collega(aia, colle);
           await collega(borgo, colle);
-          await use(aia, borgo, colle);
+          await use(aia, borgo, colle, filo);
         } finally {
           await aia.app.close();
           await borgo.app.close();
@@ -876,4 +930,237 @@ describe("un gruppo fra tre case, con MLS vero (M8)", () => {
       expect(diCarla.confronto).toEqual({ assenti: [], estranei: [] });
     });
   }, 120_000);
+});
+
+describe("il trasloco fra tre case, con MLS vero (ADR 0042 §3)", () => {
+  it("la casa che ordina si spegne, passa un mese, un amministratore trasloca: nel successore si scrive, il vecchio si legge e non si scrive più", async () => {
+    const orologio = { adesso: Date.parse("2026-11-28T10:00:00.000Z") };
+    const passano = (ms: number): void => {
+      orologio.adesso += ms;
+    };
+    const adesso = (): string => new Date(orologio.adesso).toISOString();
+
+    await treCase(
+      async (aia, borgo, colle, filo) => {
+        /* --- il gruppo di prima: nasce ad Aia, e tutti e tre ci scrivono --- */
+        const { conversazione: creato } = (await chiama(
+          aia.app,
+          aia.token,
+          "POST",
+          "/api/v1/gruppi",
+          {
+            membri: [
+              { casa: borgo.casa, username: "bruno" },
+              { casa: colle.casa, username: "carla" },
+            ],
+            nome: "Orto",
+          },
+        )) as { conversazione: VistaGruppo };
+        const conv = creato.id;
+        const altri = creato.membri.filter((m) => m.username !== "anna");
+        const bruno = altri.find((m) => m.username === "bruno")!;
+        await chiama(
+          aia.app,
+          aia.token,
+          "PUT",
+          `/api/v1/conversazioni/${conv}/membri/${bruno.id}/ruolo`,
+          { ruolo: "amministratore" },
+        );
+
+        const aperturaAnna = await apriConversazione(
+          aia.ctx,
+          { ...creato, creaQui: true },
+          async () => {
+            const invitati: Invitato[] = [];
+            for (const altro of altri) {
+              invitati.push({ idDiChiEntra: altro.id, keyPackage: await chiaveDi(aia, altro) });
+            }
+            return invitati;
+          },
+        );
+        if (aperturaAnna.kind !== "pronta") {
+          throw new Error("Il gruppo di Anna doveva aprirsi");
+        }
+
+        const entra = async (c: Casa, id: string): Promise<Sessione> => {
+          const apertura = await apriConversazione(c.ctx, await vistaDi(c, id), nessunInvito);
+          if (apertura.kind !== "pronta") {
+            throw new Error(`${c.username} doveva entrare dal Welcome`);
+          }
+          return apertura.sessione;
+        };
+        const vecchiaDiBruno = await entra(borgo, conv);
+        const vecchiaDiCarla = await entra(colle, conv);
+
+        await manda(aia.ctx, aperturaAnna.sessione, { testo: "si semina sabato" }, "v1", adesso());
+        passano(1000);
+        await manda(borgo.ctx, vecchiaDiBruno, { testo: "porto le zappe" }, "v2", adesso());
+        passano(1000);
+        await manda(colle.ctx, vecchiaDiCarla, { testo: "io i semi" }, "v3", adesso());
+        // Una casa chiede i segnaposto a un'altra al più ogni dieci secondi.
+        passano(11_000);
+
+        const tutteETre = ["si semina sabato", "porto le zappe", "io i semi"];
+        for (const [c, sessione] of [
+          [borgo, vecchiaDiBruno],
+          [colle, vecchiaDiCarla],
+        ] as const) {
+          expect((await giro(c, sessione, conv)).righe.map((r) => r.testo)).toEqual(tutteETre);
+        }
+
+        /* --- Aia si spegne, e non torna --- */
+        filo.spegni(aia.casa);
+        passano(60_000);
+        // Un'attesa, non una scomparsa: nessun gesto, e la frase è quella di §3.
+        const dopoUnMinuto = await vistaDi(borgo, conv);
+        expect(dopoUnMinuto.casaPersaDal).toBeUndefined();
+        expect(dopoUnMinuto.puoTraslocare).toBe(false);
+        await expect(giro(borgo, vecchiaDiBruno, conv)).rejects.toMatchObject({
+          code: "casa_che_ordina_non_raggiungibile",
+        });
+        await expect(
+          chiama(borgo.app, borgo.token, "POST", `/api/v1/conversazioni/${conv}/trasloco`, {
+            epoch: 1,
+          }),
+        ).rejects.toMatchObject({ code: "casa_non_persa", status: 409 });
+
+        // Passa più di un mese, e Aia tace. Le sessioni di Bruno e Carla nel
+        // frattempo sono scadute: accedono di nuovo, dallo stesso browser.
+        passano(31 * 24 * 60 * 60 * 1000);
+        await riaccede(borgo);
+        await riaccede(colle);
+        // Il battito (ADR 0041) vive nel processo e in una prova non gira:
+        // fra le due case vive lo si fa a mano, come lo farebbe ogni cinque minuti.
+        await borgo.app.federationService.ping(colle.casa);
+        await colle.app.federationService.ping(borgo.casa);
+
+        /* --- il gesto: solo chi amministra, e solo adesso --- */
+        const perCarla = await vistaDi(colle, conv);
+        expect(perCarla.casaPersaDal).toBeDefined();
+        expect(perCarla.puoTraslocare).toBe(false);
+        await expect(
+          chiama(colle.app, colle.token, "POST", `/api/v1/conversazioni/${conv}/trasloco`, {
+            epoch: 1,
+          }),
+        ).rejects.toMatchObject({ code: "trasloco_solo_amministratori", status: 403 });
+
+        const perBruno = await vistaDi(borgo, conv);
+        expect(perBruno).toMatchObject({ congelata: false, puoTraslocare: true });
+        expect(Date.parse(perBruno.casaPersaDal!)).toBeLessThan(
+          orologio.adesso - 30 * 24 * 60 * 60 * 1000,
+        );
+
+        const ultimaEpoch = Number(epochDi(vecchiaDiBruno.stato));
+        const traslocatoIl = adesso();
+        const { conversazione: nuovo } = (await chiama(
+          borgo.app,
+          borgo.token,
+          "POST",
+          `/api/v1/conversazioni/${conv}/trasloco`,
+          { epoch: ultimaEpoch },
+        )) as { conversazione: VistaGruppo };
+
+        // Un gruppo nuovo, ordinato da Borgo, che dichiara che cosa continua.
+        // Anna non c'è: la sua casa quel giorno non risponde.
+        expect(nuovo.id).not.toBe(conv);
+        expect(nuovo).toMatchObject({
+          continua: {
+            conversazioneId: conv,
+            da: `bruno@${borgo.casa}`,
+            epoch: ultimaEpoch,
+            il: traslocatoIl,
+            nome: "Orto",
+          },
+          nome: "Orto",
+          ordinataQui: true,
+        });
+        expect(nuovo.membri.map((m) => m.username).sort()).toEqual(["bruno", "carla"]);
+
+        /* --- le due case vive si scrivono nel successore --- */
+        const carlaNelNuovo = nuovo.membri.find((m) => m.username === "carla")!;
+        const aperturaBruno = await apriConversazione(
+          borgo.ctx,
+          { ...nuovo, creaQui: true },
+          async () => [
+            { idDiChiEntra: carlaNelNuovo.id, keyPackage: await chiaveDi(borgo, carlaNelNuovo) },
+          ],
+        );
+        if (aperturaBruno.kind !== "pronta") {
+          throw new Error("Il successore doveva aprirsi sul browser di Bruno");
+        }
+        const nuovaDiBruno = aperturaBruno.sessione;
+        // Il mazzo è nuovo: le chiavi del gruppo di prima non aprono il seguito.
+        expect(nuovaDiBruno.catena).toHaveLength(1);
+        expect(nuovaDiBruno.catena).not.toEqual(vecchiaDiBruno.catena);
+
+        expect((await vistaDi(colle, nuovo.id)).continua).toEqual(nuovo.continua);
+        const nuovaDiCarla = await entra(colle, nuovo.id);
+
+        await manda(borgo.ctx, nuovaDiBruno, { testo: "si riparte da qui" }, "n1", adesso());
+        passano(1000);
+        await manda(colle.ctx, nuovaDiCarla, { testo: "ci sono" }, "n2", adesso());
+        passano(11_000);
+        for (const [c, sessione] of [
+          [borgo, nuovaDiBruno],
+          [colle, nuovaDiCarla],
+        ] as const) {
+          const letto = await giro(c, sessione, nuovo.id);
+          expect(letto.righe.map((r) => [r.mittente, r.testo])).toEqual([
+            [`bruno@${borgo.casa}`, "si riparte da qui"],
+            [`carla@${colle.casa}`, "ci sono"],
+          ]);
+          expect(letto.confronto).toEqual({ assenti: [], estranei: [] });
+        }
+
+        /* --- il gruppo di prima: marcato, si legge, non si scrive --- */
+        for (const c of [borgo, colle]) {
+          const vecchio = await vistaDi(c, conv);
+          expect(vecchio).toMatchObject({
+            congelata: true,
+            nome: "Orto",
+            successori: [{ da: `bruno@${borgo.casa}`, id: nuovo.id, il: traslocatoIl }],
+          });
+
+          // Come dopo aver ricaricato la pagina: niente in memoria, solo ciò
+          // che il browser aveva tenuto. La coda e il mazzo stavano ad Aia.
+          const riaperta = await apriConversazione(
+            c.ctx,
+            { congelata: true, id: conv, ordinataQui: false },
+            nessunInvito,
+          );
+          if (riaperta.kind !== "pronta") {
+            throw new Error(`${c.username} doveva riaprire il gruppo di prima`);
+          }
+
+          // Le parole di chi ha la casa viva si leggono ancora, con le chiavi
+          // che il dispositivo aveva già. Quelle di Anna stavano ad Aia: resta
+          // chi e quando, e la casa che non risponde è nominata.
+          const letto = await leggi(c.ctx, riaperta.sessione, undefined, undefined, {
+            congelata: true,
+          });
+          expect(letto.righe.map((r) => [r.mittente, r.stato, r.testo])).toEqual([
+            [`anna@${aia.casa}`, "non-disponibile", undefined],
+            [`bruno@${borgo.casa}`, "letta", "porto le zappe"],
+            [`carla@${colle.casa}`, "letta", "io i semi"],
+          ]);
+          expect(letto.nonRispondono).toEqual([aia.casa]);
+
+          // E la scrittura è spenta dall'istanza, non solo dalla schermata.
+          await expect(
+            manda(
+              c.ctx,
+              riaperta.sessione,
+              { testo: "ancora qui?" },
+              `tardi-${c.username}`,
+              adesso(),
+            ),
+          ).rejects.toMatchObject({ code: "gruppo_congelato", status: 409 });
+          await expect(
+            chiama(c.app, c.token, "POST", `/api/v1/conversazioni/${conv}/uscita`),
+          ).rejects.toMatchObject({ code: "gruppo_congelato" });
+        }
+      },
+      () => new Date(orologio.adesso),
+    );
+  }, 180_000);
 });

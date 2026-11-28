@@ -40,6 +40,8 @@ interface Casa {
   messaggi: MessaggiService;
   /** Le case che rispondono, come le vede questa. Togliere una casa è spegnerla. */
   accese: Map<string, Casa>;
+  /** L'ultimo contatto con ogni altra casa, come lo terrebbe il battito (ADR 0041). */
+  contatti: Map<string, string>;
   abita: (username: string) => string;
   orologio: { adesso: string };
   /** Chi può scrivere a chi (ADR 0030). Di norma tutti; le prove della regola la stringono. */
@@ -57,6 +59,7 @@ function casa(dataDir: string, chiave: string, conRete = true): Casa {
   const repo = new SqliteMessaggiRepository(database);
   const orologio = { adesso: ORA };
   const accese = new Map<string, Casa>();
+  const contatti = new Map<string, string>();
 
   const porta: ChiPuoScrivere = { puoAprire: () => true };
 
@@ -165,6 +168,13 @@ function casa(dataDir: string, chiave: string, conRete = true): Casa {
             : { ...stato, esito: "stato" },
       );
     },
+    risponde: (altra) => {
+      const cE = accese.has(altra);
+      if (cE) {
+        contatti.set(altra, orologio.adesso);
+      }
+      return Promise.resolve(cE);
+    },
     segnapostiDa: (altra, conversazioneId, dopo) => {
       const lei = accese.get(altra);
       if (lei === undefined) {
@@ -180,6 +190,7 @@ function casa(dataDir: string, chiave: string, conRete = true): Casa {
       accese.get(altra)?.messaggi.riceviSegnapostiSpinti({ ...spinta, remoteKey: chiave });
       return Promise.resolve();
     },
+    ultimoContatto: (altra) => contatti.get(altra),
     visitaArchivio: (altra, conversazioneId, ids) => {
       const lei = accese.get(altra);
       if (lei === undefined) {
@@ -213,6 +224,7 @@ function casa(dataDir: string, chiave: string, conRete = true): Casa {
     },
     accese,
     chiave,
+    contatti,
     database,
     messaggi,
     orologio,
@@ -931,6 +943,294 @@ describe("un Welcome attraversa per indirizzo", () => {
           }),
         ).toBeUndefined();
       }
+    });
+  });
+});
+
+/* ---------- il trasloco (ADR 0042 §3) ---------- */
+
+const GIORNO = 24 * 60 * 60 * 1000;
+
+/** Aia si spegne: da adesso nessuno la raggiunge, e l'ultimo contatto è di adesso. */
+function spegniAia(aia: Casa, altre: readonly Casa[]): void {
+  for (const c of altre) {
+    c.contatti.set(aia.chiave, c.orologio.adesso);
+    c.accese.delete(aia.chiave);
+  }
+}
+
+function passano(giorni: number, case_: readonly Casa[]): void {
+  for (const c of case_) {
+    c.orologio.adesso = new Date(Date.parse(c.orologio.adesso) + giorni * GIORNO).toISOString();
+  }
+}
+
+const unaVoce = (id: string, createdAt: string) => [{ busta: "QQ==", chiaveN: 1, createdAt, id }];
+
+describe("il trasloco: la casa che ordina è persa", () => {
+  it("prima della soglia il gesto non c'è: un silenzio breve non è una scomparsa", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { bruno, conv } = await gruppo(aia, borgo, colle);
+      spegniAia(aia, [borgo, colle]);
+      passano(29, [borgo, colle]);
+
+      const vista = await borgo.messaggi.getConversazione(bruno, conv);
+      expect(vista.casaPersaDal).toBeUndefined();
+      expect(vista.puoTraslocare).toBe(false);
+      expect(await rifiuto(() => borgo.messaggi.trasloca(bruno, conv, { epoch: 1 }))).toBe(
+        "casa_non_persa",
+      );
+      expect(borgo.messaggi.listConversazioni(bruno)).toHaveLength(1);
+    });
+  });
+
+  it("oltre la soglia un amministratore trasloca: nasce un successore dichiarato, e il vecchio si congela", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { anna, bruno, carla, conv } = await gruppo(aia, borgo, colle);
+      await aia.messaggi.cambiaRuolo(anna, conv, `remote:${borgo.chiave}:bruno`, "amministratore");
+      await quieta();
+
+      spegniAia(aia, [borgo, colle]);
+      const spentaIl = borgo.orologio.adesso;
+      passano(31, [borgo, colle]);
+
+      // Il gesto è di chi amministra: Carla vede che la casa è persa, e non può.
+      const perCarla = await colle.messaggi.getConversazione(carla, conv);
+      expect(perCarla).toMatchObject({ casaPersaDal: spentaIl, puoTraslocare: false });
+      expect(await rifiuto(() => colle.messaggi.trasloca(carla, conv, { epoch: 4 }))).toBe(
+        "trasloco_solo_amministratori",
+      );
+
+      const perBruno = await borgo.messaggi.getConversazione(bruno, conv);
+      expect(perBruno).toMatchObject({
+        casaPersaDal: spentaIl,
+        congelata: false,
+        puoTraslocare: true,
+      });
+
+      const { conversazione: nuovo } = await borgo.messaggi.trasloca(bruno, conv, { epoch: 4 });
+      await quieta();
+
+      // Un gruppo nuovo, ordinato dalla casa di chi ha traslocato, che dice
+      // che cosa continua, chi è stato e quando. Anna, che ha la casa spenta,
+      // non c'è.
+      expect(nuovo.id).not.toBe(conv);
+      expect(nuovo).toMatchObject({
+        continua: {
+          casaPersaDal: spentaIl,
+          conversazioneId: conv,
+          da: `bruno@${borgo.chiave}`,
+          epoch: 4,
+          il: borgo.orologio.adesso,
+          nome: "Cena di quartiere",
+        },
+        nome: "Cena di quartiere",
+        ordinataQui: true,
+        ruoli: { [bruno]: "creatore", [`remote:${colle.chiave}:carla`]: "membro" },
+        tipo: "gruppo",
+      });
+      expect(nuovo.membri.map((m) => m.username).sort()).toEqual(["bruno", "carla"]);
+
+      // Il vecchio resta, marcato, con il legame al successore — in tutte e
+      // due le case vive. E non accetta più scritture né cambi.
+      for (const [c, chi] of [
+        [borgo, bruno],
+        [colle, carla],
+      ] as const) {
+        const vecchio = await c.messaggi.getConversazione(chi, conv);
+        expect(vecchio).toMatchObject({
+          congelata: true,
+          successori: [{ da: `bruno@${borgo.chiave}`, id: nuovo.id, il: borgo.orologio.adesso }],
+        });
+        expect(vecchio.membri.map((m) => m.username).sort()).toEqual(["anna", "bruno", "carla"]);
+        expect(
+          await rifiuto(() =>
+            c.messaggi.depositaArchivio(chi, conv, unaVoce("tardi", c.orologio.adesso)),
+          ),
+        ).toBe("gruppo_congelato");
+        expect(await rifiuto(() => c.messaggi.esci(chi, conv))).toBe("gruppo_congelato");
+        expect(
+          await rifiuto(() =>
+            c.messaggi.depositaHandshake(chi, conv, { busta: "C", epoch: 5, tipo: "commit" }),
+          ),
+        ).toBe("gruppo_congelato");
+        // La cronologia si legge ancora: la casa persa è soltanto una che non risponde.
+        expect((await c.messaggi.cronologia(chi, conv)).righe).toEqual([]);
+      }
+
+      // La casa di Carla ha il successore, con la stessa dichiarazione.
+      const daColle = await colle.messaggi.getConversazione(carla, nuovo.id);
+      expect(daColle).toMatchObject({ continua: nuovo.continua, ordinataQui: false });
+      // E nel successore si scrive.
+      expect(
+        colle.messaggi.depositaArchivio(carla, nuovo.id, unaVoce("m1", colle.orologio.adesso)),
+      ).toEqual({ scritte: 1 });
+    });
+  });
+
+  it("se nessun amministratore ha una casa viva trasloca un membro, e l'atto porta il suo nome", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      // Amministra soltanto Anna, e la sua casa è quella persa.
+      const { carla, conv } = await gruppo(aia, borgo, colle);
+      spegniAia(aia, [borgo, colle]);
+      passano(31, [borgo, colle]);
+
+      expect((await colle.messaggi.getConversazione(carla, conv)).puoTraslocare).toBe(true);
+      const { conversazione } = await colle.messaggi.trasloca(carla, conv, { epoch: 1 });
+      expect(conversazione.continua?.da).toBe(`carla@${colle.chiave}`);
+      expect(conversazione.ruoli?.[carla]).toBe("creatore");
+    });
+  });
+
+  it("una casa che quel giorno risponde non è persa, qualunque cosa dica il registro", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { bruno, conv } = await gruppo(aia, borgo, colle);
+      // Il registro di Borgo è fermo a un mese fa, ma Aia è accesa.
+      borgo.contatti.set(aia.chiave, borgo.orologio.adesso);
+      passano(31, [borgo, colle]);
+
+      expect(await rifiuto(() => borgo.messaggi.trasloca(bruno, conv, { epoch: 1 }))).toBe(
+        "casa_non_persa",
+      );
+      // Bussare è stato un contatto: il gesto non c'è più.
+      expect((await borgo.messaggi.getConversazione(bruno, conv)).casaPersaDal).toBeUndefined();
+      expect(borgo.messaggi.listConversazioni(bruno)).toHaveLength(1);
+    });
+  });
+
+  it("chi quel giorno non ha una casa raggiungibile non entra nel successore", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { bruno, conv } = await gruppo(aia, borgo, colle);
+      spegniAia(aia, [borgo, colle]);
+      passano(31, [borgo, colle]);
+      borgo.accese.delete(colle.chiave);
+
+      // Con Bruno non resterebbe nessuno: non nasce un gruppo di una persona.
+      expect(await rifiuto(() => borgo.messaggi.trasloca(bruno, conv, { epoch: 1 }))).toBe(
+        "trasloco_senza_nessuno",
+      );
+      expect(borgo.messaggi.listConversazioni(bruno)).toHaveLength(1);
+      expect((await borgo.messaggi.getConversazione(bruno, conv)).congelata).toBe(false);
+
+      // Con qualcuno di qui sì, e Carla — casa spenta — resta fuori: la si
+      // aggiunge a mano quando torna.
+      const dino = borgo.abita("dino");
+      borgo.repo.aggiungiMembro(conv, dino, "membro", borgo.orologio.adesso);
+      const { conversazione: nuovo } = await borgo.messaggi.trasloca(bruno, conv, { epoch: 1 });
+      expect(nuovo.membri.map((m) => m.username).sort()).toEqual(["bruno", "dino"]);
+
+      borgo.accese.set(colle.chiave, colle);
+      const { conversazione: conCarla } = await borgo.messaggi.aggiungiMembro(bruno, nuovo.id, {
+        casa: colle.chiave,
+        username: "carla",
+      });
+      expect(conCarla.membri.map((m) => m.username).sort()).toEqual(["bruno", "carla", "dino"]);
+    });
+  });
+
+  it("due traslochi insieme danno due successori visibili, e nessuno dei due è impedito", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { anna, bruno, carla, conv } = await gruppo(aia, borgo, colle);
+      for (const c of [borgo, colle]) {
+        const nome = c === borgo ? "bruno" : "carla";
+        await aia.messaggi.cambiaRuolo(anna, conv, `remote:${c.chiave}:${nome}`, "amministratore");
+      }
+      await quieta();
+      spegniAia(aia, [borgo, colle]);
+      passano(31, [borgo, colle]);
+      colle.orologio.adesso = new Date(Date.parse(colle.orologio.adesso) + 60_000).toISOString();
+
+      const [diBruno, diCarla] = await Promise.all([
+        borgo.messaggi.trasloca(bruno, conv, { epoch: 2 }),
+        colle.messaggi.trasloca(carla, conv, { epoch: 2 }),
+      ]);
+      await quieta();
+
+      const attesi = [
+        { da: `bruno@${borgo.chiave}`, id: diBruno.conversazione.id, il: borgo.orologio.adesso },
+        { da: `carla@${colle.chiave}`, id: diCarla.conversazione.id, il: colle.orologio.adesso },
+      ];
+      for (const [c, chi] of [
+        [borgo, bruno],
+        [colle, carla],
+      ] as const) {
+        expect((await c.messaggi.getConversazione(chi, conv)).successori).toEqual(attesi);
+        // Tre righe nell'elenco: il vecchio e i due successori.
+        expect(
+          c.messaggi
+            .listConversazioni(chi)
+            .map((x) => x.id)
+            .sort(),
+        ).toEqual([conv, ...attesi.map((a) => a.id)].sort());
+      }
+    });
+  });
+
+  it("una casa che vede ancora chi ordina sa del successore, ma non spegne la scrittura sulla parola di un'altra", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { bruno, carla, conv } = await gruppo(aia, borgo, colle);
+      // Aia è irraggiungibile da Borgo; Colle la sente ancora.
+      spegniAia(aia, [borgo]);
+      passano(31, [borgo, colle]);
+      colle.contatti.set(aia.chiave, colle.orologio.adesso);
+
+      const { conversazione: nuovo } = await borgo.messaggi.trasloca(bruno, conv, { epoch: 1 });
+      await quieta();
+
+      const perCarla = await colle.messaggi.getConversazione(carla, conv);
+      expect(perCarla).toMatchObject({ congelata: false, successori: [{ id: nuovo.id }] });
+      expect(
+        colle.messaggi.depositaArchivio(carla, conv, unaVoce("ancora", colle.orologio.adesso)),
+      ).toEqual({ scritte: 1 });
+
+      // Quando anche per Colle il silenzio supera la soglia, si congela anche lì.
+      spegniAia(aia, [colle]);
+      passano(31, [colle]);
+      expect((await colle.messaggi.getConversazione(carla, conv)).congelata).toBe(true);
+    });
+  });
+
+  it("una dichiarazione che non torna non marca niente", async () => {
+    await treCase(async (aia, borgo, colle) => {
+      const { carla, conv } = await gruppo(aia, borgo, colle);
+      colle.abita("dora");
+      spegniAia(aia, [borgo, colle]);
+      passano(31, [borgo, colle]);
+
+      const dichiara = (id: string, da: string, casaPersa: string): boolean =>
+        colle.messaggi.riceviComposizione(id, borgo.chiave, {
+          continua: {
+            casaPersa,
+            casaPersaDal: ORA,
+            conversazione: conv,
+            da,
+            epoch: 1,
+            il: colle.orologio.adesso,
+            nome: "Cena di quartiere",
+          },
+          membri: [
+            { chi: `bruno@${borgo.chiave}`, dal: ORA, ruolo: "creatore" },
+            { chi: `carla@${colle.chiave}`, dal: ORA, ruolo: "membro" },
+          ],
+          nome: "Cena di quartiere",
+          rimossi: [],
+          tipo: "gruppo",
+          versione: 1,
+        });
+
+      // Borgo firma un trasloco con il nome di una persona di Colle: non si scrive.
+      expect(dichiara("finto-1", `carla@${colle.chiave}`, aia.chiave)).toBe(true);
+      expect(colle.repo.traslocoDi("finto-1")).toBeUndefined();
+      // Qualcuno di Borgo che nel gruppo non c'era, o una casa persa che non
+      // è quella che lo ordinava: la dichiarazione resta sul successore, e il
+      // gruppo di prima non ne sa niente.
+      expect(dichiara("finto-2", `nessuno@${borgo.chiave}`, aia.chiave)).toBe(true);
+      expect(dichiara("finto-3", `bruno@${borgo.chiave}`, "d0".repeat(32))).toBe(true);
+      expect(colle.repo.traslocoDi("finto-2")).toBeDefined();
+
+      const vecchio = await colle.messaggi.getConversazione(carla, conv);
+      expect(vecchio.successori).toBeUndefined();
+      expect(vecchio.congelata).toBe(false);
     });
   });
 });

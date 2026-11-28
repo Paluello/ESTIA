@@ -458,6 +458,21 @@ export interface ComposizioneSulFilo {
   membri: Array<{ chi: string; ruolo: "creatore" | "amministratore" | "membro"; dal: string }>;
   /** Chi è stato tolto o è uscito. `da` è chi l'ha tolto: lui stesso, se è uscito. */
   rimossi: Array<{ chi: string; il: string; da: string }>;
+  /**
+   * Solo in un successore: il gruppo che continua, e chi l'ha traslocato
+   * (ADR 0042 §3, «Il trasloco», punto 4). Un campo in più e non
+   * un'operazione: una casa che non lo conosce lo ignora, e per lei il
+   * successore è un gruppo come un altro.
+   */
+  continua?: {
+    conversazione: string;
+    nome: string;
+    epoch: number;
+    da: string;
+    il: string;
+    casaPersa: string;
+    casaPersaDal: string;
+  };
 }
 
 /** Quanti rimossi in una composizione: i più recenti. */
@@ -1440,7 +1455,58 @@ export function leggiComposizione(value: unknown): ComposizioneSulFilo | undefin
     rimossi.push({ chi, da, il });
   }
 
-  return { membri, nome, rimossi, tipo: value.tipo, versione: value.versione };
+  const continua = value.continua === undefined ? undefined : leggiContinua(value.continua);
+  if (value.continua !== undefined && continua === undefined) {
+    return undefined;
+  }
+
+  return {
+    membri,
+    nome,
+    rimossi,
+    tipo: value.tipo,
+    versione: value.versione,
+    ...(continua === undefined ? {} : { continua }),
+  };
+}
+
+/** La dichiarazione di un successore, o niente: come il resto, tutta o niente. */
+function leggiContinua(value: unknown): ComposizioneSulFilo["continua"] {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const conversazione = readShortText(value.conversazione, MAX_NAME_LENGTH);
+  // Il nome di prima può essere vuoto: si ripete com'era, non si pretende.
+  const nome =
+    typeof value.nome === "string" && value.nome.length <= MAX_NAME_LENGTH ? value.nome : undefined;
+  const da = leggiIndirizzo(value.da);
+  const il = leggiIstante(value.il);
+  const casaPersaDal = leggiIstante(value.casaPersaDal);
+  if (
+    conversazione === undefined ||
+    nome === undefined ||
+    da === undefined ||
+    il === undefined ||
+    casaPersaDal === undefined ||
+    typeof value.epoch !== "number" ||
+    !Number.isSafeInteger(value.epoch) ||
+    value.epoch < 0 ||
+    typeof value.casaPersa !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.casaPersa)
+  ) {
+    return undefined;
+  }
+
+  return {
+    casaPersa: value.casaPersa,
+    casaPersaDal,
+    conversazione,
+    da,
+    epoch: value.epoch,
+    il,
+    nome,
+  };
 }
 
 function parseComposizione(

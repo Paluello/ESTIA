@@ -315,7 +315,31 @@ Le otto operazioni bastavano per una conversazione fra due case. Con tre non bas
 
 **Il Welcome viaggia per indirizzo.** Depositato presso chi ordina da un'altra casa, il destinatario è `nome@casa`, e chi ordina lo traduce nell'id con cui lo nomina lui: prima era l'id della casa di chi depositava, che altrove non vuol dire niente.
 
-**Che cosa questo non fa.** Non rende la composizione dell'istanza uguale all'albero MLS: sono due elenchi, tenuti da due parti, e l'istanza non vede il secondo. Che coincidano lo controlla il client (lo confronta e lo dice); un'istanza disonesta può dichiarare una composizione falsa, e la difesa resta quella di §1 — le chiavi nell'albero e il numero di sicurezza. Il tetto di 50 l'istanza lo conta in persone, non in foglie. E il trasloco di §3 dovrà portare con sé anche la composizione: non è costruito.
+**Che cosa questo non fa.** Non rende la composizione dell'istanza uguale all'albero MLS: sono due elenchi, tenuti da due parti, e l'istanza non vede il secondo. Che coincidano lo controlla il client (lo confronta e lo dice); un'istanza disonesta può dichiarare una composizione falsa, e la difesa resta quella di §1 — le chiavi nell'albero e il numero di sicurezza. Il tetto di 50 l'istanza lo conta in persone, non in foglie. E il trasloco di §3 dovrà portare con sé anche la composizione: non è costruito (**lo è dal 2026-11-28**, vedi la sezione che segue).
+
+## Costruito il 2026-11-28: il trasloco
+
+§3 «Il trasloco» è costruito com'è scritto. Questa sezione dice **come**, e nomina le scelte che il testo lasciava a chi costruiva: le prime tre aspettano la conferma del proprietario.
+
+**Persa.** Una casa è persa quando l'ultimo contatto registrato con lei — `last_seen_at`, che il battito di [ADR 0041](0041-le-istanze-si-tengono-d-occhio.md) tiene aggiornato e che ogni sua richiesta in arrivo scrive — è più vecchio di 30 giorni (`SOGLIA_CASA_PERSA_MS`). Di una casa che non ha una riga fra le istanze remote vale il giorno in cui la conversazione è nata qui, che è arrivata da lei. La soglia apre il gesto e nient'altro: quando una persona lo fa, l'istanza **bussa un'ultima volta**, e una casa che risponde quel giorno non è persa (`casa_non_persa`). Serve anche per un limite che va saputo: il battito chiede solo alle case **collegate**, quindi di una casa che ordina senza esserlo si conosce solo l'ultima volta che ha scritto lei.
+
+**Chi.** Chi amministra il gruppo secondo lo specchio di questa casa. Un membro soltanto se nessun amministratore ha una casa che risponde in quel momento.
+
+**Il successore.** Una conversazione nuova, ordinata dalla casa di chi trasloca, con lo stesso nome. Dentro: chi trasloca, le persone di questa casa, e quelle delle case che **rispondono a una domanda fatta in quel momento**. La casa persa e quelle che tacciono restano fuori, e si aggiungono a mano. Un successore di una persona sola non nasce. Il gruppo MLS e il mazzo li crea il client di chi ha traslocato, come per ogni gruppo: sono nuovi per costruzione.
+
+**La dichiarazione.** Sta in una tabella sua (migrazione 36) e viaggia nella `composizione` del successore, in un campo in più — `continua`: l'id del gruppo di prima, il suo nome, l'ultima epoch che chi ha traslocato aveva visto (la dice il suo client: l'istanza non la conosce), chi, quando, quale casa era persa e da quando. Nessuna operazione nuova: una casa che non conosce il campo lo ignora, e per lei il successore è un gruppo come un altro. Chi riceve la scrive solo se chi ha traslocato è **della casa che ordina il successore** — la chiave della connessione — e la mette accanto al gruppo di prima solo se quella persona **nel gruppo c'era** e la casa nominata come persa è quella che lo ordinava.
+
+**Il gruppo di prima.** Si congela nella casa di chi trasloca nel momento del trasloco. **Scelta 1**: in un'altra casa si congela quando arriva la dichiarazione **e anche per quella casa** chi ordina risulta persa. Fino ad allora quella casa mostra il successore e lascia scrivere: altrimenti un membro qualunque, da un'altra casa, spegnerebbe la scrittura qui dichiarando il trasloco di un gruppo vivo. Congelato vuol dire che l'istanza rifiuta voci d'archivio, handshake, `GroupInfo`, mazzo e cambi di membri (`gruppo_congelato`), e non chiede più niente alla casa persa. La cronologia si ricompone come prima: le voci delle case vive si visitano, quelle della casa persa restano segnaposto. Non si scongela, nemmeno se la casa torna.
+
+**Le chiavi che ogni client ha già. Scelta 2.** Il testo dice che la parte vecchia «si legge con le chiavi che ogni client ha già», ma il client non le teneva: la catena d'archivio si riapriva a ogni apertura dal mazzo, e il mazzo stava **solo** sulla casa che ordina (decisione 5). Persa quella, il gruppo di prima non si sarebbe riaperto dopo aver ricaricato la pagina. Ora il browser tiene accanto allo stato del gruppo **il mazzo com'è avvolto** sotto l'epoch di quello stato, e lo riscrive a ogni salvataggio. Non è una chiave in chiaro: si apre soltanto con lo stato MLS, che sta nello stesso posto, e l'uscita cancella tutti e due. Le case continuano a non conservarlo. Un dispositivo che nel gruppo non c'era non ha niente da aprire, com'è scritto.
+
+**I ruoli nel successore. Scelta 3.** Chi trasloca ne è il creatore; chi amministrava resta amministratore, e il creatore di prima — se la sua casa risponde — lo diventa.
+
+**Due traslochi.** Niente li impedisce, nemmeno dalla stessa casa: sono due righe in `conversazione_traslochi` e due conversazioni nell'elenco, ognuna con il nome di chi l'ha fatto e la data. L'interfaccia smette di offrire il gesto a chi vede già un successore; non è un controllo.
+
+**Come si verifica.** [`gruppi.test.ts`](../../apps/core-api/src/messaggi/gruppi.test.ts) §«il trasloco»; [`due-case-mls.test.ts`](../../apps/core-api/src/messaggi/due-case-mls.test.ts) §«il trasloco fra tre case» — tre istanze intere sul filo in processo, il client vero, la casa che ordina spenta, un mese di orologio finto; [`conversazione.test.ts`](../../apps/web/src/mls/conversazione.test.ts) §«un gruppo congelato»; [`Trasloco.test.tsx`](../../apps/web/src/screens/gruppi/Trasloco.test.tsx). **Non provato**: in un browser vero, con iroh, sul campo.
+
+**Che cosa non fa.** Non toglie un gruppo congelato dall'elenco (non se ne esce: non c'è più a chi dirlo). Non riporta dentro chi era rimasto fuori. Non firma la dichiarazione: la dice la casa di chi ha traslocato, e vale quanto vale quella casa.
 
 ## Quando riesaminare
 

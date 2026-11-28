@@ -92,6 +92,20 @@ export interface MessaggiRepository {
   /** Questa casa ha qualcuno **tolto** da questa conversazione? */
   haRimossoDiCasa(conversazioneId: string, remoteKey: string): boolean;
   /**
+   * Scrive ciò che un successore dichiara di sé (ADR 0042 §3, «Il trasloco»).
+   * Una volta scritto non cambia: una seconda dichiarazione per lo stesso
+   * successore si ignora.
+   */
+  dichiaraTrasloco(trasloco: TraslocoRecord): void;
+  /** Che cosa dichiara questo gruppo, se è un successore. */
+  traslocoDi(successoreId: string): TraslocoRecord | undefined;
+  /** I successori dichiarati di un gruppo, dal più vecchio. */
+  successoriDi(conversazioneId: string): TraslocoRecord[];
+  /** Quando questa casa ha congelato il gruppo; `null` se non lo è. */
+  congelataIl(conversazioneId: string): string | null;
+  /** Congela un gruppo: da qui si legge soltanto. Non si scongela. */
+  congela(conversazioneId: string, il: string): void;
+  /**
    * Chi mette in fila i commit di questa conversazione (ADR 0042 §3).
    *
    * `null` vuol dire **questa casa**, e `undefined` che la conversazione non
@@ -290,6 +304,20 @@ export interface MessaggiRepository {
 }
 
 /** Un membro di una conversazione, con quello che la composizione dice di lui. */
+/** Un trasloco, come lo dichiara il successore. Le persone e le case per indirizzo e chiave. */
+export interface TraslocoRecord {
+  successoreId: string;
+  /** Il gruppo di prima. */
+  conversazioneId: string;
+  nomeDiPrima: string;
+  epoch: number;
+  /** `username@casa` di chi ha traslocato. */
+  da: string;
+  il: string;
+  casaPersa: string;
+  casaPersaDal: string;
+}
+
 export interface MembroRecord {
   userId: string;
   ruolo: RuoloGruppo;
@@ -409,6 +437,34 @@ export interface GroupInfoRecord {
   groupInfo: string;
   updatedAt: string;
   updatedBy: string;
+}
+
+const SELECT_TRASLOCO = `SELECT successore_id, conversazione_id, nome_di_prima, epoch, da, il,
+                                casa_persa, casa_persa_dal
+                           FROM conversazione_traslochi`;
+
+interface TraslocoRow {
+  successore_id: string;
+  conversazione_id: string;
+  nome_di_prima: string;
+  epoch: number;
+  da: string;
+  il: string;
+  casa_persa: string;
+  casa_persa_dal: string;
+}
+
+function traslocoDaRiga(row: TraslocoRow): TraslocoRecord {
+  return {
+    casaPersa: row.casa_persa,
+    casaPersaDal: row.casa_persa_dal,
+    conversazioneId: row.conversazione_id,
+    da: row.da,
+    epoch: row.epoch,
+    il: row.il,
+    nomeDiPrima: row.nome_di_prima,
+    successoreId: row.successore_id,
+  };
 }
 
 export class SqliteMessaggiRepository implements MessaggiRepository {
@@ -660,6 +716,54 @@ export class SqliteMessaggiRepository implements MessaggiRepository {
       this.db.exec("ROLLBACK");
       throw causa;
     }
+  }
+
+  public dichiaraTrasloco(trasloco: TraslocoRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO conversazione_traslochi
+           (successore_id, conversazione_id, nome_di_prima, epoch, da, il, casa_persa, casa_persa_dal)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        trasloco.successoreId,
+        trasloco.conversazioneId,
+        trasloco.nomeDiPrima,
+        trasloco.epoch,
+        trasloco.da,
+        trasloco.il,
+        trasloco.casaPersa,
+        trasloco.casaPersaDal,
+      );
+  }
+
+  public traslocoDi(successoreId: string): TraslocoRecord | undefined {
+    const row = this.db.prepare(`${SELECT_TRASLOCO} WHERE successore_id = ?`).get(successoreId) as
+      TraslocoRow | undefined;
+
+    return row === undefined ? undefined : traslocoDaRiga(row);
+  }
+
+  public successoriDi(conversazioneId: string): TraslocoRecord[] {
+    const rows = this.db
+      .prepare(`${SELECT_TRASLOCO} WHERE conversazione_id = ? ORDER BY il ASC, successore_id ASC`)
+      .all(conversazioneId) as unknown as TraslocoRow[];
+
+    return rows.map(traslocoDaRiga);
+  }
+
+  public congelataIl(conversazioneId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT congelata_il FROM conversazioni WHERE id = ?`)
+      .get(conversazioneId) as { congelata_il: string | null } | undefined;
+
+    return row?.congelata_il ?? null;
+  }
+
+  public congela(conversazioneId: string, il: string): void {
+    this.db
+      .prepare(`UPDATE conversazioni SET congelata_il = ? WHERE id = ? AND congelata_il IS NULL`)
+      .run(il, conversazioneId);
   }
 
   public caseCustodi(conversazioneId: string): string[] {

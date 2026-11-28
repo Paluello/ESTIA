@@ -20,7 +20,11 @@
  */
 import type { DispositiviService } from "../dispositivi/service.js";
 import type { RemoteState } from "../federation/repository.js";
-import type { FederationService, MessaggiDirectory } from "../federation/service.js";
+import {
+  TIMEOUT_BATTITO_MS,
+  type FederationService,
+  type MessaggiDirectory,
+} from "../federation/service.js";
 import type { FollowRepository } from "../profile/follows.js";
 import type { ProfileRepository } from "../profile/repository.js";
 
@@ -89,9 +93,14 @@ export function reteFraCase(federation: FederationService, casa: string): ReteFr
       federation.depositaStatoPresso(altra, conversazioneId, tipo, stato),
     leggiStato: (altra, conversazioneId, tipo) =>
       federation.leggiStatoPresso(altra, conversazioneId, tipo),
+    // Il tetto del battito, non quello di una domanda ordinaria: è la stessa
+    // domanda — «ci sei?» — e chi trasloca la fa a più case insieme.
+    risponde: async (altra) => (await federation.ping(altra, TIMEOUT_BATTITO_MS)).reached,
     segnapostiDa: (altra, conversazioneId, dopo) =>
       federation.segnapostiDaPresso(altra, conversazioneId, dopo),
     spingiSegnaposti: (altra, spinta) => federation.spingiSegnapostiA(altra, spinta),
+    ultimoContatto: (altra) =>
+      federation.list().find((r) => r.publicKey === altra)?.lastSeenAt ?? undefined,
     visitaArchivio: (altra, conversazioneId, ids) =>
       federation.visitaArchivioPresso(altra, conversazioneId, ids),
   };

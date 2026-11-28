@@ -15,9 +15,12 @@ import {
   gestiSu,
   gestisce,
   idAtteso,
+  haUnTrasloco,
   mancaPerCreare,
+  nomeDaIndirizzo,
   nomeNellEvento,
   nomina,
+  statoTrasloco,
 } from "./logica.js";
 
 const CASA = "a".repeat(64);
@@ -158,5 +161,85 @@ describe("creare un gruppo", () => {
     expect(mancaPerCreare("Orto", 2)).toBeUndefined();
     expect(mancaPerCreare("Orto", 49)).toBeUndefined();
     expect(mancaPerCreare("Orto", 50)).toBe("troppe");
+  });
+});
+
+describe("il trasloco (ADR 0042 §3)", () => {
+  const mie = new Set(["g1", "g2"]);
+  const IL = "2026-11-28T10:00:00.000Z";
+
+  it("un gruppo qualunque non ha niente da dire", () => {
+    const stato = statoTrasloco(NORMALE, mie);
+    expect(stato).toEqual({ congelato: false, successori: [] });
+    expect(haUnTrasloco(stato)).toBe(false);
+  });
+
+  it("il gesto c'è solo quando la casa è persa, e solo per chi può", () => {
+    const persa = { ...NORMALE, casaPersaDal: IL, congelata: false };
+    expect(statoTrasloco({ ...persa, puoTraslocare: true }, mie).persa).toEqual({
+      dal: IL,
+      puoi: true,
+    });
+    // Chi non amministra vede che la casa è persa, e non il gesto.
+    expect(statoTrasloco({ ...persa, puoTraslocare: false }, mie).persa).toEqual({
+      dal: IL,
+      puoi: false,
+    });
+    expect(statoTrasloco({ ...NORMALE, puoTraslocare: false }, mie).persa).toBeUndefined();
+  });
+
+  it("un gruppo traslocato porta ai suoi successori — a tutti e due, se sono due — e non offre più il gesto", () => {
+    const stato = statoTrasloco(
+      {
+        ...NORMALE,
+        casaPersaDal: IL,
+        congelata: true,
+        puoTraslocare: true,
+        successori: [
+          { da: `bruno@${CASA}`, id: "g2", il: IL },
+          { da: `carla@${BORGO}`, id: "g3", il: IL },
+        ],
+      },
+      mie,
+    );
+
+    expect(stato.congelato).toBe(true);
+    expect(stato.persa).toBeUndefined();
+    // Nel secondo chi guarda non c'è: lo vede, e non ha dove andare.
+    expect(stato.successori.map((s) => [s.id, s.mio])).toEqual([
+      ["g2", true],
+      ["g3", false],
+    ]);
+  });
+
+  it("in un gruppo congelato nessuno aggiunge, toglie o nomina", () => {
+    const congelato = { ...NORMALE, congelata: true };
+    expect(gestisce(congelato, "u-anna")).toBe(false);
+    expect(nomina(congelato, "u-anna")).toBe(false);
+    expect(gestiSu(congelato, "u-anna", CARLA_ID)).toEqual({
+      nominare: false,
+      revocare: false,
+      togliere: false,
+    });
+  });
+
+  it("un successore dichiara che cosa continua, e chi l'ha traslocato ha un nome", () => {
+    const continua = {
+      casaPersaDal: "2026-10-01T10:00:00.000Z",
+      conversazioneId: "g0",
+      da: `bruno@${CASA}`,
+      epoch: 4,
+      il: IL,
+      nome: "Orto",
+    };
+    const stato = statoTrasloco({ ...NORMALE, continua }, mie);
+    // Il gruppo di prima non è fra le conversazioni di chi guarda: non si apre.
+    expect(stato.continua).toEqual({ ...continua, apribile: false });
+    expect(statoTrasloco({ ...NORMALE, continua }, new Set(["g0"])).continua?.apribile).toBe(true);
+
+    // Bruno non si è dato un nome: vale il nome utente. Chi non è fra i membri idem.
+    expect(nomeDaIndirizzo(`bruno@${CASA}`, NORMALE, CASA)).toBe("bruno");
+    expect(nomeDaIndirizzo(`carla@${BORGO}`, NORMALE, CASA)).toBe("Carla");
+    expect(nomeDaIndirizzo(`dario@${BORGO}`, NORMALE, CASA)).toBe("dario");
   });
 });

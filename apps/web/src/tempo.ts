@@ -89,6 +89,19 @@ export function ora(valore: string): string {
   });
 }
 
+/**
+ * «5 aprile», e l'anno quando non è questo: il giorno in cui è successo
+ * qualcosa che si racconta con una frase, come un trasloco.
+ */
+export function giornoDi(valore: string, adesso: Date = new Date()): string {
+  const istante = new Date(valore);
+  return istante.toLocaleDateString(linguaCorrente(), {
+    day: "numeric",
+    month: "long",
+    ...(istante.getFullYear() === adesso.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
 /** «agosto 2026»: da quando una persona è qui. */
 export function meseEAnno(valore: string): string {
   return new Date(valore).toLocaleDateString(linguaCorrente(), { month: "long", year: "numeric" });

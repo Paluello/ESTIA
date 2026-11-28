@@ -206,13 +206,16 @@ export function MembriGruppo({
                     {t("gruppi.aggiungi.voce")}
                   </Button>
                 )}
-                <Button
-                  icon="logout"
-                  onClick={() => setVista({ kind: "conferma-esci" })}
-                  variant="quiet"
-                >
-                  {t("gruppi.esci.voce")}
-                </Button>
+                {/* Da un gruppo congelato non si esce: non c'è più a chi dirlo. */}
+                {conversazione.congelata !== true && (
+                  <Button
+                    icon="logout"
+                    onClick={() => setVista({ kind: "conferma-esci" })}
+                    variant="quiet"
+                  >
+                    {t("gruppi.esci.voce")}
+                  </Button>
+                )}
               </div>
             </>
           )}
