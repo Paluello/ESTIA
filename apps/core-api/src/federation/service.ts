@@ -420,6 +420,12 @@ export interface InboundLimits {
   readTimeoutMs: number;
 }
 
+/** Fra `#ask` e `#chiedi`: allo scadere, chi chiede chiude la connessione. */
+interface Scadenza {
+  scaduta: boolean;
+  chiudi?: () => void;
+}
+
 /** Una domanda che non è mai finita di arrivare. */
 const TACIUTA = Symbol("taciuta");
 
@@ -1578,19 +1584,22 @@ export class FederationService implements AlpnService {
     remoteKey: string;
   }> {
     const tetto = timeoutMs ?? this.#timeoutDomanda;
-    const domanda = this.#chiedi(target, request, limit);
+    const fine: Scadenza = { scaduta: false };
+    const domanda = this.#chiedi(target, request, limit, fine);
 
-    // Chi perde la corsa non viene abbandonato: continua per conto suo fino al
-    // `finally` che chiude la connessione, e il suo errore viene raccolto qui
-    // perché nessuno lo aspetta più.
+    // Chi perde la corsa non viene abbandonato: allo scadere la sua
+    // connessione si chiude (prima restava aperta finché l'altra casa non
+    // rispondeva, revisione interna 2026-11-27), e il suo errore viene raccolto
+    // qui perché nessuno lo aspetta più.
     domanda.catch(() => undefined);
 
     let timer: NodeJS.Timeout | undefined;
     const scadenza = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`L'altra istanza non ha risposto entro ${String(tetto)} ms.`)),
-        tetto,
-      );
+      timer = setTimeout(() => {
+        fine.scaduta = true;
+        fine.chiudi?.();
+        reject(new Error(`L'altra istanza non ha risposto entro ${String(tetto)} ms.`));
+      }, tetto);
       timer.unref?.();
     });
 
@@ -1605,14 +1614,21 @@ export class FederationService implements AlpnService {
     target: string,
     request: ProtocolRequest,
     limit: number,
+    fine: Scadenza = { scaduta: false },
   ): Promise<{
     response: unknown;
     via: ReachedVia;
     remoteKey: string;
   }> {
     const connection = await this.#endpoint.connect(target, PROTOCOL_ALPN);
+    fine.chiudi = () => connection.close(0n, []);
 
     try {
+      // Scaduta mentre ci si collegava: non si comincia nemmeno.
+      if (fine.scaduta) {
+        throw new Error("scaduta");
+      }
+
       const stream = await connection.openBi();
 
       await writeMessage(stream, request);

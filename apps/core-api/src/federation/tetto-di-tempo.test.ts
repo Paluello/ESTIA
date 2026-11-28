@@ -43,7 +43,81 @@ class CasaMuta implements AlpnService {
   }
 }
 
+/** Come la muta, ma si accorge di quando chi ha chiesto chiude la connessione. */
+class CasaMutaCheAscolta implements AlpnService {
+  public readonly alpn = PROTOCOL_ALPN;
+  public chiusaDopoMs: number | undefined;
+
+  public async serve(connection: IrohConnection): Promise<void> {
+    const inizio = Date.now();
+
+    await connection.acceptBi();
+
+    try {
+      // Si resta qui finché la connessione esiste: un secondo stream non arriva.
+      await connection.acceptBi();
+    } catch {
+      this.chiusaDopoMs = Date.now() - inizio;
+    }
+  }
+}
+
 describe("una casa che accetta e poi tace", () => {
+  /**
+   * Revisione interna, 2026-11-27: allo scadere del tetto la domanda veniva
+   * abbandonata ma la sua connessione restava aperta, finché l'altra casa non
+   * rispondeva o il trasporto non si arrendeva.
+   */
+  it("allo scadere chiude la connessione, non la lascia aperta", async () => {
+    await withTempDataDir(async (primo) => {
+      const database = openDatabase(primo);
+      const endpointA = new InstanceEndpoint(new Uint8Array(randomBytes(32)));
+      const remotes = new SqliteRemoteInstanceRepository(database);
+      const federation = new FederationService({
+        endpoint: endpointA,
+        instanceName: () => "Via Roma",
+        remotes,
+        timeoutMs: 700,
+      });
+
+      endpointA.register(federation);
+      await endpointA.open("local");
+
+      const muta = new CasaMutaCheAscolta();
+      const endpointB = new InstanceEndpoint(new Uint8Array(randomBytes(32)));
+
+      endpointB.register(muta);
+      await endpointB.open("local");
+
+      try {
+        remotes.upsertState({
+          at: new Date().toISOString(),
+          declaredName: "Via Milano",
+          publicKey: endpointB.endpointId ?? "",
+          state: "collegata",
+        });
+
+        await federation.fetchBacheca(
+          endpointB.ticket ?? "",
+          [{ nome: "anna", prova: "prova-qualunque" }],
+          { da: "bruno", quanti: 10 },
+        );
+
+        // La chiusura viaggia sul filo: le si dà un attimo per arrivare.
+        for (let i = 0; i < 50 && muta.chiusaDopoMs === undefined; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        expect(muta.chiusaDopoMs).toBeDefined();
+        expect(muta.chiusaDopoMs!).toBeLessThan(5_000);
+      } finally {
+        await endpointA.close();
+        await endpointB.close();
+        database.close();
+      }
+    });
+  }, 30_000);
+
   it("non tiene ferma una lettura oltre il tetto di tempo", async () => {
     await withTempDataDir(async (primo) => {
       const database = openDatabase(primo);
