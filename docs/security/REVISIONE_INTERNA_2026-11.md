@@ -36,7 +36,7 @@ Ogni rilievo «alto» è stato riprodotto prima di correggerlo. Ogni correzione 
 | Bassa   | Profili     | Nella ricerca dei membri `_` e `%` valevano «qualunque carattere»                                                               | [#45](https://github.com/Paluello/ESTIA/pull/45) |
 | Bassa   | Federazione | La prova di rete accettava connessioni senza tetto né tempo massimo, anche da chi non è collegato                               | [#46](https://github.com/Paluello/ESTIA/pull/46) |
 | Bassa   | Identità    | Un solo invito poteva tenere in attesa quante richieste voleva, e con loro i nomi utente                                        | [#47](https://github.com/Paluello/ESTIA/pull/47) |
-| Bassa   | Backup      | Un archivio non diceva da quale istanza veniva: uno cifrato da altri con la chiave pubblica sostituiva l'istanza                | [#48](https://github.com/Paluello/ESTIA/pull/48) |
+| Bassa   | Backup      | Un archivio non diceva da quale istanza veniva: uno cifrato da altri con la chiave pubblica sostituiva l'istanza                | [#50](https://github.com/Paluello/ESTIA/pull/50) |
 | Bassa   | Operazioni  | Il ripristino da root seguiva link già presenti e aveva tutte le capability                                                     | [#19](https://github.com/Paluello/ESTIA/pull/19) |
 | Bassa   | CI          | I workflow di verifica non limitavano i permessi del token                                                                      | [#14](https://github.com/Paluello/ESTIA/pull/14) |
 
