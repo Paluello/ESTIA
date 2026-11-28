@@ -101,8 +101,8 @@ async function gruppoDiTre(): Promise<Scena> {
   const carla = ctx("carla");
 
   const sAnna = await apriCon(anna, CONV, [
-    { destinatario: id(BRUNO), keyPackage: await chiavi.bruno.pubblica() },
-    { destinatario: id(CARLA), keyPackage: await chiavi.carla.pubblica() },
+    { destinatario: id(BRUNO), keyPackage: await chiavi.bruno.pubblica(), membro: BRUNO },
+    { destinatario: id(CARLA), keyPackage: await chiavi.carla.pubblica(), membro: CARLA },
   ]);
 
   return {
@@ -263,7 +263,7 @@ describe("togliere qualcuno (criterio 3 di M8)", () => {
 
     // Tutti e due partono dall'epoch 1. Bruno arriva primo.
     const brunoDopo = await aggiungiFoglie(bruno, sBruno, DARIO, [
-      { destinatario: id(DARIO), keyPackage: await chiaviDario.pubblica() },
+      { destinatario: id(DARIO), keyPackage: await chiaviDario.pubblica(), membro: DARIO },
     ]);
     expect(epochDi(brunoDopo.stato)).toBe(2);
 
@@ -351,7 +351,7 @@ describe("riammettere, e i dispositivi di una persona", () => {
     istanza.ammetti("bruno", telefono.chiaveDiFirma);
 
     const conDue = await aggiungiFoglie(anna, sAnna, BRUNO, [
-      { destinatario: id(BRUNO), keyPackage: await telefono.pubblica() },
+      { destinatario: id(BRUNO), keyPackage: await telefono.pubblica(), membro: BRUNO },
     ]);
     expect(foglieDi(conDue.stato, BRUNO)).toHaveLength(2);
     // Nessuno è uscito: la catena resta quella.
@@ -373,7 +373,7 @@ describe("riammettere, e i dispositivi di una persona", () => {
 
     await expect(
       aggiungiFoglie(anna, sAnna, DARIO, [
-        { destinatario: id(DARIO), keyPackage: await chiavi.bruno.pubblica() },
+        { destinatario: id(DARIO), keyPackage: await chiavi.bruno.pubblica(), membro: DARIO },
       ]),
     ).rejects.toBeInstanceOf(ChiaveDiUnAltro);
     expect(istanza.depositati()).toHaveLength(prima);

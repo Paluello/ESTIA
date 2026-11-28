@@ -490,7 +490,7 @@ export function Messaggi(): React.ReactElement {
       for (const altro of altri) {
         try {
           for (const keyPackage of await chiaviDi(altro, casa)) {
-            invitati.push({ idDiChiEntra: altro.id, keyPackage });
+            invitati.push({ idDiChiEntra: altro.id, keyPackage, membro: membroDi(altro, casa) });
           }
         } catch (causa) {
           primaCausa ??= causa;

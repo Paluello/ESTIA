@@ -13,7 +13,7 @@ import { messaggioDiProvaChiave, type HandshakeTipo } from "@estia/contracts";
 
 import { api } from "../api.js";
 import { ALGORITMO, type Anagrafe, type Cassetto } from "./dispositivo.js";
-import type { Deposito, Istanza } from "./sessione.js";
+import type { CommitInSospeso, Deposito, Istanza } from "./sessione.js";
 
 /* ------------------------------ il deposito ------------------------------ */
 
@@ -24,6 +24,8 @@ const CURSORI = "cursori_handshake";
 const MAZZI = "mazzi_avvolti";
 /** L'identità del dispositivo e la sua scorta di `KeyPackage`. */
 const DISPOSITIVO = "dispositivo";
+/** Il commit proprio che non si sa ancora se la fila ha preso. */
+const SOSPESI = "commit_in_sospeso";
 
 function apriDb(): Promise<IDBDatabase> {
   return new Promise((risolvi, rifiuta) => {
@@ -32,7 +34,7 @@ function apriDb(): Promise<IDBDatabase> {
       return;
     }
 
-    const richiesta = indexedDB.open(DB, 3);
+    const richiesta = indexedDB.open(DB, 4);
     richiesta.onupgradeneeded = () => {
       const db = richiesta.result;
       if (!db.objectStoreNames.contains(STATI)) {
@@ -46,6 +48,11 @@ function apriDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(MAZZI)) {
         db.createObjectStore(MAZZI);
+      }
+      // Dalla versione 4. Gli altri depositi restano com'erano: chi arriva
+      // dalla 3 non ha niente in sospeso, e trova questo vuoto.
+      if (!db.objectStoreNames.contains(SOSPESI)) {
+        db.createObjectStore(SOSPESI);
       }
     };
     richiesta.onsuccess = () => resolveDb(richiesta, risolvi);
@@ -87,6 +94,21 @@ function svuotaStore(store: string): Promise<void> {
   );
 }
 
+function togliDa(store: string, chiave: string): Promise<void> {
+  return apriDb().then(
+    (db) =>
+      new Promise<void>((risolvi, rifiuta) => {
+        const richiesta = db.transaction(store, "readwrite").objectStore(store).delete(chiave);
+        richiesta.onsuccess = () => {
+          risolvi();
+        };
+        richiesta.onerror = () => {
+          rifiuta(richiesta.error);
+        };
+      }),
+  );
+}
+
 function scriviIn(store: string, chiave: string, valore: unknown): Promise<void> {
   return apriDb().then(
     (db) =>
@@ -114,13 +136,20 @@ export const depositoIndexedDb: Deposito = {
   leggi: (conversazioneId) => leggiDa<Uint8Array>(STATI, conversazioneId),
   leggiCursore: (conversazioneId) => leggiDa<string>(CURSORI, conversazioneId),
   leggiMazzo: (conversazioneId) => leggiDa<string>(MAZZI, conversazioneId),
+  leggiSospeso: (conversazioneId) => leggiDa<CommitInSospeso>(SOSPESI, conversazioneId),
   scrivi: (conversazioneId, stato) => scriviIn(STATI, conversazioneId, stato),
   scriviCursore: (conversazioneId, cursore) => scriviIn(CURSORI, conversazioneId, cursore),
   scriviMazzo: (conversazioneId, mazzo) => scriviIn(MAZZI, conversazioneId, mazzo),
+  scriviSospeso: (conversazioneId, sospeso) =>
+    sospeso === undefined
+      ? togliDa(SOSPESI, conversazioneId)
+      : scriviIn(SOSPESI, conversazioneId, sospeso),
   svuota: async () => {
     await svuotaStore(STATI);
     await svuotaStore(CURSORI);
     await svuotaStore(MAZZI);
+    // Un commit in sospeso porta lo stato del gruppo: va via con lui.
+    await svuotaStore(SOSPESI);
   },
 };
 

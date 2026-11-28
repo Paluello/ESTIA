@@ -10,12 +10,17 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { avvolgi, catenaNuova, catenaRuotata } from "./archivio.js";
 import { CASA, depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
-import { epochDi, membri, rientra } from "./gruppo.js";
+import { epochDi, membri, rientra, serraturaArchivio } from "./gruppo.js";
 import {
   aggiungiMembro,
   apri,
+  apriCon,
+  ChiaveDiUnAltro,
   cronologia,
+  DispositivoInAttesa,
+  DiUnAltraConversazione,
   entra,
   invia,
   riprendi,
@@ -23,6 +28,7 @@ import {
   ruotaArchivio,
   sincronizza,
   type Contesto,
+  type Istanza,
 } from "./sessione.js";
 
 /** I nomi di chi c'è: `membri` porta anche la casa (ADR 0042 §0). */
@@ -48,6 +54,8 @@ function daBase64(s: string): Uint8Array {
 const ID_ANNA = "u-anna";
 const ID_BRUNO = "u-bruno";
 const ID_CARLA = "u-carla";
+const BRUNO = { casa: CASA, username: "bruno" };
+const CARLA = { casa: CASA, username: "carla" };
 
 /** Anna apre, Bruno entra dal suo Welcome. Due depositi, un'istanza sola. */
 async function dueDispositivi(): Promise<{
@@ -76,7 +84,7 @@ async function dueDispositivi(): Promise<{
     istanza: istanza.per(ID_BRUNO),
   };
 
-  const sessioneAnna = await apri(anna, "conv-1", await chiaviBruno.pubblica(), ID_BRUNO);
+  const sessioneAnna = await apri(anna, "conv-1", await chiaviBruno.pubblica(), ID_BRUNO, BRUNO);
 
   const perBruno = await bruno.istanza.handshakeDopo("conv-1");
   const welcome = perBruno.handshake.find((h) => h.tipo === "welcome")!;
@@ -153,7 +161,7 @@ describe("aprire una conversazione", () => {
       io: chiaviBruno,
       istanza: istanza.per(ID_BRUNO),
     };
-    await apri(anna, "conv-1", await chiaviBruno.pubblica(), ID_BRUNO);
+    await apri(anna, "conv-1", await chiaviBruno.pubblica(), ID_BRUNO, BRUNO);
 
     chiaviBruno.dimenticaLaScorta();
     const welcome = (await bruno.istanza.handshakeDopo("conv-1")).handshake.find(
@@ -350,6 +358,7 @@ describe("la sincronizzazione degli handshake", () => {
       sessioneAnna,
       await chiaviCarla.pubblica(),
       ID_CARLA,
+      CARLA,
     );
 
     const brunoAggiornato = await sincronizza(bruno, sessioneBruno);
@@ -392,7 +401,7 @@ describe("riprendere dopo aver chiuso la scheda", () => {
     istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
 
     const prima = depositoAnna.quanteScritture();
-    await aggiungiMembro(anna, sessioneAnna, await chiaviCarla.pubblica(), ID_CARLA);
+    await aggiungiMembro(anna, sessioneAnna, await chiaviCarla.pubblica(), ID_CARLA, CARLA);
 
     expect(depositoAnna.quanteScritture()).toBeGreaterThan(prima);
   });
@@ -448,6 +457,7 @@ describe("il punto da cui si rientra", () => {
       sessioneAnna,
       await chiaviCarla.pubblica(),
       ID_CARLA,
+      CARLA,
     );
 
     const dopoIlCommit = istanza.puntoDiRientro("conv-1")?.epoch;
@@ -455,5 +465,380 @@ describe("il punto da cui si rientra", () => {
 
     expect(dopoIlCommit).toBe(epochDi(conCarla.stato));
     expect(istanza.puntoDiRientro("conv-1")?.epoch).toBe(epochDi(conCarla.stato));
+  });
+});
+
+/* ---------- ciò che il nucleo faceva già, e il web no (PR #48) ---------- */
+
+const hex = (u: Uint8Array): string => Buffer.from(u).toString("hex");
+
+/** Un guasto che non dice com'è andata: la rete caduta, la scheda chiusa. */
+const caduta = (): Error => new Error("la rete è caduta");
+
+describe("lo stato si salva commit per commit, prima del cursore", () => {
+  it("un giro interrotto a metà non lascia il cursore più avanti dello stato", async () => {
+    const { anna, bruno, istanza, sessioneAnna, sessioneBruno } = await dueDispositivi();
+
+    // Due commit mentre Bruno non guarda: entra Carla, poi entra Dario.
+    const chiaviCarla = await portachiaviFinto("carla");
+    const chiaviDario = await portachiaviFinto("dario");
+    istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
+    istanza.ammetti("dario", chiaviDario.chiaveDiFirma);
+    const conCarla = await aggiungiMembro(
+      anna,
+      sessioneAnna,
+      await chiaviCarla.pubblica(),
+      ID_CARLA,
+      CARLA,
+    );
+    const conDario = await aggiungiMembro(anna, conCarla, await chiaviDario.pubblica(), "u-dario", {
+      casa: CASA,
+      username: "dario",
+    });
+
+    // La fila arriva a Bruno una busta per pagina, e la seconda pagina non
+    // arriva: è la rete che cade a metà del giro.
+    let pagine = 0;
+    const aPezzi: Istanza = {
+      ...bruno.istanza,
+      async handshakeDopo(conversazioneId, dopo) {
+        pagine += 1;
+        if (pagine > 1) {
+          throw caduta();
+        }
+        const tutta = await bruno.istanza.handshakeDopo(conversazioneId, dopo);
+        const prima = tutta.handshake.slice(0, 1);
+        return { handshake: prima, ...(prima[0] === undefined ? {} : { prossimo: prima[0].id }) };
+      },
+    };
+    await expect(sincronizza({ ...bruno, istanza: aPezzi }, sessioneBruno)).rejects.toThrow(
+      "la rete è caduta",
+    );
+
+    // La scheda si riapre: si riparte da ciò che il deposito ha tenuto. Se il
+    // cursore fosse andato avanti senza lo stato, il primo commit non
+    // tornerebbe più e il secondo non si applicherebbe.
+    const ripresa = await riprendi(bruno, "conv-1");
+    expect(ripresa && epochDi(ripresa.stato)).toBe(epochDi(conDario.stato));
+    expect(ripresa && nomi(ripresa.stato)).toEqual(["anna", "bruno", "carla", "dario"]);
+  });
+});
+
+describe("un commit proprio resta in sospeso finché la fila non l'ha preso", () => {
+  /** Un deposito che cade alla prossima scrittura dello stato, una volta sola. */
+  function cheCadeSalvando(ctx: Contesto): Contesto {
+    let caduto = false;
+    return {
+      ...ctx,
+      deposito: {
+        ...ctx.deposito,
+        scrivi(id, stato) {
+          if (!caduto) {
+            caduto = true;
+            return Promise.reject(caduta());
+          }
+          return ctx.deposito.scrivi(id, stato);
+        },
+      },
+    };
+  }
+
+  it("la scheda si chiude fra il deposito e il salvataggio: al giro dopo il lavoro si finisce", async () => {
+    const { anna, istanza, sessioneAnna } = await dueDispositivi();
+    const chiaviCarla = await portachiaviFinto("carla");
+    istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
+    const carla: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviCarla,
+      istanza: istanza.per(ID_CARLA),
+    };
+
+    await expect(
+      aggiungiMembro(
+        cheCadeSalvando(anna),
+        sessioneAnna,
+        await chiaviCarla.pubblica(),
+        ID_CARLA,
+        CARLA,
+      ),
+    ).rejects.toThrow("la rete è caduta");
+
+    // Il commit è in fila, ma l'invito non è partito e lo stato non è salvato.
+    expect(istanza.depositati().filter((h) => h.tipo === "commit")).toHaveLength(2);
+    expect(istanza.depositati().some((h) => h.destinatario === ID_CARLA)).toBe(false);
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeDefined();
+
+    // La scheda si riapre.
+    const ripresa = (await riprendi(anna, "conv-1"))!;
+
+    expect(epochDi(ripresa.stato)).toBe(2);
+    expect(nomi(ripresa.stato)).toEqual(["anna", "bruno", "carla"]);
+    expect(ripresa.catena?.map(hex)).toEqual(sessioneAnna.catena?.map(hex));
+    // Il mazzo è riavvolto sotto l'epoch nuova, e l'invito è partito: Carla entra e legge.
+    expect(istanza.mazzo("conv-1")?.epoch).toBe(2);
+    const invito = (await carla.istanza.handshakeDopo("conv-1")).handshake.find(
+      (h) => h.tipo === "welcome",
+    )!;
+    const sessioneCarla = (await entra(carla, "conv-1", invito))!;
+    expect(sessioneCarla.catena?.map(hex)).toEqual(sessioneAnna.catena?.map(hex));
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeUndefined();
+  });
+
+  it("vale anche per chi crea: il gruppo che la fila ha preso non si perde", async () => {
+    const istanza = istanzaFinta();
+    const chiaviAnna = await portachiaviFinto("anna");
+    const chiaviBruno = await portachiaviFinto("bruno");
+    istanza.ammetti("anna", chiaviAnna.chiaveDiFirma);
+    istanza.ammetti("bruno", chiaviBruno.chiaveDiFirma);
+    const anna: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviAnna,
+      istanza: istanza.per(ID_ANNA),
+    };
+    const bruno: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviBruno,
+      istanza: istanza.per(ID_BRUNO),
+    };
+
+    await expect(
+      apri(cheCadeSalvando(anna), "conv-1", await chiaviBruno.pubblica(), ID_BRUNO, BRUNO),
+    ).rejects.toThrow("la rete è caduta");
+    expect(istanza.depositati().map((h) => h.tipo)).toEqual(["commit"]);
+
+    const ripresa = (await riprendi(anna, "conv-1"))!;
+
+    expect(nomi(ripresa.stato)).toEqual(["anna", "bruno"]);
+    expect(ripresa.catena).toHaveLength(1);
+    expect(istanza.depositati().map((h) => h.tipo)).toEqual(["commit", "welcome"]);
+    const invito = (await bruno.istanza.handshakeDopo("conv-1")).handshake.find(
+      (h) => h.tipo === "welcome",
+    )!;
+    expect((await entra(bruno, "conv-1", invito))?.catena?.map(hex)).toEqual(
+      ripresa.catena?.map(hex),
+    );
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeUndefined();
+  });
+
+  it("un commit che la fila non ha mai visto si butta, e lo stato resta dov'era", async () => {
+    const { anna, istanza, sessioneAnna } = await dueDispositivi();
+    const chiaviCarla = await portachiaviFinto("carla");
+    istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
+
+    // Il deposito non arriva: non è un 409, quindi non si sa com'è andata.
+    const sorda: Contesto = {
+      ...anna,
+      istanza: { ...anna.istanza, depositaHandshake: () => Promise.reject(caduta()) },
+    };
+    await expect(
+      aggiungiMembro(sorda, sessioneAnna, await chiaviCarla.pubblica(), ID_CARLA, CARLA),
+    ).rejects.toThrow("la rete è caduta");
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeDefined();
+
+    const dopo = await sincronizza(anna, sessioneAnna);
+
+    expect(epochDi(dopo.stato)).toBe(1);
+    expect(nomi(dopo.stato)).toEqual(["anna", "bruno"]);
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeUndefined();
+
+    // E si può riprovare.
+    const conCarla = await aggiungiMembro(
+      anna,
+      dopo,
+      await chiaviCarla.pubblica(),
+      ID_CARLA,
+      CARLA,
+    );
+    expect(nomi(conCarla.stato)).toEqual(["anna", "bruno", "carla"]);
+  });
+
+  it("se un altro ha preso quell'epoch, quello in sospeso non vale più", async () => {
+    const { anna, bruno, istanza, sessioneAnna, sessioneBruno } = await dueDispositivi();
+    const chiaviCarla = await portachiaviFinto("carla");
+    const chiaviDario = await portachiaviFinto("dario");
+    istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
+    istanza.ammetti("dario", chiaviDario.chiaveDiFirma);
+
+    const sorda: Contesto = {
+      ...anna,
+      istanza: { ...anna.istanza, depositaHandshake: () => Promise.reject(caduta()) },
+    };
+    await expect(
+      aggiungiMembro(sorda, sessioneAnna, await chiaviCarla.pubblica(), ID_CARLA, CARLA),
+    ).rejects.toThrow("la rete è caduta");
+
+    // Nel frattempo Bruno fa entrare Dario, alla stessa epoch.
+    await aggiungiMembro(bruno, sessioneBruno, await chiaviDario.pubblica(), "u-dario", {
+      casa: CASA,
+      username: "dario",
+    });
+
+    const dopo = (await riprendi(anna, "conv-1"))!;
+
+    expect(nomi(dopo.stato)).toEqual(["anna", "bruno", "dario"]);
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeUndefined();
+    expect(istanza.depositati().some((h) => h.destinatario === ID_CARLA)).toBe(false);
+  });
+
+  it("un 409 toglie la nota subito: la fila ha detto di no", async () => {
+    const { anna, sessioneAnna, istanza } = await dueDispositivi();
+    const chiaviCarla = await portachiaviFinto("carla");
+    istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
+
+    const rifiuta: Contesto = {
+      ...anna,
+      istanza: {
+        ...anna.istanza,
+        depositaHandshake: () =>
+          Promise.reject(Object.assign(new Error("epoch_superata"), { status: 409 })),
+      },
+    };
+    await expect(
+      aggiungiMembro(rifiuta, sessioneAnna, await chiaviCarla.pubblica(), ID_CARLA, CARLA),
+    ).rejects.toThrow("epoch_superata");
+
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeUndefined();
+  });
+});
+
+describe("un dispositivo che aspetta il sì non crea e non rientra", () => {
+  it("non crea: la sua chiave nel registro non c'è", async () => {
+    const istanza = istanzaFinta();
+    const chiaviAnna = await portachiaviFinto("anna");
+    const chiaviBruno = await portachiaviFinto("bruno");
+    // Anna **non** è ammessa: il suo dispositivo aspetta ancora il sì.
+    istanza.ammetti("bruno", chiaviBruno.chiaveDiFirma);
+    const anna: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviAnna,
+      istanza: istanza.per(ID_ANNA),
+    };
+
+    await expect(
+      apri(anna, "conv-1", await chiaviBruno.pubblica(), ID_BRUNO, BRUNO),
+    ).rejects.toBeInstanceOf(DispositivoInAttesa);
+
+    expect(istanza.depositati()).toHaveLength(0);
+    expect(await anna.deposito.leggi("conv-1")).toBeUndefined();
+  });
+
+  it("non rientra: il suo commit lo rifiuterebbero tutti, e fermerebbe la fila", async () => {
+    const { istanza } = await dueDispositivi();
+    const prima = istanza.depositati().length;
+
+    // Un secondo dispositivo di Anna, che nessuno ha ancora approvato.
+    const nuovo: Contesto = {
+      deposito: depositoFinto(),
+      io: await portachiaviFinto("anna"),
+      istanza: istanza.per(ID_ANNA),
+    };
+
+    await expect(rientraIn(nuovo, "conv-1")).rejects.toBeInstanceOf(DispositivoInAttesa);
+
+    expect(istanza.depositati()).toHaveLength(prima);
+    expect(await nuovo.deposito.leggi("conv-1")).toBeUndefined();
+  });
+});
+
+describe("un KeyPackage che nomina un'altra persona non fa entrare nessuno", () => {
+  it("alla creazione", async () => {
+    const istanza = istanzaFinta();
+    const chiaviAnna = await portachiaviFinto("anna");
+    const chiaviCarla = await portachiaviFinto("carla");
+    istanza.ammetti("anna", chiaviAnna.chiaveDiFirma);
+    istanza.ammetti("carla", chiaviCarla.chiaveDiFirma);
+    const anna: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviAnna,
+      istanza: istanza.per(ID_ANNA),
+    };
+
+    // Anna vuole Bruno, e la casa le manda la chiave di Carla.
+    await expect(
+      apriCon(anna, "conv-1", [
+        { destinatario: ID_BRUNO, keyPackage: await chiaviCarla.pubblica(), membro: BRUNO },
+      ]),
+    ).rejects.toBeInstanceOf(ChiaveDiUnAltro);
+
+    expect(istanza.depositati()).toHaveLength(0);
+    expect(await anna.deposito.leggi("conv-1")).toBeUndefined();
+    expect(await anna.deposito.leggiSospeso("conv-1")).toBeUndefined();
+  });
+
+  it("e quando entra in una conversazione che esiste", async () => {
+    const { anna, istanza, sessioneAnna } = await dueDispositivi();
+    const prima = istanza.depositati().length;
+    const chiaviDario = await portachiaviFinto("dario");
+    istanza.ammetti("dario", chiaviDario.chiaveDiFirma);
+
+    await expect(
+      aggiungiMembro(anna, sessioneAnna, await chiaviDario.pubblica(), ID_CARLA, CARLA),
+    ).rejects.toBeInstanceOf(ChiaveDiUnAltro);
+
+    expect(istanza.depositati()).toHaveLength(prima);
+  });
+});
+
+describe("un invito per un'altra conversazione non si apre", () => {
+  it("un Welcome di un altro gruppo, trovato su questo canale, si rifiuta e non salva niente", async () => {
+    const istanza = istanzaFinta();
+    const chiaviAnna = await portachiaviFinto("anna");
+    const chiaviBruno = await portachiaviFinto("bruno");
+    istanza.ammetti("anna", chiaviAnna.chiaveDiFirma);
+    istanza.ammetti("bruno", chiaviBruno.chiaveDiFirma);
+    const anna: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviAnna,
+      istanza: istanza.per(ID_ANNA),
+    };
+    const bruno: Contesto = {
+      deposito: depositoFinto(),
+      io: chiaviBruno,
+      istanza: istanza.per(ID_BRUNO),
+    };
+
+    // Il gruppo vero è di `conv-2`; il suo invito viene presentato a Bruno come
+    // se stesse sul canale di `conv-1`.
+    await apri(anna, "conv-2", await chiaviBruno.pubblica(), ID_BRUNO, BRUNO);
+    const altrui = istanza.depositati().find((h) => h.tipo === "welcome")!;
+
+    await expect(entra(bruno, "conv-1", altrui)).rejects.toBeInstanceOf(DiUnAltraConversazione);
+
+    expect(await bruno.deposito.leggi("conv-1")).toBeUndefined();
+    expect(await bruno.deposito.leggiCursore("conv-1")).toBeUndefined();
+    // Dal suo canale, lo stesso invito si apre.
+    expect(await entra(bruno, "conv-2", altrui)).toBeDefined();
+  });
+});
+
+describe("riprendendo, il mazzo si accetta solo se estende la catena già nota", () => {
+  it("un mazzo con un'altra catena non sostituisce quella che il dispositivo conosce", async () => {
+    const { anna, bruno, sessioneAnna, sessioneBruno } = await dueDispositivi();
+
+    // Alla stessa epoch, e sotto la serratura giusta: lo può fare un membro,
+    // per errore o apposta. La catena dentro però non è quella di prima.
+    await anna.istanza.salvaMazzo("conv-1", {
+      epoch: epochDi(sessioneAnna.stato),
+      mazzo: avvolgi(catenaNuova(), await serraturaArchivio(sessioneAnna.stato)),
+    });
+
+    const ripresa = (await riprendi(bruno, "conv-1"))!;
+
+    expect(ripresa.catena?.map(hex)).toEqual(sessioneBruno.catena?.map(hex));
+  });
+
+  it("uno con la stessa catena e una chiave in più si adotta", async () => {
+    const { anna, bruno, sessioneAnna, sessioneBruno } = await dueDispositivi();
+    const piuLunga = catenaRuotata(sessioneAnna.catena!);
+
+    await anna.istanza.salvaMazzo("conv-1", {
+      epoch: epochDi(sessioneAnna.stato),
+      mazzo: avvolgi(piuLunga, await serraturaArchivio(sessioneAnna.stato)),
+    });
+
+    const ripresa = (await riprendi(bruno, "conv-1"))!;
+
+    expect(ripresa.catena?.map(hex)).toEqual(piuLunga.map(hex));
+    expect(ripresa.catena?.slice(0, 1).map(hex)).toEqual(sessioneBruno.catena?.map(hex));
   });
 });

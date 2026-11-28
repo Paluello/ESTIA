@@ -9,9 +9,10 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
+import { CASA, depositoFinto, istanzaFinta, portachiaviFinto } from "./finte.js";
 import { annuncia, apriConversazione, leggi, manda, type Invito } from "./conversazione.js";
-import type { Contesto } from "./sessione.js";
+import { foglie } from "./gruppo.js";
+import { ChiaveDiUnAltro, type Contesto } from "./sessione.js";
 import type { KeyPackage } from "ts-mls";
 
 const ID_ANNA = "u-anna";
@@ -34,7 +35,12 @@ async function dueCase(): Promise<{
   return {
     anna: { deposito: depositoFinto(), io: chiaviAnna, istanza: istanza.per(ID_ANNA) },
     bruno: { deposito: depositoFinto(), io: chiaviBruno, istanza: istanza.per(ID_BRUNO) },
-    invitaBruno: () => Promise.resolve({ idDiChiEntra: ID_BRUNO, keyPackage: pacchettoBruno }),
+    invitaBruno: () =>
+      Promise.resolve({
+        idDiChiEntra: ID_BRUNO,
+        keyPackage: pacchettoBruno,
+        membro: { casa: CASA, username: "bruno" },
+      }),
     pacchettoBruno,
   };
 }
@@ -50,6 +56,44 @@ describe("aprire una conversazione", () => {
     const apertura = await apriConversazione(anna, QUI, invitaBruno);
 
     expect(apertura.kind).toBe("pronta");
+  });
+
+  it("una chiave d'ingresso che nomina un altro resta fuori, e chi ne ha una buona entra", async () => {
+    const { anna, pacchettoBruno } = await dueCase();
+    const invito: Invito = () =>
+      Promise.resolve([
+        // La casa di Carla ha mandato, per lei, una chiave di Bruno.
+        {
+          idDiChiEntra: "u-carla",
+          keyPackage: pacchettoBruno,
+          membro: { casa: CASA, username: "carla" },
+        },
+        {
+          idDiChiEntra: ID_BRUNO,
+          keyPackage: pacchettoBruno,
+          membro: { casa: CASA, username: "bruno" },
+        },
+      ]);
+
+    const apertura = await apriConversazione(anna, QUI, invito);
+
+    expect(apertura.kind).toBe("pronta");
+    const inviti = (await anna.istanza.handshakeDopo("conv-1")).handshake;
+    expect(inviti.map((h) => h.tipo)).toEqual(["commit"]);
+    expect(apertura.kind === "pronta" && foglie(apertura.sessione.stato)).toHaveLength(2);
+  });
+
+  it("se tutte le chiavi nominano un altro, il gruppo non nasce", async () => {
+    const { anna, pacchettoBruno } = await dueCase();
+    const invito: Invito = () =>
+      Promise.resolve({
+        idDiChiEntra: "u-carla",
+        keyPackage: pacchettoBruno,
+        membro: { casa: CASA, username: "carla" },
+      });
+
+    await expect(apriConversazione(anna, QUI, invito)).rejects.toBeInstanceOf(ChiaveDiUnAltro);
+    expect((await anna.istanza.handshakeDopo("conv-1")).handshake).toHaveLength(0);
   });
 
   it("un dispositivo senza niente in locale entra dal solo Welcome", async () => {

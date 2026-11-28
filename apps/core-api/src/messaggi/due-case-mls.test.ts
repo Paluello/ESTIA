@@ -352,7 +352,11 @@ function invitoPer(chi: Casa, altra: Casa, conversazione: { membri: { id: string
     }
 
     const idDiChiEntra = conversazione.membri.find((m) => m.id.startsWith("remote:"))!.id;
-    return { idDiChiEntra, keyPackage };
+    return {
+      idDiChiEntra,
+      keyPackage,
+      membro: { casa: altra.casa, username: altra.username },
+    };
   };
 }
 
@@ -821,7 +825,11 @@ describe("un gruppo fra tre case, con MLS vero (M8)", () => {
       const invito: Invito = async () => {
         const invitati: Invitato[] = [];
         for (const altro of altri) {
-          invitati.push({ idDiChiEntra: altro.id, keyPackage: await chiaveDi(aia, altro) });
+          invitati.push({
+            idDiChiEntra: altro.id,
+            keyPackage: await chiaveDi(aia, altro),
+            membro: membroDi(altro, aia.casa),
+          });
         }
         return invitati;
       };
@@ -975,7 +983,11 @@ describe("il trasloco fra tre case, con MLS vero (ADR 0042 §3)", () => {
           async () => {
             const invitati: Invitato[] = [];
             for (const altro of altri) {
-              invitati.push({ idDiChiEntra: altro.id, keyPackage: await chiaveDi(aia, altro) });
+              invitati.push({
+                idDiChiEntra: altro.id,
+                keyPackage: await chiaveDi(aia, altro),
+                membro: membroDi(altro, aia.casa),
+              });
             }
             return invitati;
           },
@@ -1084,7 +1096,11 @@ describe("il trasloco fra tre case, con MLS vero (ADR 0042 §3)", () => {
           borgo.ctx,
           { ...nuovo, creaQui: true },
           async () => [
-            { idDiChiEntra: carlaNelNuovo.id, keyPackage: await chiaveDi(borgo, carlaNelNuovo) },
+            {
+              idDiChiEntra: carlaNelNuovo.id,
+              keyPackage: await chiaveDi(borgo, carlaNelNuovo),
+              membro: membroDi(carlaNelNuovo, borgo.casa),
+            },
           ],
         );
         if (aperturaBruno.kind !== "pronta") {

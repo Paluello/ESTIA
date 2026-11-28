@@ -83,6 +83,49 @@ export function catenaRuotata(catena: Catena, nuova: Uint8Array = randomBytes(32
   return [...catena, nuova];
 }
 
+/**
+ * `trovata` comincia con tutte le chiavi di `nota`, e ne ha di più.
+ *
+ * È la sola forma in cui una catena ne sostituisce un'altra: le chiavi non si
+ * tolgono e non si cambiano, si aggiungono. Una catena uguale, più corta, o
+ * diversa anche in una sola chiave **non** estende quella nota.
+ */
+export function estende(nota: Catena, trovata: Catena): boolean {
+  return (
+    trovata.length > nota.length &&
+    nota.every((chiave, i) => {
+      const altra = trovata[i];
+      return (
+        altra !== undefined &&
+        altra.length === chiave.length &&
+        chiave.every((byte, j) => byte === altra[j])
+      );
+    })
+  );
+}
+
+/**
+ * Quale catena tenere fra quella che questo dispositivo conosce e quella che
+ * ha trovato nel mazzo dell'istanza.
+ *
+ * Chi una catena ce l'ha la cambia **soltanto** con una che la estende: un
+ * mazzo che non comincia con le chiavi note — riavvolto da chi era rimasto
+ * indietro, o messo lì da una casa che mente — toglierebbe la cronologia
+ * invece di allungarla. Chi non ne ha nessuna prende quella che trova.
+ */
+export function catenaDaTenere(
+  nota: Catena | undefined,
+  trovata: Catena | undefined,
+): Catena | undefined {
+  if (nota === undefined || nota.length === 0) {
+    return trovata;
+  }
+  if (trovata === undefined) {
+    return nota;
+  }
+  return estende(nota, trovata) ? trovata : nota;
+}
+
 /** Avvolge il mazzo sotto la serratura dell'epoch corrente. */
 export function avvolgi(catena: Catena, serratura: Uint8Array): string {
   const payload = te.encode(JSON.stringify(catena.map(base64)));

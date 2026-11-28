@@ -10,8 +10,10 @@ import { describe, expect, it } from "vitest";
 import {
   archivia,
   avvolgi,
+  catenaDaTenere,
   catenaNuova,
   catenaRuotata,
+  estende,
   rileggi,
   svolgi,
   type Catena,
@@ -134,5 +136,29 @@ describe("le voci", () => {
 
     expect(rileggi(catena, { busta: "abc", chiaveN: 99 })).toBeUndefined();
     expect(rileggi(catena, { busta: "abc", chiaveN: 0 })).toBeUndefined();
+  });
+});
+
+describe("una catena ne sostituisce un'altra solo se la estende", () => {
+  it("la stessa con una chiave in più la estende; uguale, più corta o diversa no", () => {
+    const prima = catenaNuova();
+    const dopo = catenaRuotata(prima);
+
+    expect(estende(prima, dopo)).toBe(true);
+    expect(estende(dopo, prima)).toBe(false);
+    expect(estende(prima, prima)).toBe(false);
+    // Stessa lunghezza di `dopo`, ma la prima chiave non è quella nota.
+    expect(estende(prima, catenaRuotata(catenaNuova()))).toBe(false);
+  });
+
+  it("chi non ha una catena prende quella che trova; chi ce l'ha la tiene", () => {
+    const nota = catenaNuova();
+    const altra = catenaRuotata(catenaNuova());
+    const piuLunga = catenaRuotata(nota);
+
+    expect(catenaDaTenere(undefined, altra)).toBe(altra);
+    expect(catenaDaTenere(nota, undefined)).toBe(nota);
+    expect(catenaDaTenere(nota, altra)).toBe(nota);
+    expect(catenaDaTenere(nota, piuLunga)).toBe(piuLunga);
   });
 });

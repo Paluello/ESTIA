@@ -294,7 +294,7 @@ class Browser {
     await ammetti(this.nome, this.io.chiaveDiFirma);
   }
   async ingresso() {
-    return { destinatario: this.id, keyPackage: await this.io.pubblica() };
+    return { destinatario: this.id, keyPackage: await this.io.pubblica(), membro: this.membro };
   }
   /** Entra dal Welcome che il canale ha per lui. */
   async entra() {
@@ -337,7 +337,11 @@ class Telefono {
   }
   async ingresso() {
     const { keyPackage } = await this.chiedi("pacchetto");
-    return { destinatario: this.id, keyPackage: pacchettoPerIlWeb(daB64(keyPackage)) };
+    return {
+      destinatario: this.id,
+      keyPackage: pacchettoPerIlWeb(daB64(keyPackage)),
+      membro: this.membro,
+    };
   }
   /** Il mazzo dell'istanza, se è dell'epoch in cui si è. */
   async apreIlMazzo() {
@@ -494,8 +498,14 @@ async function laConversazione() {
 
   // carla riparte come una scheda appena aperta: non ha una catena in mano, e
   // la riceve dal mazzo che c'è — quello del nucleo.
+  // «Senza catena in mano» va detto per intero: il browser tiene accanto allo
+  // stato una copia del mazzo, e chi la ha riparte da quella (e riavvolge da
+  // sé). Qui la copia non c'è, come su un browser di prima che la tenesse.
   const riavvolti = istanza.chiamate.salvaMazzo;
-  carla.sessione = await sessione.riprendi(carla.ctx, CONV);
+  carla.sessione = await sessione.riprendi(
+    { ...carla.ctx, deposito: { ...carla.ctx.deposito, leggiMazzo: async () => undefined } },
+    CONV,
+  );
   assert.equal(istanza.chiamate.salvaMazzo, riavvolti, "nessun browser ha riavvolto");
   assert.equal(epoch(carla), diOpenMls.epoch);
   assert.deepEqual(impronta(carla.sessione.catena), impronta(anna.sessione.catena));

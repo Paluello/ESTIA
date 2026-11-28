@@ -15,8 +15,13 @@
  * 1. **Gli handshake si applicano in ordine di arrivo, uno alla volta.** MLS li
  *    applica in sequenza; saltarne uno o invertirli spacca lo stato del gruppo.
  *    Il cursore avanza solo su ciò che è stato applicato davvero.
- * 2. **Lo stato si salva dopo ogni mutazione.** Una scheda chiusa a metà di un
- *    commit non deve lasciare un gruppo a un'epoch che nessun altro conosce.
+ * 2. **Lo stato si salva dopo ogni mutazione**, commit per commit e **prima**
+ *    del cursore: un giro interrotto a metà non lascia il cursore più avanti
+ *    dello stato. E **un commit proprio resta in sospeso finché la fila non
+ *    l'ha preso**: lo si annota nel deposito prima di depositarlo, e se la
+ *    scheda si chiude o la risposta si perde, al giro dopo lo si riconosce in
+ *    fila byte per byte e si finisce il lavoro — oppure lo si butta, se la
+ *    fila non l'ha mai visto.
  * 3. **Il mazzo d'archivio si riavvolge a ogni cambio di epoch**, perché la
  *    serratura è quella dell'epoch ([S2](../../../../docs/spike/S2-la-chiave-d-archivio.md)).
  *    E **solo da chi lo conosce**: un dispositivo che non ha ancora aperto il
@@ -36,6 +41,7 @@ import { decodeGroupState, encodeGroupState, type GroupState } from "ts-mls/clie
 import {
   archiviaLegata,
   avvolgi,
+  catenaDaTenere,
   catenaNuova,
   catenaRuotata,
   rileggiLegata,
@@ -59,6 +65,7 @@ import {
   scriviIdentita,
   serraturaArchivio,
   toltoDalGruppo,
+  type IdentitaDispositivo,
   type Membro,
   type Porta,
   type Portachiavi,
@@ -86,12 +93,42 @@ export interface Deposito {
   leggiMazzo: (conversazioneId: string) => Promise<string | undefined>;
   scriviMazzo: (conversazioneId: string, mazzo: string) => Promise<void>;
   /**
+   * Il commit di questo dispositivo che **non si sa ancora se la fila ha
+   * preso**. Si scrive prima di depositarlo e si toglie (`undefined`) quando
+   * il lavoro è finito, o quando si sa che la fila non l'ha voluto.
+   */
+  leggiSospeso: (conversazioneId: string) => Promise<CommitInSospeso | undefined>;
+  scriviSospeso: (conversazioneId: string, sospeso: CommitInSospeso | undefined) => Promise<void>;
+  /**
    * Via tutto, al logout.
    *
    * Lo stato di un gruppo è materiale di chi era entrato: lasciarlo lì
    * significa consegnarlo a chi accede dopo sullo stesso browser.
    */
   svuota: () => Promise<void>;
+}
+
+/**
+ * Un commit proprio, annotato prima di depositarlo.
+ *
+ * Porta tutto ciò che serve a finire il lavoro senza averlo in memoria: `ts-mls`
+ * non riapplica un commit a chi l'ha scritto, quindi lo stato che ne esce va
+ * tenuto accanto alla busta. Non è materiale in più rispetto a ciò che il
+ * deposito già custodisce: è lo stato del gruppo un'epoch più avanti, e il
+ * mazzo com'è avvolto sotto quell'epoch — mai una chiave d'archivio in chiaro.
+ */
+export interface CommitInSospeso {
+  /** Il commit com'è stato depositato, in Base64: si riconosce byte per byte. */
+  busta: string;
+  epoch: number;
+  /** Lo stato del gruppo **dopo** il commit, come lo scrive `Deposito.scrivi`. */
+  stato: Uint8Array;
+  /** La catena di dopo il commit, avvolta sotto la sua epoch. Manca a chi non ha catena. */
+  mazzo?: string;
+  /** L'invito per chi entra con questo commit, in Base64. */
+  welcome?: string;
+  /** Gli id a cui l'invito va consegnato. */
+  destinatari: string[];
 }
 
 export interface VoceArchivio {
@@ -198,6 +235,9 @@ function daB64(s: string): Uint8Array {
   return bytes;
 }
 
+const stessiByte = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, i) => byte === b[i]);
+
 export interface Contesto {
   deposito: Deposito;
   istanza: Istanza;
@@ -234,10 +274,10 @@ async function ripristina(
   conversazioneId: string,
 ): Promise<ClientState | undefined> {
   const byte = await ctx.deposito.leggi(conversazioneId);
-  if (byte === undefined) {
-    return undefined;
-  }
+  return byte === undefined ? undefined : statoDa(ctx, byte);
+}
 
+function statoDa(ctx: Contesto, byte: Uint8Array): ClientState | undefined {
   const letto = decodeGroupState(byte, 0);
   if (letto === undefined) {
     // Uno stato illeggibile non si aggiusta indovinando: si riparte.
@@ -247,31 +287,150 @@ async function ripristina(
   return { ...(letto[0] as GroupState), clientConfig: configurazione(ctx.istanza) };
 }
 
+/** Lo stato porta questa conversazione, e non un'altra? Il group id è il suo id. */
+const eDi = (stato: ClientState, conversazioneId: string): boolean =>
+  stessiByte(stato.groupContext.groupId, new TextEncoder().encode(conversazioneId));
+
+/**
+ * Due stati sono lo stesso punto della stessa storia: stessa epoch, stessi
+ * commit per arrivarci. È così che si riconosce uno stato salvato dal proprio
+ * commit in sospeso da uno, alla stessa epoch, a cui si è arrivati col commit
+ * di un altro.
+ */
+const stessoPunto = (a: ClientState, b: ClientState): boolean =>
+  a.groupContext.epoch === b.groupContext.epoch &&
+  stessiByte(a.groupContext.confirmedTranscriptHash, b.groupContext.confirmedTranscriptHash);
+
+/**
+ * Annota un commit proprio **prima** di depositarlo.
+ *
+ * Fra il deposito e il salvataggio dello stato c'è una finestra — la scheda che
+ * si chiude, la risposta che si perde — in cui la fila ha il commit e il
+ * dispositivo no: senza questa nota non saprebbe più applicarlo, e resterebbe
+ * fuori dal proprio gruppo.
+ */
+async function annota(
+  ctx: Contesto,
+  dopo: Sessione,
+  esito: { commit: Uint8Array; epoch: number; welcome?: Uint8Array },
+  ingressi: readonly Ingresso[],
+): Promise<CommitInSospeso> {
+  const sospeso: CommitInSospeso = {
+    busta: b64(esito.commit),
+    destinatari: [...new Set(ingressi.map((i) => i.destinatario))],
+    epoch: esito.epoch,
+    stato: encodeGroupState(dopo.stato),
+    ...(dopo.catena === undefined
+      ? {}
+      : { mazzo: avvolgi(dopo.catena, await serraturaArchivio(dopo.stato)) }),
+    ...(esito.welcome === undefined ? {} : { welcome: b64(esito.welcome) }),
+  };
+  await ctx.deposito.scriviSospeso(dopo.conversazioneId, sospeso);
+  return sospeso;
+}
+
+/**
+ * Deposita il commit annotato. Se la fila lo **rifiuta** (409) si sa com'è
+ * andata e la nota si toglie; per ogni altro guasto non si sa, e resta: la
+ * scioglie la prossima sincronizzazione.
+ */
+async function deposita(
+  ctx: Contesto,
+  conversazioneId: string,
+  sospeso: CommitInSospeso,
+): Promise<void> {
+  try {
+    await ctx.istanza.depositaHandshake(conversazioneId, {
+      busta: sospeso.busta,
+      epoch: sospeso.epoch,
+      tipo: "commit",
+    });
+  } catch (causa) {
+    if (superata(causa)) {
+      await ctx.deposito.scriviSospeso(conversazioneId, undefined);
+    }
+    throw causa;
+  }
+}
+
+/**
+ * Finisce il lavoro di un commit che la fila ha preso: lo stato si salva, il
+ * mazzo si riavvolge, gli inviti partono — e solo allora la nota si toglie.
+ */
+async function concludi(ctx: Contesto, dopo: Sessione, sospeso: CommitInSospeso): Promise<void> {
+  await salva(ctx, dopo);
+  // Prima il mazzo, poi gli inviti: chi entra lo trova già avvolto sotto
+  // l'epoch del suo Welcome, e legge subito.
+  await dopoIlCambioDiEpoch(ctx, dopo);
+  await consegnaWelcome(ctx, dopo.conversazioneId, sospeso);
+  await ctx.deposito.scriviSospeso(dopo.conversazioneId, undefined);
+}
+
+/** La catena che un commit in sospeso porta con sé, se ne porta una e si apre. */
+async function catenaDelSospeso(
+  sospeso: CommitInSospeso,
+  stato: ClientState,
+): Promise<Catena | undefined> {
+  if (sospeso.mazzo === undefined) {
+    return undefined;
+  }
+
+  try {
+    return svolgi(sospeso.mazzo, await serraturaArchivio(stato));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Applica gli handshake che mancano, **in ordine e uno alla volta**.
  *
  * Il cursore avanza solo su ciò che è stato applicato davvero: se un commit non
  * si applica ci si ferma lì, perché saltarlo lascerebbe lo stato a un'epoch che
  * il resto del gruppo ha già superato — e da lì non si torna indietro.
+ *
+ * Lo stato si salva **a ogni commit, prima del cursore**: un cursore rimasto
+ * indietro rilegge buste già applicate e le salta, uno andato avanti dello
+ * stato ne perderebbe, e il dispositivo non le rivedrebbe più.
+ *
+ * È anche qui che si scioglie un commit proprio rimasto in sospeso: se è in
+ * fila, identico byte per byte, è arrivato, e si finisce ciò che era rimasto a
+ * metà; se un altro ha preso la sua epoch, o la fila non l'ha mai visto, si
+ * butta.
  */
 export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Sessione> {
   if (sessione.tolto === true) {
     return sessione;
   }
 
+  const id = sessione.conversazioneId;
   let stato = sessione.stato;
   let catena = sessione.catena;
-  let cursore = await ctx.deposito.leggiCursore(sessione.conversazioneId);
+  let cursore = await ctx.deposito.leggiCursore(id);
+  let sospeso = await ctx.deposito.leggiSospeso(id);
+  /** Il commit in sospeso che la fila aveva preso: c'è del lavoro da finire. */
+  let ripreso: CommitInSospeso | undefined;
   let mutato = false;
   let tolto = false;
 
+  // Lo stato è già quello del commit in sospeso: era stato salvato, e la scheda
+  // si è chiusa prima del mazzo o degli inviti. Si finisce da lì.
+  if (sospeso !== undefined && sospeso.epoch === epochDi(stato)) {
+    const suo = statoDa(ctx, sospeso.stato);
+    if (suo !== undefined && stessoPunto(suo, stato)) {
+      ripreso = sospeso;
+      mutato = true;
+    }
+  }
+
   for (;;) {
-    const pagina = await ctx.istanza.handshakeDopo(sessione.conversazioneId, cursore);
+    const pagina = await ctx.istanza.handshakeDopo(id, cursore);
     if (pagina.handshake.length === 0) {
       break;
     }
 
     let ultimoApplicato: string | undefined;
+    let guasto: { causa: unknown } | undefined;
 
     for (const voce of pagina.handshake) {
       // Un Welcome non si «applica»: o si è già dentro, o si entra — e in quel
@@ -279,16 +438,52 @@ export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Se
       // Un commit di un'epoch già superata è nostro, o è vecchio: in entrambi i
       // casi non si riapplica.
       if (voce.tipo !== "welcome" && voce.epoch > epochDi(stato) && !tolto) {
-        const prima = stato;
-        stato = await applicaHandshake(stato, daB64(voce.busta), ctx.istanza);
-        mutato = true;
-        tolto = toltoDalGruppo(stato);
-        // Qualcuno è stato tolto: la catena guadagna la chiave di quest'epoch,
-        // la stessa per tutti quelli che restano (ADR 0052 §2). Si fa **qui**,
-        // commit per commit, perché la chiave è di questa epoch e non della
-        // prossima.
-        if (!tolto && catena !== undefined && qualcunoTolto(prima, stato)) {
-          catena = catenaRuotata(catena, await chiaveDiRotazione(stato));
+        try {
+          const prima = stato;
+          // Il proprio commit si riconosce byte per byte.
+          const proprio =
+            sospeso !== undefined && sospeso.busta === voce.busta ? sospeso : undefined;
+          const suo = proprio === undefined ? undefined : statoDa(ctx, proprio.stato);
+
+          if (proprio !== undefined && suo !== undefined) {
+            stato = suo;
+            catena =
+              (await catenaDelSospeso(proprio, stato)) ??
+              (catena !== undefined && qualcunoTolto(prima, stato)
+                ? catenaRuotata(catena, await chiaveDiRotazione(stato))
+                : catena);
+            ripreso = proprio;
+          } else {
+            stato = await applicaHandshake(stato, daB64(voce.busta), ctx.istanza);
+            // Un altro ha preso l'epoch del commit in sospeso: non vale più.
+            // La nota si toglie **prima** di salvare lo stato, così che uno
+            // stato arrivato fin qui col commit di un altro non le resti
+            // accanto a farsi scambiare per il suo.
+            if (sospeso !== undefined) {
+              await ctx.deposito.scriviSospeso(id, undefined);
+              sospeso = undefined;
+            }
+            tolto = toltoDalGruppo(stato);
+            // Qualcuno è stato tolto: la catena guadagna la chiave di
+            // quest'epoch, la stessa per tutti quelli che restano (ADR 0052
+            // §2). Si fa **qui**, commit per commit, perché la chiave è di
+            // questa epoch e non della prossima.
+            if (!tolto && catena !== undefined && qualcunoTolto(prima, stato)) {
+              catena = catenaRuotata(catena, await chiaveDiRotazione(stato));
+            }
+          }
+
+          mutato = true;
+          // Lo stato, commit per commit, e prima del cursore.
+          await salva(
+            ctx,
+            tolto
+              ? { ...sessione, catena: undefined, stato, tolto: true }
+              : { ...sessione, catena, stato },
+          );
+        } catch (causa) {
+          guasto = { causa };
+          break;
         }
       }
 
@@ -297,7 +492,10 @@ export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Se
 
     if (ultimoApplicato !== undefined) {
       cursore = ultimoApplicato;
-      await ctx.deposito.scriviCursore(sessione.conversazioneId, ultimoApplicato);
+      await ctx.deposito.scriviCursore(id, ultimoApplicato);
+    }
+    if (guasto !== undefined) {
+      throw guasto.causa;
     }
 
     if (pagina.prossimo === undefined) {
@@ -309,16 +507,26 @@ export async function sincronizza(ctx: Contesto, sessione: Sessione): Promise<Se
   if (tolto) {
     // Chi è stato tolto non ha più niente da riavvolgere né da pubblicare: lo
     // stato resta com'è, a dire che cosa è successo.
-    const fuori: Sessione = { ...sessione, catena: undefined, stato, tolto: true };
-    await salva(ctx, fuori);
-    return fuori;
+    await ctx.deposito.scriviSospeso(id, undefined);
+    return { ...sessione, catena: undefined, stato, tolto: true };
+  }
+
+  // Un commit proprio che la fila non ha mai visto: il deposito non era
+  // arrivato. Si butta, e lo stato resta all'epoch che tutti conoscono.
+  if (sospeso !== undefined && ripreso === undefined) {
+    await ctx.deposito.scriviSospeso(id, undefined);
   }
 
   const aggiornata = { ...sessione, catena, stato };
 
   if (mutato) {
-    await salva(ctx, aggiornata);
     await dopoIlCambioDiEpoch(ctx, aggiornata);
+  }
+  // Il commit era nostro, ed era arrivato: si finisce ciò che la scheda chiusa
+  // aveva lasciato a metà, e solo allora la nota si toglie.
+  if (ripreso !== undefined) {
+    await consegnaWelcome(ctx, id, ripreso);
+    await ctx.deposito.scriviSospeso(id, undefined);
   }
 
   return aggiornata;
@@ -381,25 +589,100 @@ async function catenaDi(
   }
 }
 
+/**
+ * La catena che questo dispositivo **conosce già**: quella del mazzo che tiene
+ * accanto allo stato, se si apre con l'epoch in cui si è.
+ */
+async function catenaNota(
+  ctx: Contesto,
+  stato: ClientState,
+  conversazioneId: string,
+): Promise<Catena | undefined> {
+  const avvolto = await ctx.deposito.leggiMazzo(conversazioneId);
+  if (avvolto === undefined) {
+    return undefined;
+  }
+
+  try {
+    return svolgi(avvolto, await serraturaArchivio(stato));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Lo stato non c'è, ma c'è un commit in sospeso: è una creazione, o un rientro,
+ * che non si sa se è arrivato — la scheda si è chiusa, o la rete è caduta, fra
+ * il deposito e il salvataggio.
+ *
+ * Vale soltanto se in fila c'è **quel** commit, identico byte per byte: allora
+ * lo stato che ne esce è quello che tutti conoscono, e si adotta. Altrimenti è
+ * un gruppo che nessun altro conosce, e si butta.
+ */
+async function riprendiDalSospeso(
+  ctx: Contesto,
+  conversazioneId: string,
+): Promise<ClientState | undefined> {
+  const sospeso = await ctx.deposito.leggiSospeso(conversazioneId);
+  if (sospeso === undefined) {
+    return undefined;
+  }
+
+  const stato = statoDa(ctx, sospeso.stato);
+  let inFila: BustaHandshake | undefined;
+  for (let dopo: string | undefined; stato !== undefined && inFila === undefined;) {
+    const pagina = await ctx.istanza.handshakeDopo(conversazioneId, dopo);
+    inFila = pagina.handshake.find((h) => h.tipo === "commit" && h.busta === sospeso.busta);
+    if (pagina.prossimo === undefined || pagina.handshake.length === 0) {
+      break;
+    }
+    dopo = pagina.prossimo;
+  }
+
+  if (stato === undefined || inFila === undefined || !eDi(stato, conversazioneId)) {
+    await ctx.deposito.scriviSospeso(conversazioneId, undefined);
+    return undefined;
+  }
+
+  // Lo stato prima, il cursore poi. La nota resta: la toglie `sincronizza`
+  // quando ha riavvolto il mazzo e consegnato gli inviti.
+  await salva(ctx, {
+    catena: await catenaDelSospeso(sospeso, stato),
+    conversazioneId,
+    stato,
+  });
+  await ctx.deposito.scriviCursore(conversazioneId, inFila.id);
+  return stato;
+}
+
 /** Apre una conversazione che esiste già su questo dispositivo. */
 export async function riprendi(
   ctx: Contesto,
   conversazioneId: string,
 ): Promise<Sessione | undefined> {
-  const stato = await ripristina(ctx, conversazioneId);
+  const stato =
+    (await ripristina(ctx, conversazioneId)) ?? (await riprendiDalSospeso(ctx, conversazioneId));
   if (stato === undefined) {
     return undefined;
+  }
+
+  if (toltoDalGruppo(stato)) {
+    return { catena: undefined, conversazioneId, stato, tolto: true };
   }
 
   // Il mazzo si apre **prima** di sincronizzare, se è ancora all'epoch del
   // proprio stato: è così che chi resta indietro lo porta avanti riavvolgendolo
   // sotto l'epoch nuova. Se non si apre adesso, si riprova dopo, all'epoch
   // raggiunta — che è il caso di chi ritrova il mazzo già riavvolto da altri.
-  if (toltoDalGruppo(stato)) {
-    return { catena: undefined, conversazioneId, stato, tolto: true };
-  }
-
-  const prima = await catenaDi(ctx, stato, conversazioneId);
+  //
+  // **Chi una catena la conosce già la cambia soltanto con una che la
+  // estende.** Il mazzo dell'istanza è la parola dell'istanza, e di chi l'ha
+  // riavvolto per ultimo: uno che non comincia con le chiavi note toglierebbe
+  // la cronologia a questo dispositivo e, al prossimo cambio di epoch, a tutti.
+  const prima = catenaDaTenere(
+    await catenaNota(ctx, stato, conversazioneId),
+    await catenaDi(ctx, stato, conversazioneId),
+  );
   const sincronizzata = await sincronizza(ctx, { catena: prima, conversazioneId, stato });
 
   const ripresa =
@@ -453,6 +736,12 @@ export async function riprendiCongelata(
 export interface Ingresso {
   keyPackage: KeyPackage;
   /**
+   * **Chi** ci si aspetta che entri. La chiave d'ingresso arriva da una casa,
+   * e una casa può mandarne una di qualcun altro: se la credenziale dentro il
+   * `KeyPackage` non nomina questa persona, non entra nessuno.
+   */
+  membro: Membro;
+  /**
    * L'**id** del membro nella conversazione, non il suo nome: il canale di
    * handshake consegna un Welcome confrontando il destinatario con l'id di chi
    * legge ([`repository.ts`](../../../core-api/src/messaggi/repository.ts),
@@ -466,22 +755,83 @@ export interface Ingresso {
 async function consegnaWelcome(
   ctx: Contesto,
   conversazioneId: string,
-  welcome: Uint8Array | undefined,
-  epoch: number,
-  ingressi: readonly Ingresso[],
+  sospeso: CommitInSospeso,
 ): Promise<void> {
-  if (welcome === undefined) {
+  if (sospeso.welcome === undefined) {
     return;
   }
 
-  const busta = b64(welcome);
-  for (const destinatario of new Set(ingressi.map((i) => i.destinatario))) {
+  for (const destinatario of sospeso.destinatari) {
     await ctx.istanza.depositaHandshake(conversazioneId, {
-      busta,
+      busta: sospeso.welcome,
       destinatario,
-      epoch,
+      epoch: sospeso.epoch,
       tipo: "welcome",
     });
+  }
+}
+
+/** Una chiave d'ingresso che dice di essere di qualcun altro. */
+export class ChiaveDiUnAltro extends Error {
+  public readonly code = "chiave_di_un_altro";
+
+  public constructor() {
+    // Il messaggio è il codice: la frase la sceglie chi lo mostra (ADR 0046).
+    super("chiave_di_un_altro");
+  }
+}
+
+/** La chiave d'ingresso nomina la persona che ci si aspetta? */
+export function eDiChiSiAspetta(ingresso: Ingresso): boolean {
+  const suo = diChiE(ingresso.keyPackage);
+  return suo !== undefined && scriviIdentita(suo) === scriviIdentita(ingresso.membro);
+}
+
+/**
+ * Ogni chiave d'ingresso dev'essere **di chi ci si aspetta**: una che nomina
+ * un altro si rifiuta, invece di far entrare qualcuno sotto il nome sbagliato.
+ * Vale alla creazione come per ogni foglia che entra dopo.
+ */
+function soloDiChiSiAspetta(ingressi: readonly Ingresso[]): void {
+  if (!ingressi.every(eDiChiSiAspetta)) {
+    throw new ChiaveDiUnAltro();
+  }
+}
+
+/** Questo dispositivo aspetta ancora il sì di uno già approvato (ADR 0040). */
+export class DispositivoInAttesa extends Error {
+  public readonly code = "dispositivo_in_attesa";
+
+  public constructor() {
+    // Il messaggio è il codice: la frase la sceglie chi lo mostra (ADR 0046).
+    super("dispositivo_in_attesa");
+  }
+}
+
+/**
+ * La propria chiave di firma è nel registro della casa?
+ *
+ * Chi crea un gruppo o rientra porta **da sé** la propria foglia davanti agli
+ * altri, che la autenticano contro il registro: una chiave che aspetta ancora
+ * il sì verrebbe rifiutata da tutti, e il suo commit resterebbe in fila davanti
+ * a ogni altro.
+ */
+async function richiediIlSi(ctx: Contesto, io: IdentitaDispositivo): Promise<void> {
+  const membro = diChiE(io.publicPackage);
+  const mia = io.publicPackage.leafNode.signaturePublicKey;
+  const registro = membro === undefined ? [] : await ctx.istanza.chiaviDiFirmaDi(membro);
+  if (!registro.some((chiave) => stessiByte(chiave, mia))) {
+    throw new DispositivoInAttesa();
+  }
+}
+
+/** Un invito, o un punto di rientro, che porta in un'altra conversazione. */
+export class DiUnAltraConversazione extends Error {
+  public readonly code = "di_un_altra_conversazione";
+
+  public constructor() {
+    // Il messaggio è il codice: la frase la sceglie chi lo mostra (ADR 0046).
+    super("di_un_altra_conversazione");
   }
 }
 
@@ -497,12 +847,12 @@ export async function apriCon(
   if (ingressi.length === 0) {
     throw new Error("Una conversazione non si apre da soli.");
   }
+  soloDiChiSiAspetta(ingressi);
 
-  const creato = await creaConversazione(
-    conversazioneId,
-    await ctx.io.perNuovaFoglia(),
-    ctx.istanza,
-  );
+  const io = await ctx.io.perNuovaFoglia();
+  await richiediIlSi(ctx, io);
+
+  const creato = await creaConversazione(conversazioneId, io, ctx.istanza);
   const aggiunta = await cambiaFoglie(
     creato,
     { entrano: ingressi.map((i) => i.keyPackage), escono: [] },
@@ -517,19 +867,13 @@ export async function apriCon(
     stato: aggiunta.stato,
   };
 
-  // Il commit va in fila **prima** di salvare lo stato. Se un altro l'ha
-  // preceduto sulla stessa epoch la fila lo rifiuta (ADR 0042 §3), e allora
-  // qui non deve restare un gruppo che nessun altro conosce.
-  await ctx.istanza.depositaHandshake(conversazioneId, {
-    busta: b64(aggiunta.commit),
-    epoch: aggiunta.epoch,
-    tipo: "commit",
-  });
-  await salva(ctx, sessione);
-  // Prima il mazzo, poi gli inviti: chi entra lo trova già avvolto sotto
-  // l'epoch del suo Welcome, e legge subito.
-  await dopoIlCambioDiEpoch(ctx, sessione);
-  await consegnaWelcome(ctx, conversazioneId, aggiunta.welcome, aggiunta.epoch, ingressi);
+  // Il commit si annota, poi va in fila, e **solo allora** lo stato si salva.
+  // Se un altro l'ha preceduto sulla stessa epoch la fila lo rifiuta (ADR 0042
+  // §3), e qui non resta un gruppo che nessun altro conosce; se la risposta
+  // non arriva, lo dirà `riprendi`.
+  const sospeso = await annota(ctx, sessione, aggiunta, ingressi);
+  await deposita(ctx, conversazioneId, sospeso);
+  await concludi(ctx, sessione, sospeso);
 
   return sessione;
 }
@@ -540,18 +884,11 @@ export async function apri(
   conversazioneId: string,
   chiEntra: KeyPackage,
   idDiChiEntra: string,
+  membro: Membro,
 ): Promise<Sessione> {
-  return apriCon(ctx, conversazioneId, [{ destinatario: idDiChiEntra, keyPackage: chiEntra }]);
-}
-
-/** Una chiave d'ingresso che dice di essere di qualcun altro. */
-export class ChiaveDiUnAltro extends Error {
-  public readonly code = "chiave_di_un_altro";
-
-  public constructor() {
-    // Il messaggio è il codice: la frase la sceglie chi lo mostra (ADR 0046).
-    super("chiave_di_un_altro");
-  }
+  return apriCon(ctx, conversazioneId, [
+    { destinatario: idDiChiEntra, keyPackage: chiEntra, membro },
+  ]);
 }
 
 /**
@@ -580,27 +917,15 @@ async function commitDiFoglie(
       return attuale;
     }
 
+    // Qui passa ogni foglia che entra in un gruppo che esiste: nessuna con
+    // una chiave che nomina un altro.
+    soloDiChiSiAspetta(cambio.entrano);
+
     const esito = await cambiaFoglie(
       attuale.stato,
       { entrano: cambio.entrano.map((i) => i.keyPackage), escono: cambio.escono },
       ctx.istanza,
     );
-
-    try {
-      // In fila **prima** di salvare: uno stato che la fila ha rifiutato è un
-      // gruppo che nessun altro conosce.
-      await ctx.istanza.depositaHandshake(attuale.conversazioneId, {
-        busta: b64(esito.commit),
-        epoch: esito.epoch,
-        tipo: "commit",
-      });
-    } catch (causa) {
-      if (!superata(causa) || tentativo >= TENTATIVI) {
-        throw causa;
-      }
-      attuale = await sincronizza(ctx, attuale);
-      continue;
-    }
 
     // A ogni rimozione la catena guadagna una chiave (ADR 0052 §2): chi è
     // stato tolto tiene quelle che aveva, e non ottiene questa.
@@ -610,16 +935,20 @@ async function commitDiFoglie(
         : attuale.catena;
     const aggiornata: Sessione = { ...attuale, catena, stato: esito.stato };
 
-    await salva(ctx, aggiornata);
-    await dopoIlCambioDiEpoch(ctx, aggiornata);
-    await consegnaWelcome(
-      ctx,
-      aggiornata.conversazioneId,
-      esito.welcome,
-      esito.epoch,
-      cambio.entrano,
-    );
+    // Annotato, poi in fila, e **solo allora** salvato: uno stato che la fila
+    // ha rifiutato è un gruppo che nessun altro conosce.
+    const sospeso = await annota(ctx, aggiornata, esito, cambio.entrano);
+    try {
+      await deposita(ctx, attuale.conversazioneId, sospeso);
+    } catch (causa) {
+      if (!superata(causa) || tentativo >= TENTATIVI) {
+        throw causa;
+      }
+      attuale = await sincronizza(ctx, attuale);
+      continue;
+    }
 
+    await concludi(ctx, aggiornata, sospeso);
     return aggiornata;
   }
 }
@@ -648,13 +977,13 @@ export async function aggiungiFoglie(
   ingressi: readonly Ingresso[],
   opzioni: { alPostoDelleVecchie?: boolean } = {},
 ): Promise<Sessione> {
+  // Chi entra è `membro`, qualunque cosa dica l'ingresso: è di lui che si
+  // tolgono le foglie vecchie.
   const chi = scriviIdentita(membro);
-  for (const ingresso of ingressi) {
-    const suo = diChiE(ingresso.keyPackage);
-    if (suo === undefined || scriviIdentita(suo) !== chi) {
-      throw new ChiaveDiUnAltro();
-    }
+  if (ingressi.some((i) => scriviIdentita(i.membro) !== chi)) {
+    throw new ChiaveDiUnAltro();
   }
+  soloDiChiSiAspetta(ingressi);
 
   const stesseChiavi = ingressi.map((i) => i.keyPackage.leafNode.signaturePublicKey);
 
@@ -718,23 +1047,22 @@ export async function cambiaMembri(
   }));
 }
 
-const stessiByte = (a: Uint8Array, b: Uint8Array): boolean =>
-  a.length === b.length && a.every((byte, i) => byte === b[i]);
-
 /**
  * Fa entrare una foglia in una conversazione che esiste già.
  *
  * Resta per la chat a due; i gruppi e i dispositivi usano
- * [`aggiungiFoglie`](#aggiungiFoglie), che controlla anche di chi è la chiave.
+ * [`aggiungiFoglie`](#aggiungiFoglie), che toglie anche le foglie di prima.
+ * Di chi è la chiave si controlla comunque: `membro` è chi ci si aspetta.
  */
 export async function aggiungiMembro(
   ctx: Contesto,
   sessione: Sessione,
   chiEntra: KeyPackage,
   idDiChiEntra: string,
+  membro: Membro,
 ): Promise<Sessione> {
   return commitDiFoglie(ctx, sessione, () => ({
-    entrano: [{ destinatario: idDiChiEntra, keyPackage: chiEntra }],
+    entrano: [{ destinatario: idDiChiEntra, keyPackage: chiEntra, membro }],
     escono: [],
   }));
 }
@@ -745,6 +1073,9 @@ export async function aggiungiMembro(
  * `undefined` quando quel Welcome non chiama nessuna chiave di questo
  * dispositivo. Non è un guasto e non si tira a indovinare: succede a chi ha
  * cancellato il browser, e la via che gli resta è il rientro.
+ *
+ * Un Welcome che porta in **un'altra conversazione** è invece un guasto, e si
+ * dice ([`DiUnAltraConversazione`](#DiUnAltraConversazione)).
  */
 export async function entra(
   ctx: Contesto,
@@ -758,9 +1089,19 @@ export async function entra(
   }
 
   const stato = await entraDaWelcome(busta, io, ctx.istanza);
+  // Un invito trovato sul canale di questa conversazione deve portare **in
+  // questa**: uno che porta in un altro gruppo si rifiuta prima di salvare
+  // qualunque cosa, o il suo stato finirebbe sotto il nome di questa.
+  if (!eDi(stato, conversazioneId)) {
+    throw new DiUnAltraConversazione();
+  }
+
   const catena = await catenaDi(ctx, stato, conversazioneId);
   const sessione: Sessione = { catena, conversazioneId, stato };
 
+  // Chi entra da un invito non ha più niente in sospeso: quello che c'era era
+  // di un gruppo che non è questo.
+  await ctx.deposito.scriviSospeso(conversazioneId, undefined);
   await salva(ctx, sessione);
   await ctx.deposito.scriviCursore(conversazioneId, welcome.id);
 
@@ -907,16 +1248,22 @@ export async function rientraIn(
     return undefined;
   }
 
-  const tornata = await rientra(daB64(punto.groupInfo), await ctx.io.perNuovaFoglia(), ctx.istanza);
+  // Chi aspetta il sì non rientra: il suo commit lo rifiuterebbero tutti, e la
+  // fila resterebbe ferma su quella busta.
+  const io = await ctx.io.perNuovaFoglia();
+  await richiediIlSi(ctx, io);
 
-  await ctx.istanza.depositaHandshake(conversazioneId, {
-    busta: b64(tornata.commit),
-    epoch: tornata.epoch,
-    tipo: "commit",
-  });
+  const tornata = await rientra(daB64(punto.groupInfo), io, ctx.istanza);
+  if (!eDi(tornata.stato, conversazioneId)) {
+    throw new DiUnAltraConversazione();
+  }
 
+  // Come ogni commit proprio: annotato, in fila, e solo allora salvato.
   const sessione: Sessione = { catena: undefined, conversazioneId, stato: tornata.stato };
+  const sospeso = await annota(ctx, sessione, tornata, []);
+  await deposita(ctx, conversazioneId, sospeso);
   await salva(ctx, sessione);
+  await ctx.deposito.scriviSospeso(conversazioneId, undefined);
 
   return sessione;
 }
