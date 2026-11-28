@@ -66,4 +66,19 @@ do {
 } catch ErroreNucleo.NonAutenticato {
 }
 
+// Le conversazioni vere (`Sessioni`) passano dalla Casa, e qui una Casa non
+// c'è: questo giro non si chiama, ma il compilatore lo controlla riga per riga
+// contro i legami. È la forma che le schermate useranno: testo, persone e ore,
+// e nessuna chiave.
+func unGiro(collegamento: Collegamento, deposito: Deposito) async throws -> [String] {
+    let sessioni = try await Sessioni.apri(collegamento: collegamento, deposito: deposito)
+    guard sessioni.io().approvato else { return [] }
+    let conversazione = try await sessioni.creaDiretta(con: PersonaDaInvitare(username: "bruno", casa: nil))
+    guard try await sessioni.apriConversazione(conversazione: conversazione.id) == .pronta else { return [] }
+    let mandato = try await sessioni.invia(conversazione: conversazione.id, testo: "ciao", risponde: nil)
+    let giro = try await sessioni.aggiorna(conversazione: conversazione.id)
+    let presenti = try await sessioni.membri(conversazione: conversazione.id)
+    return [mandato.id] + giro.nuovi.compactMap { $0.testo } + presenti.map { $0.membro }
+}
+
 print("legami Swift: ok")

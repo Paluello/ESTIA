@@ -2,7 +2,8 @@ name: nucleo
 
 # Il nucleo Rust delle app native (apps/nucleo, ADR 0051) e la prova che il suo
 # MLS e quello del web stanno nella stessa conversazione (S7), e che leggono e
-# scrivono lo stesso archivio (infra/prova-archivio).
+# scrivono lo stesso archivio (infra/prova-archivio), e che le loro sessioni
+# stanno nella stessa conversazione (infra/prova-sessione).
 
 on:
   push:
@@ -14,6 +15,8 @@ on:
       - "patches/**"
       - "infra/spike-mls/**"
       - "infra/prova-archivio/**"
+      - "infra/prova-sessione/**"
+      - "apps/core-api/src/**/routes.ts"
       - "packages/contracts/src/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/nucleo.yml"
@@ -25,6 +28,8 @@ on:
       - "patches/**"
       - "infra/spike-mls/**"
       - "infra/prova-archivio/**"
+      - "infra/prova-sessione/**"
+      - "apps/core-api/src/**/routes.ts"
       - "packages/contracts/src/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/nucleo.yml"
@@ -96,6 +101,11 @@ jobs:
         run: |
           cargo build --locked --manifest-path apps/nucleo/Cargo.toml --example ponte_archivio
           node infra/prova-archivio/prova.mjs
+
+      - name: La sessione, fra il nucleo e il client web
+        run: |
+          cargo build --locked --manifest-path apps/nucleo/Cargo.toml --example ponte_sessione
+          node --experimental-transform-types infra/prova-sessione/prova.mjs
 
   apple:
     runs-on: macos-latest

@@ -394,10 +394,22 @@ impl Dispositivo {
         f: impl FnOnce(&mut Stato, &mut MlsGroup) -> Result<T, ErroreNucleo>,
     ) -> Result<T, ErroreNucleo> {
         let mut stato = self.stato.lock().unwrap();
-        let mut gruppo = stato.gruppo(conversazione)?;
-        let esito = f(&mut stato, &mut gruppo)?;
-        self.salva(&stato)?;
-        Ok(esito)
+        // Tutto o niente. OpenMLS consuma la chiave di una busta nel momento
+        // in cui la apre: se poi l'operazione si ferma (il registro non
+        // risponde, una foglia non è riconosciuta, il deposito non scrive) e
+        // lo stato in memoria restasse avanti, la stessa busta non si
+        // aprirebbe più al giro dopo, e la fila resterebbe ferma per sempre.
+        // Sul web lo stato è immutabile e il problema non esiste; qui si
+        // torna alla fotografia di prima.
+        let prima = stato.scrivi();
+        let esito = stato
+            .gruppo(conversazione)
+            .and_then(|mut gruppo| f(&mut stato, &mut gruppo))
+            .and_then(|esito| self.salva(&stato).map(|()| esito));
+        if esito.is_err() {
+            *stato = Stato::leggi(&prima)?;
+        }
+        esito
     }
 }
 
@@ -555,6 +567,11 @@ impl Dispositivo {
             if foglie.is_empty() {
                 return Err(ErroreNucleo::NonAutenticato(membro.clone()));
             }
+            if foglie.contains(&gruppo.own_leaf_index()) {
+                return Err(ErroreNucleo::Formato(
+                    "non ci si toglie da soli: lo fa un altro membro".into(),
+                ));
+            }
             let prima = chiavi_delle_foglie(gruppo);
             let (commit, _, _) = gruppo
                 .remove_members(&stato.fornitore, &stato.firma, &foglie)
@@ -589,25 +606,8 @@ impl Dispositivo {
 
     /// Entra dal proprio Welcome. Restituisce il nome della conversazione.
     pub fn entra(&self, welcome: Vec<u8>) -> Result<String, ErroreNucleo> {
-        let MlsMessageBodyIn::Welcome(welcome) = dal_filo(&welcome)?.extract() else {
-            return Err(ErroreNucleo::Formato("atteso un Welcome".into()));
-        };
-        let mut stato = self.stato.lock().unwrap();
-        let in_attesa =
-            StagedWelcome::new_from_welcome(&stato.fornitore, &config_ingresso(), welcome, None)
-                .map_err(mls)?;
-        // Chi entra autentica tutto l'albero: è la prima volta che lo vede.
-        for m in in_attesa.members() {
-            self.autentica(&m.credential, &m.signature_key)?;
-        }
-        let gruppo = in_attesa.into_group(&stato.fornitore).map_err(mls)?;
-        let nome = String::from_utf8(gruppo.group_id().as_slice().to_vec()).map_err(formato)?;
-        // Chi entra non ha la catena, e una rimasta da prima non è più quella:
-        // arriva dal mazzo, con `apri_mazzo`.
-        stato.catene.remove(&nome);
-        stato.conversazioni.insert(nome.clone());
-        self.salva(&stato)?;
-        Ok(nome)
+        self.entra_se_chiamato(&welcome, None)?
+            .ok_or_else(|| ErroreNucleo::Mls("NoMatchingKeyPackage".into()))
     }
 
     /// Il punto da cui si rientra: il GroupInfo dell'epoch corrente, con
@@ -671,61 +671,7 @@ impl Dispositivo {
 
     /// Applica una busta del canale: un messaggio, un commit o una proposta.
     pub fn applica(&self, conversazione: String, busta: Vec<u8>) -> Result<Ricevuto, ErroreNucleo> {
-        let messaggio = dal_filo(&busta)?
-            .try_into_protocol_message()
-            .map_err(formato)?;
-        self.con_gruppo(&conversazione, |stato, gruppo| {
-            let prima = chiavi_delle_foglie(gruppo);
-            let elaborato = gruppo
-                .process_message(&stato.fornitore, messaggio)
-                .map_err(mls)?;
-            let da =
-                String::from_utf8_lossy(elaborato.credential().serialized_content()).into_owned();
-            match elaborato.into_content() {
-                ProcessedMessageContent::ApplicationMessage(m) => Ok(Ricevuto::Messaggio {
-                    testo: String::from_utf8(m.into_bytes()).map_err(formato)?,
-                    da,
-                }),
-                ProcessedMessageContent::StagedCommitMessage(in_attesa) => {
-                    // Le foglie che questo commit porta dentro o cambia.
-                    for add in in_attesa.add_proposals() {
-                        self.autentica_foglia(add.add_proposal().key_package().leaf_node())?;
-                    }
-                    if let Some(foglia) = in_attesa.update_path_leaf_node() {
-                        self.autentica_foglia(foglia)?;
-                    }
-                    let uscito = in_attesa.self_removed();
-                    gruppo
-                        .merge_staged_commit(&stato.fornitore, *in_attesa)
-                        .map_err(mls)?;
-                    if uscito {
-                        // Chi è stato tolto non legge il seguito e non scrive:
-                        // come sul web, la catena non resta su questo dispositivo.
-                        stato.catene.remove(&conversazione);
-                    } else {
-                        stato.dopo_un_commit(&conversazione, &prima, gruppo)?;
-                    }
-                    Ok(if uscito {
-                        Ricevuto::Uscito
-                    } else {
-                        Ricevuto::Commit {
-                            epoch: gruppo.epoch().as_u64(),
-                        }
-                    })
-                }
-                ProcessedMessageContent::ProposalMessage(p) => {
-                    gruppo
-                        .store_pending_proposal(stato.fornitore.storage(), *p)
-                        .map_err(mls)?;
-                    Ok(Ricevuto::Proposta)
-                }
-                ProcessedMessageContent::ExternalJoinProposalMessage(_) => Ok(Ricevuto::Proposta),
-                ProcessedMessageContent::OwnPendingCommit
-                | ProcessedMessageContent::OwnPrivateMessage => {
-                    Err(ErroreNucleo::Formato("busta propria".into()))
-                }
-            }
-        })
+        self.applica_in_fila(&conversazione, &busta, None)
     }
 
     pub fn epoch(&self, conversazione: String) -> Result<u64, ErroreNucleo> {
@@ -912,6 +858,344 @@ impl Dispositivo {
         let stato = self.stato.lock().unwrap();
         let gruppo = stato.gruppo(conversazione)?;
         Ok(stato.deriva(&gruppo, ETICHETTA_ARCHIVIO)?.to_vec())
+    }
+}
+
+/* ---------- ciò che serve alla sessione ---------- */
+
+/// Quante foglie può avere un albero: `MAX_FOGLIE_GRUPPO` di `@estia/contracts`.
+pub const MAX_FOGLIE_GRUPPO: usize = 50;
+
+/// Una foglia dell'albero: un dispositivo di un membro.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Foglia {
+    pub indice: u32,
+    /// `<username>@<casa>`, come lo dice la credenziale.
+    pub membro: String,
+    pub chiave_di_firma: Vec<u8>,
+}
+
+/// Un commit che cambia le foglie, **costruito e non ancora applicato**: lo
+/// stato resta all'epoch di prima finché la fila non l'ha accettato.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CambioPreparato {
+    pub commit: Vec<u8>,
+    /// C'è quando qualcuno entra: va a ciascuno di loro.
+    pub welcome: Option<Vec<u8>>,
+    /// L'epoch che il commit crea.
+    pub epoch: u64,
+}
+
+/// Di chi è un KeyPackage, e con che chiave firma: senza validarlo.
+pub fn di_chi_e(pacchetto: &[u8]) -> Result<(String, Vec<u8>), ErroreNucleo> {
+    let MlsMessageBodyIn::KeyPackage(kp) = dal_filo(pacchetto)?.extract() else {
+        return Err(ErroreNucleo::Formato("atteso un KeyPackage".into()));
+    };
+    let dichiarata = kp.unverified_credential();
+    let membro = String::from_utf8(dichiarata.credential.serialized_content().to_vec())
+        .map_err(|_| ErroreNucleo::ChiaveDiUnAltro)?;
+    Ok((membro, dichiarata.signature_key.as_slice().to_vec()))
+}
+
+/// Le operazioni che usa [`crate::sessione`], e che non passano il confine di
+/// UniFFI: la sessione è nel nucleo, e l'app non porta più i byte di MLS.
+///
+/// La differenza da `aggiungi` e `rimuovi` è l'ordine, ed è la regola di
+/// `sessione.ts`: **il commit va in fila prima che lo stato avanzi**. Se un
+/// altro l'ha preceduto sulla stessa epoch la fila lo rifiuta (ADR 0042 §3), e
+/// allora qui non deve restare un gruppo a un'epoch che nessun altro conosce.
+/// Con OpenMLS vuol dire lasciare il commit *in sospeso* (`prepara_cambio`),
+/// e poi applicarlo (`conferma_cambio`) o buttarlo (`annulla_cambio`).
+impl Dispositivo {
+    /// Questo dispositivo ha lo stato del gruppo di questa conversazione?
+    pub fn conosce(&self, conversazione: &str) -> bool {
+        self.stato
+            .lock()
+            .unwrap()
+            .conversazioni
+            .contains(conversazione)
+    }
+
+    /// `false` quando un commit applicato ha tolto la foglia di questo
+    /// dispositivo: è `toltoDalGruppo` di `gruppo.ts`.
+    pub fn nel_gruppo(&self, conversazione: &str) -> Result<bool, ErroreNucleo> {
+        Ok(self
+            .stato
+            .lock()
+            .unwrap()
+            .gruppo(conversazione)?
+            .is_active())
+    }
+
+    /// Le foglie dell'albero, com'è adesso.
+    pub fn foglie(&self, conversazione: &str) -> Result<Vec<Foglia>, ErroreNucleo> {
+        let stato = self.stato.lock().unwrap();
+        Ok(stato
+            .gruppo(conversazione)?
+            .members()
+            .map(|m| Foglia {
+                indice: m.index.u32(),
+                membro: String::from_utf8_lossy(m.credential.serialized_content()).into_owned(),
+                chiave_di_firma: m.signature_key,
+            })
+            .collect())
+    }
+
+    /// Il posto della propria foglia.
+    pub fn mia_foglia(&self, conversazione: &str) -> Result<u32, ErroreNucleo> {
+        let stato = self.stato.lock().unwrap();
+        Ok(stato.gruppo(conversazione)?.own_leaf_index().u32())
+    }
+
+    /// C'è un commit proprio costruito e non ancora applicato?
+    pub fn cambio_in_sospeso(&self, conversazione: &str) -> Result<bool, ErroreNucleo> {
+        let stato = self.stato.lock().unwrap();
+        Ok(stato.gruppo(conversazione)?.pending_commit().is_some())
+    }
+
+    /// Entra da un Welcome, se chiama una chiave di questo dispositivo.
+    ///
+    /// `None` quando non ne chiama nessuna. Non è un guasto e non si tira a
+    /// indovinare: è `perWelcome` del web, che dice `undefined`.
+    ///
+    /// Se di quel gruppo c'è già uno stato da cui si risulta **tolti**, il
+    /// Welcome lo sostituisce: è la riammissione. Uno stato ancora vivo non si
+    /// sostituisce mai.
+    ///
+    /// `attesa` è la conversazione sul cui canale il Welcome è arrivato: uno
+    /// che porta in un altro gruppo si rifiuta prima di toccare qualunque cosa.
+    pub fn entra_se_chiamato(
+        &self,
+        welcome: &[u8],
+        attesa: Option<&str>,
+    ) -> Result<Option<String>, ErroreNucleo> {
+        let MlsMessageBodyIn::Welcome(welcome) = dal_filo(welcome)?.extract() else {
+            return Err(ErroreNucleo::Formato("atteso un Welcome".into()));
+        };
+        let mut stato = self.stato.lock().unwrap();
+        let elaborato =
+            match ProcessedWelcome::new_from_welcome(&stato.fornitore, &config_ingresso(), welcome)
+            {
+                Ok(elaborato) => elaborato,
+                Err(WelcomeError::NoMatchingKeyPackage) => return Ok(None),
+                Err(altro) => return Err(mls(altro)),
+            };
+        let id = elaborato.unverified_group_info().group_id().clone();
+        if attesa.is_some_and(|attesa| attesa.as_bytes() != id.as_slice()) {
+            return Err(ErroreNucleo::Formato(
+                "il Welcome è di un'altra conversazione".into(),
+            ));
+        }
+        if let Some(mut di_prima) = MlsGroup::load(stato.fornitore.storage(), &id).map_err(mls)? {
+            if di_prima.is_active() {
+                return Err(ErroreNucleo::Formato(
+                    "questo dispositivo è già in questa conversazione".into(),
+                ));
+            }
+            di_prima.delete(stato.fornitore.storage()).map_err(mls)?;
+        }
+        let in_attesa = elaborato
+            .into_staged_welcome(&stato.fornitore, None)
+            .map_err(mls)?;
+        // Chi entra autentica tutto l'albero: è la prima volta che lo vede.
+        for m in in_attesa.members() {
+            self.autentica(&m.credential, &m.signature_key)?;
+        }
+        let gruppo = in_attesa.into_group(&stato.fornitore).map_err(mls)?;
+        let nome = String::from_utf8(gruppo.group_id().as_slice().to_vec()).map_err(formato)?;
+        // Chi entra non ha la catena, e una rimasta da prima non è più quella:
+        // arriva dal mazzo, con `apri_mazzo`.
+        stato.catene.remove(&nome);
+        stato.conversazioni.insert(nome.clone());
+        self.salva(&stato)?;
+        Ok(Some(nome))
+    }
+
+    /// Costruisce un commit che fa entrare e uscire foglie insieme, e lo lascia
+    /// in sospeso: è `cambiaFoglie` di `gruppo.ts`, fermato un passo prima.
+    ///
+    /// Ogni KeyPackage si autentica contro il registro. Non ci si toglie da
+    /// soli, e l'albero ha un tetto.
+    pub fn prepara_cambio(
+        &self,
+        conversazione: &str,
+        entrano: &[Vec<u8>],
+        escono: &[u32],
+    ) -> Result<CambioPreparato, ErroreNucleo> {
+        let stato = self.stato.lock().unwrap();
+        let mut gruppo = stato.gruppo(conversazione)?;
+        if !gruppo.is_active() {
+            return Err(ErroreNucleo::FuoriDalGruppo);
+        }
+        if escono.contains(&gruppo.own_leaf_index().u32()) {
+            return Err(ErroreNucleo::Formato(
+                "non ci si toglie da soli: lo fa un altro membro".into(),
+            ));
+        }
+        let quante = (gruppo.members().count() + entrano.len()).saturating_sub(escono.len());
+        if quante > MAX_FOGLIE_GRUPPO {
+            return Err(ErroreNucleo::GruppoPieno);
+        }
+        let mut pacchetti = Vec::with_capacity(entrano.len());
+        for pacchetto in entrano {
+            let MlsMessageBodyIn::KeyPackage(kp) = dal_filo(pacchetto)?.extract() else {
+                return Err(ErroreNucleo::Formato("atteso un KeyPackage".into()));
+            };
+            let kp = kp
+                .validate(stato.fornitore.crypto(), ProtocolVersion::Mls10)
+                .map_err(mls)?;
+            self.autentica_foglia(kp.leaf_node())?;
+            pacchetti.push(kp);
+        }
+        // Un commit rimasto in sospeso da un tentativo che la fila non ha mai
+        // visto non si porta dietro: se ne fa uno nuovo, sull'epoch di adesso.
+        gruppo
+            .clear_pending_commit(stato.fornitore.storage())
+            .map_err(mls)?;
+        let bundle = gruppo
+            .commit_builder()
+            .propose_removals(escono.iter().map(|i| LeafNodeIndex::new(*i)))
+            .propose_adds(pacchetti)
+            .load_psks(stato.fornitore.storage())
+            .map_err(mls)?
+            .build(
+                stato.fornitore.rand(),
+                stato.fornitore.crypto(),
+                &stato.firma,
+                |_| true,
+            )
+            .map_err(mls)?
+            .stage_commit(&stato.fornitore)
+            .map_err(mls)?;
+        if !entrano.is_empty() && bundle.welcome().is_none() {
+            return Err(ErroreNucleo::Mls(
+                "un ingresso senza Welcome non è un ingresso".into(),
+            ));
+        }
+        let (commit, welcome, _) = bundle.into_messages();
+        self.salva(&stato)?;
+        Ok(CambioPreparato {
+            commit: sul_filo(&commit)?,
+            welcome: welcome.as_ref().map(sul_filo).transpose()?,
+            epoch: gruppo.epoch().as_u64() + 1,
+        })
+    }
+
+    /// La fila ha accettato il commit in sospeso: lo stato avanza, e se ha
+    /// tolto qualcuno la catena guadagna la chiave dell'epoch nuova.
+    pub fn conferma_cambio(&self, conversazione: &str) -> Result<u64, ErroreNucleo> {
+        self.con_gruppo(conversazione, |stato, gruppo| {
+            if gruppo.pending_commit().is_none() {
+                return Err(ErroreNucleo::Mls("nessun commit in sospeso".into()));
+            }
+            let prima = chiavi_delle_foglie(gruppo);
+            gruppo.merge_pending_commit(&stato.fornitore).map_err(mls)?;
+            stato.dopo_un_commit(conversazione, &prima, gruppo)?;
+            Ok(gruppo.epoch().as_u64())
+        })
+    }
+
+    /// La fila ha rifiutato il commit in sospeso, o non l'ha mai visto: si
+    /// butta, e lo stato resta all'epoch che tutti conoscono.
+    pub fn annulla_cambio(&self, conversazione: &str) -> Result<(), ErroreNucleo> {
+        self.con_gruppo(conversazione, |stato, gruppo| {
+            gruppo
+                .clear_pending_commit(stato.fornitore.storage())
+                .map_err(mls)
+        })
+    }
+
+    /// Toglie da questo dispositivo lo stato di un gruppo, e la sua catena.
+    ///
+    /// Serve a una cosa sola: un gruppo creato o un rientro che la fila ha
+    /// rifiutato, cioè uno stato che nessun altro conosce. Tenerlo vorrebbe
+    /// dire riprenderlo al posto di quello vero.
+    pub fn dimentica(&self, conversazione: &str) -> Result<(), ErroreNucleo> {
+        let mut stato = self.stato.lock().unwrap();
+        if let Ok(mut gruppo) = stato.gruppo(conversazione) {
+            gruppo.delete(stato.fornitore.storage()).map_err(mls)?;
+        }
+        stato.conversazioni.remove(conversazione);
+        stato.catene.remove(conversazione);
+        self.salva(&stato)
+    }
+
+    /// Applica una busta della fila di handshake.
+    ///
+    /// `proprio` sono i byte del commit che questo dispositivo ha lasciato in
+    /// sospeso, se ce n'è uno: quando la fila lo restituisce — il deposito era
+    /// riuscito, e l'app si è chiusa prima di saperlo — non lo si può
+    /// decifrare, perché è proprio, ma lo si riconosce byte per byte e si
+    /// applica quello in sospeso. Un commit proprio che non si riconosce è un
+    /// errore: lo stato che lo aveva prodotto non c'è più.
+    pub fn applica_in_fila(
+        &self,
+        conversazione: &str,
+        busta: &[u8],
+        proprio: Option<&[u8]>,
+    ) -> Result<Ricevuto, ErroreNucleo> {
+        let messaggio = dal_filo(busta)?
+            .try_into_protocol_message()
+            .map_err(formato)?;
+        self.con_gruppo(conversazione, |stato, gruppo| {
+            let prima = chiavi_delle_foglie(gruppo);
+            let elaborato = gruppo
+                .process_message(&stato.fornitore, messaggio)
+                .map_err(mls)?;
+            let da =
+                String::from_utf8_lossy(elaborato.credential().serialized_content()).into_owned();
+            match elaborato.into_content() {
+                ProcessedMessageContent::ApplicationMessage(m) => Ok(Ricevuto::Messaggio {
+                    testo: String::from_utf8(m.into_bytes()).map_err(formato)?,
+                    da,
+                }),
+                ProcessedMessageContent::StagedCommitMessage(in_attesa) => {
+                    // Le foglie che questo commit porta dentro o cambia.
+                    for add in in_attesa.add_proposals() {
+                        self.autentica_foglia(add.add_proposal().key_package().leaf_node())?;
+                    }
+                    if let Some(foglia) = in_attesa.update_path_leaf_node() {
+                        self.autentica_foglia(foglia)?;
+                    }
+                    let uscito = in_attesa.self_removed();
+                    gruppo
+                        .merge_staged_commit(&stato.fornitore, *in_attesa)
+                        .map_err(mls)?;
+                    if uscito {
+                        // Chi è stato tolto non legge il seguito e non scrive:
+                        // come sul web, la catena non resta su questo dispositivo.
+                        stato.catene.remove(conversazione);
+                    } else {
+                        stato.dopo_un_commit(conversazione, &prima, gruppo)?;
+                    }
+                    Ok(if uscito {
+                        Ricevuto::Uscito
+                    } else {
+                        Ricevuto::Commit {
+                            epoch: gruppo.epoch().as_u64(),
+                        }
+                    })
+                }
+                ProcessedMessageContent::ProposalMessage(p) => {
+                    gruppo
+                        .store_pending_proposal(stato.fornitore.storage(), *p)
+                        .map_err(mls)?;
+                    Ok(Ricevuto::Proposta)
+                }
+                ProcessedMessageContent::ExternalJoinProposalMessage(_) => Ok(Ricevuto::Proposta),
+                ProcessedMessageContent::OwnPendingCommit
+                | ProcessedMessageContent::OwnPrivateMessage => {
+                    if gruppo.pending_commit().is_none() || proprio != Some(busta) {
+                        return Err(ErroreNucleo::Formato("busta propria".into()));
+                    }
+                    gruppo.merge_pending_commit(&stato.fornitore).map_err(mls)?;
+                    stato.dopo_un_commit(conversazione, &prima, gruppo)?;
+                    Ok(Ricevuto::Commit {
+                        epoch: gruppo.epoch().as_u64(),
+                    })
+                }
+            }
+        })
     }
 }
 

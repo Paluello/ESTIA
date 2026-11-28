@@ -5,6 +5,9 @@
 //! MLS e dall'archivio della conversazione ([`archivio`]): l'interfaccia chiede
 //! «cifra questo per questa conversazione» e non tocca mai una chiave.
 //!
+//! Le conversazioni le tiene [`sessione`]: gli handshake in ordine, il mazzo,
+//! l'invio e la lettura, sopra un'[`istanza`] che in produzione è la Casa.
+//!
 //! Il filo verso la Casa (iroh, `estia/ingresso/1` e `estia/dispositivo/1`)
 //! è in [`casa`], sopra [`rete`] e [`filo`]. Anche l'app del PC
 //! (`apps/app/src-tauri`) usa questi due moduli, senza UniFFI.
@@ -16,7 +19,9 @@ pub mod casa;
 pub mod deposito;
 pub mod errore;
 pub mod filo;
+pub mod istanza;
 pub mod mls;
 pub mod rete;
+pub mod sessione;
 
 pub use errore::ErroreNucleo;
