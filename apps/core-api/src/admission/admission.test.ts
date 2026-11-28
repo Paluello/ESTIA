@@ -147,6 +147,22 @@ describe("invites", () => {
     });
   });
 
+  it("lets one invite hold only a few requests waiting", async () => {
+    // Revisione interna, 2026-11-27: a single-use code could keep any number
+    // of usernames pending, and so out of everyone else's reach.
+    await withInstance(async ({ app, admin }) => {
+      const { code } = (await createInvite(app, admin)).json();
+      const answers = [];
+
+      for (const username of ["primo", "secondo", "terzo", "quarto"]) {
+        answers.push(await ask(app, code, { password: VICINA.password, username }));
+      }
+
+      expect(answers.map((answer) => answer.statusCode)).toEqual([201, 201, 201, 409]);
+      expect(answers[3]!.json().code).toBe("invite_requests_full");
+    });
+  });
+
   it("refuses an invented invite", async () => {
     await withInstance(async ({ app }) => {
       const attempt = await ask(app, "ZZZZ-ZZZZ-ZZZZ-ZZZZ", VICINA);

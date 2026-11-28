@@ -36,6 +36,9 @@ export interface AdmissionServiceOptions {
   now?: () => Date;
 }
 
+/** Pending requests an invite may carry beyond its remaining uses. */
+const EXTRA_PENDING_PER_INVITE = 2;
+
 export class AdmissionService {
   private readonly invites: InviteRepository;
   private readonly requests: JoinRequestRepository;
@@ -105,6 +108,16 @@ export class AdmissionService {
 
     if (invite === undefined || !this.isInviteUsable(invite)) {
       throw rejection;
+    }
+
+    // An invite for one person lets one person ask, plus a couple of second
+    // tries: without a ceiling, one code could hold any number of usernames
+    // pending until the administrator got round to them.
+    if (
+      this.requests.countPendingForInvite(invite.id) >=
+      invite.maxUses - invite.usedCount + EXTRA_PENDING_PER_INVITE
+    ) {
+      throw new DomainError("invite_requests_full", 409);
     }
 
     const username = input.username.trim().toLowerCase();

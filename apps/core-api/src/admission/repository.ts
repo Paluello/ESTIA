@@ -49,6 +49,7 @@ export interface JoinRequestRepository {
   create(record: JoinRequestRecord): void;
   findById(id: string): JoinRequestRecord | undefined;
   findPendingByUsername(username: string): JoinRequestRecord | undefined;
+  countPendingForInvite(inviteId: string): number;
   listByStatus(status: JoinRequestStatus): JoinRequestRecord[];
   decide(input: {
     id: string;
@@ -229,6 +230,14 @@ export class SqliteJoinRequestRepository implements JoinRequestRepository {
       .get(username) as JoinRequestRow | undefined;
 
     return row === undefined ? undefined : toRequest(row);
+  }
+
+  public countPendingForInvite(inviteId: string): number {
+    const row = this.database
+      .prepare(`SELECT COUNT(*) AS n FROM join_requests WHERE invite_id = ? AND status = 'pending'`)
+      .get(inviteId) as { n: number };
+
+    return row.n;
   }
 
   public listByStatus(status: JoinRequestStatus): JoinRequestRecord[] {
