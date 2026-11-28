@@ -16,15 +16,18 @@ Sta accanto a [`spike-mls`](../spike-mls) (S7, il protocollo) e a [`prova-archiv
 2. **Una chat a due creata dal browser.** Il telefono entra dall'invito di `ts-mls`, con il KeyPackage che aveva pubblicato alla Casa.
 3. **Un gruppo con due telefoni e due browser.** Il telefono lo crea e aggiunge un browser, che legge anche il pregresso e il cui ingresso è detto. Il browser toglie un telefono e il telefono toglie un browser: chi resta deriva la stessa chiave nuova senza scambiarsela, e la catena di chi è stato tolto non apre il seguito.
 4. **Un telefono esce da un gruppo.** Racconta l'uscita e la dice alla Casa senza mandare un commit; il browser, che ordina, toglie la sua foglia con `ts-mls`, e l'altro telefono applica il commit e continua.
+5. **Un secondo telefono, il sì e la revoca dal telefono.** Il telefono nuovo aspetta e non crea né rientra; il primo vede la richiesta con lo stesso codice da confrontare (quello di `codice-dispositivo.ts`), dice di sì, e la foglia nuova entra subito nelle conversazioni: il browser applica il commit di OpenMLS e legge ciò che il telefono nuovo scrive. Alla revoca la foglia esce, e il seguito il telefono revocato non lo legge.
+6. **Il sì dato dal browser.** `allineaMieiDispositivi` del web aggiunge con `ts-mls` il telefono appena approvato, e alla revoca lo toglie: il telefono di un'altra persona applica i due commit, e il telefono approvato entra dal suo invito e poi risulta tolto.
 
 In più, a ogni richiesta:
 
 - il corpo che il nucleo manda e la risposta che riceve si confrontano con gli schemi di `packages/contracts`, con l'Ajv di Fastify: quelli con cui la Casa vera valida le stesse rotte;
+- ogni registrazione della chiave porta la prova di possesso (`POST /dispositivi/sfida`, poi `prova`), e il pilota la controlla come `apps/core-api`, con la crittografia di Node: la firma di OpenMLS dev'essere una che la Casa vera accetta;
 - alla fine, ogni rotta che il nucleo ha usato deve ritrovarsi, con il suo metodo, fra quelle che `apps/core-api` registra. Un endpoint inventato fa fallire la prova.
 
 ## Che cosa non prova
 
-La Casa del pilota **non è `apps/core-api`**: ne ha le rotte, i corpi e i codici d'errore, non il codice. Non ci sono iroh, la federazione fra due case, l'approvazione di un secondo dispositivo, la paginazione della fila. Queste cose hanno i loro test nel nucleo (`src/sessione/prove.rs`, `tests/casa.rs`) e in `apps/core-api`.
+La Casa del pilota **non è `apps/core-api`**: ne ha le rotte, i corpi e i codici d'errore, non il codice. Non ci sono iroh, la federazione fra due case, le sessioni (una chiave che si ripresenta da una sessione nuova), la paginazione della fila. Queste cose hanno i loro test nel nucleo (`src/sessione/prove.rs`, `tests/casa.rs`) e in `apps/core-api`.
 
 ## Come si lancia
 

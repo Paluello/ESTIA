@@ -941,6 +941,21 @@ impl Dispositivo {
             .collect())
     }
 
+    /// La prova di possesso della chiave di firma (ADR 0040): la firma, DER,
+    /// di `messaggio` con la chiave privata. Il messaggio lo compone la
+    /// sessione, con il prefisso che lo lega a quell'uso
+    /// (`messaggioDiProvaChiave` di `packages/contracts`): niente che MLS
+    /// firmerebbe a sua volta.
+    pub fn firma_la_prova(&self, messaggio: &[u8]) -> Result<Vec<u8>, ErroreNucleo> {
+        use openmls_traits::signatures::Signer;
+        self.stato
+            .lock()
+            .unwrap()
+            .firma
+            .sign(messaggio)
+            .map_err(mls)
+    }
+
     /// Il posto della propria foglia.
     pub fn mia_foglia(&self, conversazione: &str) -> Result<u32, ErroreNucleo> {
         let stato = self.stato.lock().unwrap();

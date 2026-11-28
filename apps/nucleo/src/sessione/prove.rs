@@ -1341,7 +1341,275 @@ async fn un_gruppo_congelato_si_legge_con_cio_che_il_dispositivo_aveva() {
     assert_eq!(epoch_dei_commit(&istanza, &conv), [1]);
 }
 
+/* ---------- l'elenco, il sì e la revoca dalla sessione (ADR 0040) ---------- */
+
+/// Un altro telefono della stessa persona, che parte da un deposito vuoto:
+/// una chiave nuova, e aspetta il sì.
+async fn secondo_telefono(istanza: &IstanzaFinta, nome: &str) -> Telefono {
+    let secondo = telefono(istanza, nome).await;
+    assert!(!secondo.motore.io().approvato);
+    secondo
+}
+
+/// La stessa chiave di `chi`, da una sessione nuova: è chi è uscito dalla
+/// Casa e ci rientra con il deposito di prima.
+async fn rientra_con_la_stessa_chiave(
+    istanza: &IstanzaFinta,
+    chi: &Telefono,
+    nome: &str,
+) -> Motore<VistaFinta> {
+    Motore::apri(istanza.per(nome), chi.deposito.clone())
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chi_aspetta_e_chi_approva_vedono_lo_stesso_codice_calcolato_qui() {
+    let (istanza, anna, _bruno, _conv) = in_due().await;
+    let secondo = secondo_telefono(&istanza, "anna").await;
+
+    let elenco = anna.motore.dispositivi().await.unwrap();
+    assert_eq!(elenco.len(), 2);
+    // Questo per primo, poi chi aspetta.
+    assert!(elenco[0].questo);
+    assert_eq!(elenco[0].stato, StatoDispositivo::Approvato);
+    assert_eq!(elenco[0].id, anna.motore.io().dispositivo);
+    assert_eq!(elenco[1].id, secondo.motore.io().dispositivo);
+    assert_eq!(elenco[1].stato, StatoDispositivo::InAttesa);
+    assert!(!elenco[1].questo);
+    // Il codice che chi approva vede è quello che chi aspetta mostra: lo
+    // calcolano entrambi dalla chiave, nessuno dei due lo riceve dalla Casa.
+    assert_eq!(elenco[1].codice, secondo.motore.io().codice);
+    assert_ne!(elenco[1].codice, anna.motore.io().codice);
+    assert_eq!(
+        elenco[1].etichetta.as_deref(),
+        Some(format!("Telefono {}", secondo.vista.dispositivo()).as_str())
+    );
+    assert!(elenco[1].visto_il.is_some());
+
+    // Chi aspetta vede la stessa riga, dal suo lato.
+    let suo = secondo.motore.dispositivi().await.unwrap();
+    assert!(suo[0].questo && suo[0].stato == StatoDispositivo::InAttesa);
+    assert_eq!(suo[0].codice, secondo.motore.io().codice);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn al_si_il_nuovo_telefono_entra_subito_in_ogni_conversazione_e_legge() {
+    let (istanza, anna, bruno, conv) = in_due().await;
+    let _carla = telefono(&istanza, "carla").await;
+    let altra = anna.motore.crea_diretta(persona("carla")).await.unwrap().id;
+    assert_eq!(
+        anna.motore.apri_conversazione(altra.clone()).await.unwrap(),
+        Apertura::Pronta
+    );
+    anna.scrive(&conv, "prima del secondo telefono").await;
+    let secondo = secondo_telefono(&istanza, "anna").await;
+
+    // Il sì entra nelle conversazioni subito, senza aspettare che qualcuno
+    // le guardi: un commit per ciascuna.
+    anna.motore
+        .approva_dispositivo(secondo.vista.dispositivo().into())
+        .await
+        .unwrap();
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1, 2]);
+    assert_eq!(epoch_dei_commit(&istanza, &altra), [1, 2]);
+    assert_eq!(anna.membri_nell_albero(&conv), ["anna", "anna", "bruno"]);
+    assert_eq!(anna.membri_nell_albero(&altra), ["anna", "anna", "carla"]);
+
+    // Chi aspettava se ne accorge dall'elenco.
+    assert!(!secondo.motore.io().approvato);
+    let suo = secondo.motore.dispositivi().await.unwrap();
+    assert_eq!(suo[0].stato, StatoDispositivo::Approvato);
+    assert!(secondo.motore.io().approvato);
+
+    assert_eq!(secondo.aggiorna(&conv).await.apertura, Apertura::Pronta);
+    assert_eq!(
+        secondo.legge(&conv).await,
+        coppie(&[("anna", "prima del secondo telefono")])
+    );
+    bruno.aggiorna(&conv).await;
+    assert_eq!(bruno.membri_nell_albero(&conv), ["anna", "anna", "bruno"]);
+    secondo.scrive(&conv, "dal telefono nuovo").await;
+    assert_eq!(
+        bruno.legge(&conv).await,
+        coppie(&[
+            ("anna", "prima del secondo telefono"),
+            ("anna", "dal telefono nuovo"),
+        ])
+    );
+
+    // Al giro dopo non si rifà niente: le foglie sono già d'accordo.
+    anna.aggiorna(&conv).await;
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1, 2]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn alla_revoca_il_telefono_esce_da_ogni_conversazione_e_non_legge_il_seguito() {
+    let (istanza, anna, bruno, conv) = in_due().await;
+    let secondo = secondo_telefono(&istanza, "anna").await;
+    anna.motore
+        .approva_dispositivo(secondo.vista.dispositivo().into())
+        .await
+        .unwrap();
+    assert_eq!(secondo.aggiorna(&conv).await.apertura, Apertura::Pronta);
+    bruno.aggiorna(&conv).await;
+
+    anna.motore
+        .revoca_dispositivo(secondo.vista.dispositivo().into())
+        .await
+        .unwrap();
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1, 2, 3]);
+    assert_eq!(anna.membri_nell_albero(&conv), ["anna", "bruno"]);
+
+    let elenco = anna.motore.dispositivi().await.unwrap();
+    let revocato = elenco
+        .iter()
+        .find(|d| d.id == secondo.vista.dispositivo())
+        .unwrap();
+    assert_eq!(revocato.stato, StatoDispositivo::Revocato);
+    // La Casa gli ha chiuso anche la sessione.
+    assert_eq!(revocato.etichetta, None);
+    assert!(revocato.revocato_il.is_some());
+    // L'elenco mette i revocati in fondo.
+    assert_eq!(elenco.last().unwrap().id, revocato.id);
+
+    let dopo = anna
+        .scrive(&conv, "il telefono revocato non lo legge")
+        .await;
+    assert_eq!(
+        istanza
+            .voci(&conv)
+            .iter()
+            .find(|v| v.id == dopo.id)
+            .unwrap()
+            .voce
+            .chiave_n,
+        2
+    );
+    assert_eq!(secondo.aggiorna(&conv).await.apertura, Apertura::Tolto);
+    assert_eq!(
+        bruno.legge(&conv).await.last().unwrap().1,
+        "il telefono revocato non lo legge"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chi_aspetta_non_dice_si_e_non_dice_no_e_questo_non_si_revoca_da_qui() {
+    let (istanza, anna, bruno, conv) = in_due().await;
+    let secondo = secondo_telefono(&istanza, "anna").await;
+
+    let esito = secondo
+        .motore
+        .approva_dispositivo(secondo.vista.dispositivo().into())
+        .await;
+    assert!(
+        matches!(esito, Err(ErroreNucleo::Casa { stato: 403, ref codice }) if codice == "device_not_approved")
+    );
+    let esito = secondo
+        .motore
+        .revoca_dispositivo(anna.vista.dispositivo().into())
+        .await;
+    assert!(matches!(esito, Err(ErroreNucleo::Casa { stato: 403, .. })));
+    assert!(!secondo.motore.io().approvato);
+
+    // Un dispositivo d'altri non si nomina: è il 404 che non dice se esiste.
+    let esito = anna
+        .motore
+        .approva_dispositivo(bruno.vista.dispositivo().into())
+        .await;
+    assert!(matches!(esito, Err(ErroreNucleo::Casa { stato: 404, .. })));
+
+    let esito = anna
+        .motore
+        .revoca_dispositivo(anna.motore.io().dispositivo)
+        .await;
+    assert!(matches!(esito, Err(ErroreNucleo::Formato(_))));
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1]);
+    assert!(anna.motore.io().approvato);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn se_il_registro_non_risponde_il_si_vale_e_le_foglie_entrano_al_giro_dopo() {
+    let (istanza, anna, _bruno, conv) = in_due().await;
+    let secondo = secondo_telefono(&istanza, "anna").await;
+    // Il primo giro allinea subito: dopo, l'orologio direbbe di aspettare.
+    anna.aggiorna(&conv).await;
+
+    istanza.spegni_il_registro(true);
+    anna.motore
+        .approva_dispositivo(secondo.vista.dispositivo().into())
+        .await
+        .unwrap();
+    // Niente a metà: nessun commit, lo stato è quello di prima.
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1]);
+    assert_eq!(anna.epoch(&conv), 1);
+
+    // L'orologio è ripartito: il giro dopo ci riprova senza aspettare.
+    istanza.spegni_il_registro(false);
+    anna.aggiorna(&conv).await;
+    assert_eq!(epoch_dei_commit(&istanza, &conv), [1, 2]);
+    assert_eq!(anna.membri_nell_albero(&conv), ["anna", "anna", "bruno"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chi_rientra_con_la_stessa_chiave_lo_prova_e_non_aspetta_il_si() {
+    let (istanza, anna, _bruno, conv) = in_due().await;
+
+    // Un'altra sessione, lo stesso deposito: la chiave è già approvata, e la
+    // firma della sfida dice che chi la presenta ha anche la privata.
+    let rientrata = rientra_con_la_stessa_chiave(&istanza, &anna, "anna").await;
+    assert!(rientrata.io().approvato);
+    assert_ne!(rientrata.io().dispositivo, anna.motore.io().dispositivo);
+    assert_eq!(rientrata.io().codice, anna.motore.io().codice);
+    assert_eq!(istanza.sfide_aperte(), 0);
+    assert_eq!(
+        rientrata.apri_conversazione(conv.clone()).await.unwrap(),
+        Apertura::Pronta
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn senza_la_sfida_o_con_una_chiave_revocata_si_aspetta_il_si() {
+    let (istanza, anna, _bruno, _conv) = in_due().await;
+
+    // Una Casa di prima: la chiave va senza prova, e aspetta come le altre.
+    istanza.senza_la_sfida(true);
+    let senza = rientra_con_la_stessa_chiave(&istanza, &anna, "anna").await;
+    assert!(!senza.io().approvato);
+    istanza.senza_la_sfida(false);
+
+    // Una chiave che qualcuno ha tolto non rientra ripresentandosi.
+    let secondo = secondo_telefono(&istanza, "anna").await;
+    anna.motore
+        .approva_dispositivo(secondo.vista.dispositivo().into())
+        .await
+        .unwrap();
+    anna.motore
+        .revoca_dispositivo(secondo.vista.dispositivo().into())
+        .await
+        .unwrap();
+    let di_nuovo = rientra_con_la_stessa_chiave(&istanza, &secondo, "anna").await;
+    assert!(!di_nuovo.io().approvato);
+}
+
 /* ---------- gli attrezzi ---------- */
+
+#[test]
+fn il_codice_di_un_dispositivo_e_quello_del_web() {
+    // I valori di `codiceDi` in `codice-dispositivo.ts`.
+    assert_eq!(codice_di("CHIAVE_DI_ANNA"), "9725 1948");
+    assert_eq!(codice_di("una chiave qualunque"), "8373 5420");
+    assert_eq!(codice_di("chiave-0"), "3502 3636");
+    for i in 0..2000 {
+        let codice = codice_di(&format!("chiave-{i}"));
+        assert_eq!(codice.len(), 9);
+        assert!(codice.chars().enumerate().all(|(n, c)| if n == 4 {
+            c == ' '
+        } else {
+            c.is_ascii_digit()
+        }));
+    }
+}
 
 #[test]
 fn l_ora_si_scrive_come_to_iso_string() {

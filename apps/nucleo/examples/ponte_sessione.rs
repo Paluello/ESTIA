@@ -19,7 +19,8 @@ use std::sync::{Arc, Mutex};
 use estia_nucleo::deposito::Deposito;
 use estia_nucleo::istanza::{Filo, IstanzaSuCasa, PersonaDaInvitare};
 use estia_nucleo::sessione::{
-    Aggiornamento, Apertura, Conversazione, Messaggio, Motore, Persona, StatoMessaggio, TipoEvento,
+    Aggiornamento, Apertura, Conversazione, Messaggio, MioDispositivo, Motore, Persona,
+    StatoDispositivo, StatoMessaggio, TipoEvento,
 };
 use estia_nucleo::ErroreNucleo;
 use serde_json::{json, Value};
@@ -146,6 +147,20 @@ fn messaggio(m: &Messaggio) -> Value {
     })
 }
 
+fn dispositivo(d: &MioDispositivo) -> Value {
+    json!({
+        "id": d.id,
+        "stato": match d.stato {
+            StatoDispositivo::Approvato => "approvato",
+            StatoDispositivo::InAttesa => "in-attesa",
+            StatoDispositivo::Revocato => "revocato",
+        },
+        "questo": d.questo,
+        "codice": d.codice,
+        "etichetta": d.etichetta,
+    })
+}
+
 fn aggiornamento(a: &Aggiornamento) -> Value {
     json!({
         "apertura": apertura(a.apertura),
@@ -183,6 +198,7 @@ impl Ponte {
             "casa": io.casa,
             "dispositivo": io.dispositivo,
             "approvato": io.approvato,
+            "codice": io.codice,
         }))
     }
 
@@ -273,6 +289,21 @@ impl Ponte {
             }
             "ritira" => {
                 s.ritira(conv()?, testo(a, "messaggio")?).await.map_err(e)?;
+                Ok(Value::Null)
+            }
+            "dispositivi" => Ok(json!(s
+                .dispositivi()
+                .await
+                .map_err(e)?
+                .iter()
+                .map(dispositivo)
+                .collect::<Vec<_>>())),
+            "approvaDispositivo" => {
+                s.approva_dispositivo(testo(a, "id")?).await.map_err(e)?;
+                Ok(Value::Null)
+            }
+            "revocaDispositivo" => {
+                s.revoca_dispositivo(testo(a, "id")?).await.map_err(e)?;
                 Ok(Value::Null)
             }
             // Per la prova, non per l'app: a che epoch è il gruppo qui.

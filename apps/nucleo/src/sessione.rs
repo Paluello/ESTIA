@@ -45,8 +45,8 @@ use crate::casa::Collegamento;
 use crate::deposito::{Deposito, Registro};
 use crate::istanza::{
     superata, Autore, BustaDaDepositare, BustaHandshake, ChiSono, ConversazioneVista,
-    DispositivoRegistrato, Istanza, IstanzaSuCasa, PersonaDaInvitare, PuntoDiRientro, TipoBusta,
-    VoceDaDepositare,
+    DispositivoInElenco, DispositivoRegistrato, Istanza, IstanzaSuCasa, PersonaDaInvitare,
+    PuntoDiRientro, SessioneAperta, TipoBusta, VoceDaDepositare,
 };
 use crate::mls::{di_chi_e, Dichiarato, Dispositivo, Foglia, Ricevuto};
 use crate::ErroreNucleo;
@@ -84,6 +84,41 @@ pub struct Io {
     /// `false` finché un dispositivo già approvato non dice di sì (ADR 0040).
     /// Fino ad allora non si crea e non si rientra.
     pub approvato: bool,
+    /// Le otto cifre di questo dispositivo, da confrontare con quelle che
+    /// vede chi lo approva ([`codice_di`]).
+    pub codice: String,
+}
+
+/// A che punto è un dispositivo con il sì di ADR 0040.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatoDispositivo {
+    /// La sua chiave è nel registro: entra nelle conversazioni.
+    Approvato,
+    /// Aspetta il sì di un dispositivo già approvato.
+    InAttesa,
+    /// Qualcuno ha detto di no, o l'ha tolto: la sua chiave non vale più.
+    Revocato,
+}
+
+/// Un dispositivo di questa persona, come si mostra nell'elenco.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct MioDispositivo {
+    pub id: String,
+    pub stato: StatoDispositivo,
+    /// È questo dispositivo.
+    pub questo: bool,
+    /// Le otto cifre da confrontare prima di dire di sì. **Le calcola il
+    /// nucleo dalla chiave pubblica**, mai la Casa: un codice scritto da chi
+    /// custodisce le chiavi coinciderebbe anche dopo averle sostituite.
+    pub codice: String,
+    /// Il nome che si è dato entrando, se la sua sessione è ancora aperta.
+    pub etichetta: Option<String>,
+    pub creato_il: String,
+    pub approvato_il: Option<String>,
+    pub revocato_il: Option<String>,
+    /// L'ultima volta che la Casa l'ha visto, se la sessione è ancora aperta.
+    /// `None` per una chiave che conta ancora da una sessione chiusa.
+    pub visto_il: Option<String>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -309,6 +344,65 @@ fn b64(byte: &[u8]) -> String {
     STANDARD.encode(byte)
 }
 
+/// Il codice che si confronta per autorizzare un dispositivo: le otto cifre
+/// della sua chiave pubblica (in base64, com'è nel registro), in due gruppi da
+/// quattro. È `codiceDi` di `apps/web/src/screens/impostazioni/codice-dispositivo.ts`
+/// byte per byte: i primi sei byte dello SHA-256 del testo, modulo 10⁸.
+///
+/// Non è un segreto: serve a distinguere il proprio dispositivo da un altro
+/// che aspetta nello stesso momento, e a smascherare una chiave sostituita.
+pub fn codice_di(chiave_pubblica: &str) -> String {
+    use openmls_rust_crypto::RustCrypto;
+    use openmls_traits::crypto::OpenMlsCrypto;
+    use openmls_traits::types::HashType;
+
+    let digest = RustCrypto::default()
+        .hash(HashType::Sha2_256, chiave_pubblica.as_bytes())
+        .unwrap_or_default();
+    let valore = digest
+        .iter()
+        .take(6)
+        .fold(0u64, |v, byte| (v << 8) | u64::from(*byte));
+    let cifre = format!("{:08}", valore % 100_000_000);
+    format!("{} {}", &cifre[..4], &cifre[4..])
+}
+
+/// Il testo che il dispositivo firma per provare di avere la chiave privata:
+/// `messaggioDiProvaChiave` di `packages/contracts`. Porta la sfida, che lo
+/// lega a questa sessione e a questo momento, e la chiave.
+fn messaggio_di_prova(sfida: &str, chiave_pubblica: &str) -> String {
+    format!("ESTIA-prova-chiave-v1\n{sfida}\n{chiave_pubblica}")
+}
+
+/// Da una riga del registro a ciò che la schermata mostra.
+fn mio_dispositivo(
+    d: DispositivoInElenco,
+    questo: &str,
+    sessioni: &[SessioneAperta],
+) -> MioDispositivo {
+    let stato = if d.revocato_il.is_some() {
+        StatoDispositivo::Revocato
+    } else if d.approvato_il.is_some() {
+        StatoDispositivo::Approvato
+    } else {
+        StatoDispositivo::InAttesa
+    };
+    let sessione = sessioni.iter().find(|s| s.id == d.sessione);
+    MioDispositivo {
+        questo: d.id == questo,
+        codice: codice_di(&d.chiave_pubblica),
+        etichetta: sessione
+            .map(|s| s.etichetta.trim().to_string())
+            .filter(|e| !e.is_empty()),
+        visto_il: sessione.map(|s| s.visto_il.clone()),
+        id: d.id,
+        stato,
+        creato_il: d.creato_il,
+        approvato_il: d.approvato_il,
+        revocato_il: d.revocato_il,
+    }
+}
+
 fn da_b64(testo: &str) -> Esito<Vec<u8>> {
     STANDARD
         .decode(testo)
@@ -511,9 +605,19 @@ impl<I: Istanza> Motore<I> {
                 .map_err(|_| ErroreNucleo::Deposito("appunti della sessione illeggibili".into()))?,
             None => Taccuino::default(),
         };
-        let registrato = istanza
-            .registra_chiave(&dispositivo.chiave_di_firma())
-            .await?;
+        let chiave = dispositivo.chiave_di_firma();
+        // La prova di possesso costa una firma e un giro in più, e la si
+        // manda sempre, come il web: la Casa la guarda solo quando la chiave è
+        // già approvata, cioè quando chi rientra da una sessione nuova deve
+        // dimostrare di averla. Una Casa senza la rotta, o che non risponde
+        // alla sfida, riceve la chiave senza prova: aspetta il sì come le altre.
+        let prova = match istanza.sfida().await {
+            Ok(sfida) => dispositivo
+                .firma_la_prova(messaggio_di_prova(&sfida, &b64(&chiave)).as_bytes())
+                .ok(),
+            Err(_) => None,
+        };
+        let registrato = istanza.registra_chiave(&chiave, prova.as_deref()).await?;
         let motore = Motore {
             istanza,
             dispositivo,
@@ -538,6 +642,7 @@ impl<I: Istanza> Motore<I> {
             casa: self.io.casa.clone(),
             dispositivo: registrato.id,
             approvato: registrato.approvato,
+            codice: codice_di(&b64(&self.dispositivo.chiave_di_firma())),
         }
     }
 
@@ -1933,6 +2038,106 @@ impl<I: Istanza> Motore<I> {
         }
         Ok(())
     }
+
+    /* ----- i propri dispositivi (ADR 0040) ----- */
+
+    /// I dispositivi di questa persona: questo per primo, poi quelli che
+    /// aspettano un sì, poi gli approvati e i revocati, i più recenti prima.
+    ///
+    /// Il nome di ciascuno viene dalle sessioni aperte: se la Casa non le dà,
+    /// l'elenco resta, senza nomi. Di questo dispositivo si aggiorna anche
+    /// [`Io::approvato`]: è così che chi aspettava si accorge del sì.
+    pub async fn dispositivi(&self) -> Esito<Vec<MioDispositivo>> {
+        let elenco = self.istanza.dispositivi().await?;
+        let sessioni = self.istanza.sessioni().await.unwrap_or_default();
+        let mio = self.registrato.lock().unwrap().id.clone();
+        let mut fuori: Vec<MioDispositivo> = elenco
+            .into_iter()
+            .map(|d| mio_dispositivo(d, &mio, &sessioni))
+            .collect();
+        if let Some(questo) = fuori.iter().find(|d| d.questo) {
+            self.registrato.lock().unwrap().approvato = questo.stato == StatoDispositivo::Approvato;
+        }
+        let rango = |d: &MioDispositivo| match (d.questo, d.stato) {
+            (true, _) => 0,
+            (false, StatoDispositivo::InAttesa) => 1,
+            (false, StatoDispositivo::Approvato) => 2,
+            (false, StatoDispositivo::Revocato) => 3,
+        };
+        fuori.sort_by(|a, b| {
+            rango(a)
+                .cmp(&rango(b))
+                .then_with(|| b.creato_il.cmp(&a.creato_il))
+        });
+        Ok(fuori)
+    }
+
+    /// Il sì a un dispositivo che aspetta. Poi la sua foglia entra in ogni
+    /// conversazione che questo dispositivo conosce ([`Self::allinea_ovunque`]).
+    /// Lo può dire soltanto un dispositivo già approvato: per gli altri è il
+    /// 403 della Casa (`device_not_approved`).
+    pub async fn approva_dispositivo(&self, id: String) -> Esito<()> {
+        self.istanza.approva_dispositivo(&id).await?;
+        self.allinea_ovunque().await;
+        Ok(())
+    }
+
+    /// Il no, o la revoca di un dispositivo che aveva il sì: la Casa gli toglie
+    /// la chiave e la sessione, e la sua foglia esce da ogni conversazione che
+    /// questo dispositivo conosce, con la catena che ruota: **non legge il
+    /// seguito**. Ciò che ha già letto l'ha letto.
+    ///
+    /// Questo dispositivo non si revoca da qui: si esce
+    /// ([`Collegamento::dimentica_casa`]).
+    pub async fn revoca_dispositivo(&self, id: String) -> Esito<()> {
+        if id == self.registrato.lock().unwrap().id {
+            return Err(ErroreNucleo::Formato(
+                "questo dispositivo non si revoca: si esce".into(),
+            ));
+        }
+        self.istanza.rifiuta_dispositivo(&id).await?;
+        self.allinea_ovunque().await;
+        Ok(())
+    }
+
+    /// Dopo un sì o una revoca le proprie foglie si rimettono d'accordo con il
+    /// registro in ogni conversazione che questo dispositivo conosce, invece
+    /// di aspettare che ciascuna venga guardata: un telefono revocato non
+    /// legge il seguito nemmeno di quelle che nessuno apre.
+    ///
+    /// È [`Self::allinea_i_miei_dispositivi`], una conversazione alla volta e
+    /// ciascuna tutto o niente. Un gruppo congelato non si tocca. Una che non
+    /// riesce non ferma le altre: ci si riprova al suo prossimo giro, perché
+    /// l'orologio di ciascuna riparte da zero.
+    async fn allinea_ovunque(&self) {
+        let _una_alla_volta = self.in_serie.lock().await;
+        for aperta in self.aperte.lock().unwrap().values_mut() {
+            aperta.foglie_allineate_il = None;
+        }
+        // Senza l'elenco non si sa quali sono congelate: ciascuna al suo giro.
+        let Ok(viste) = self.istanza.conversazioni().await else {
+            return;
+        };
+        for vista in viste {
+            let id = vista.id.as_str();
+            if vista.congelata || !self.dispositivo.conosce(id) {
+                continue;
+            }
+            // Ci si rimette in pari prima di guardare l'albero, come il web
+            // dopo `leggi`; chi risulta tolto non decide niente.
+            if !matches!(self.sincronizza(id).await, Ok(false)) {
+                continue;
+            }
+            if self.allinea_i_miei_dispositivi(id).await.is_ok() {
+                self.aperte
+                    .lock()
+                    .unwrap()
+                    .entry(vista.id.clone())
+                    .or_default()
+                    .foglie_allineate_il = Some(Instant::now());
+            }
+        }
+    }
 }
 
 enum Applicato {
@@ -2089,5 +2294,23 @@ impl Sessioni {
         messaggio: String,
     ) -> Result<(), ErroreNucleo> {
         self.motore.ritira(conversazione, messaggio).await
+    }
+
+    /// I dispositivi di questa persona, con chi aspetta un sì, e il codice
+    /// di ciascuno da confrontare. Aggiorna anche [`Io::approvato`].
+    pub async fn dispositivi(&self) -> Result<Vec<MioDispositivo>, ErroreNucleo> {
+        self.motore.dispositivi().await
+    }
+
+    /// Dice di sì a un dispositivo che aspetta, e lo fa entrare nelle
+    /// conversazioni. Solo da un dispositivo già approvato.
+    pub async fn approva_dispositivo(&self, id: String) -> Result<(), ErroreNucleo> {
+        self.motore.approva_dispositivo(id).await
+    }
+
+    /// Dice di no a un dispositivo, o revoca uno che aveva il sì: perde la
+    /// chiave e la sessione, ed esce dalle conversazioni. Non questo.
+    pub async fn revoca_dispositivo(&self, id: String) -> Result<(), ErroreNucleo> {
+        self.motore.revoca_dispositivo(id).await
     }
 }

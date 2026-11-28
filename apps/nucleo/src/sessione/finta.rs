@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::deposito::Deposito;
 use crate::istanza::{
     leggi_identita, Autore, BustaDaDepositare, BustaHandshake, ChiSono, ConversazioneVista,
-    DispositivoRegistrato, Istanza, PaginaHandshake, PaginaRemota, PersonaDaInvitare,
-    PuntoDiRientro, RigaRemota, TipoBusta, VoceDaDepositare,
+    DispositivoInElenco, DispositivoRegistrato, Istanza, PaginaHandshake, PaginaRemota,
+    PersonaDaInvitare, PuntoDiRientro, RigaRemota, SessioneAperta, TipoBusta, VoceDaDepositare,
 };
 use crate::mls::MazzoAvvolto;
 use crate::ErroreNucleo;
@@ -51,6 +51,30 @@ struct DispositivoFinto {
     approvato: bool,
     revocato: bool,
     pacchetti: Vec<Vec<u8>>,
+    creato_il: String,
+}
+
+/// Se `prova` è la firma di `messaggioDiProvaChiave(sfida, chiave)` con la
+/// privata di `chiave`: `firmaValida` di `apps/core-api`, con la stessa
+/// crittografia che il nucleo usa per firmare.
+fn prova_valida(chiave: &[u8], sfida: &str, prova: &[u8]) -> bool {
+    use base64::Engine;
+    use openmls_rust_crypto::RustCrypto;
+    use openmls_traits::crypto::OpenMlsCrypto;
+    use openmls_traits::types::SignatureScheme;
+
+    let messaggio = format!(
+        "ESTIA-prova-chiave-v1\n{sfida}\n{}",
+        base64::engine::general_purpose::STANDARD.encode(chiave)
+    );
+    RustCrypto::default()
+        .verify_signature(
+            SignatureScheme::ECDSA_SECP256R1_SHA256,
+            messaggio.as_bytes(),
+            chiave,
+            prova,
+        )
+        .is_ok()
 }
 
 struct ConversazioneFinta {
@@ -95,6 +119,8 @@ struct Mondo {
     dispositivi: Vec<DispositivoFinto>,
     /// Chi ha già avuto un dispositivo approvato: il primo è il primo davvero.
     ha_avuto_un_si: HashSet<String>,
+    /// Una sfida per sessione, che si usa una volta.
+    sfide: HashMap<String, String>,
     conversazioni: BTreeMap<String, ConversazioneFinta>,
     handshake: Vec<Depositata>,
     mazzi: HashMap<String, MazzoAvvolto>,
@@ -109,6 +135,7 @@ struct Mondo {
     risposte_perse: u32,
     depositi_persi: u32,
     registro_spento: bool,
+    senza_sfida: bool,
     sorpasso: Option<Depositata>,
     casa_che_ordina_spenta: bool,
 }
@@ -376,6 +403,16 @@ impl IstanzaFinta {
         });
     }
 
+    /// Una Casa di prima, senza la rotta della sfida: 404.
+    pub fn senza_la_sfida(&self, senza: bool) {
+        self.mondo().senza_sfida = senza;
+    }
+
+    /// Le sfide date e non ancora usate.
+    pub fn sfide_aperte(&self) -> usize {
+        self.mondo().sfide.len()
+    }
+
     /// La casa di chi si chiede non risponde: è un errore, non un elenco vuoto.
     pub fn spegni_il_registro(&self, spento: bool) {
         self.mondo().registro_spento = spento;
@@ -416,6 +453,29 @@ impl VistaFinta {
     pub fn dispositivo(&self) -> &str {
         &self.dispositivo
     }
+
+    /// Chi chiede ha un dispositivo approvato e non revocato: è il vincolo
+    /// che la Casa mette davanti a un sì o a un no.
+    fn approvato(mondo: &Mondo, dispositivo: &str) -> Esito<()> {
+        if mondo
+            .dispositivi
+            .iter()
+            .any(|d| d.id == dispositivo && d.approvato && !d.revocato)
+        {
+            Ok(())
+        } else {
+            Err(no(403, "device_not_approved"))
+        }
+    }
+
+    /// Un dispositivo di questa persona, o un 404 che non dice se esiste.
+    fn suo<'a>(&self, mondo: &'a mut Mondo, id: &str) -> Esito<&'a mut DispositivoFinto> {
+        mondo
+            .dispositivi
+            .iter_mut()
+            .find(|d| d.id == id && d.utente == self.username)
+            .ok_or(no(404, "device_not_found"))
+    }
 }
 
 /// La forma che l'istanza vera pretende da una voce (`forma.ts`).
@@ -455,11 +515,43 @@ impl Istanza for VistaFinta {
         })
     }
 
-    async fn registra_chiave(&self, chiave_di_firma: &[u8]) -> Esito<DispositivoRegistrato> {
+    async fn sfida(&self) -> Esito<String> {
         let mut mondo = self.mondo();
+        if mondo.senza_sfida {
+            return Err(no(404, "not_found"));
+        }
+        mondo.seq += 1;
+        let sfida = format!("sfida-{}", mondo.seq);
+        mondo.sfide.insert(self.dispositivo.clone(), sfida.clone());
+        Ok(sfida)
+    }
+
+    async fn registra_chiave(
+        &self,
+        chiave_di_firma: &[u8],
+        prova: Option<&[u8]>,
+    ) -> Esito<DispositivoRegistrato> {
+        let mut mondo = self.mondo();
+        // La sfida si consuma comunque: vale una volta.
+        let sfida = mondo.sfide.remove(&self.dispositivo);
+        // Una chiave già approvata, e mai tolta da qualcuno, che si
+        // ripresenta con la prova di possesso: è chi rientra con la propria
+        // chiave da una sessione nuova (`registerKey` della Casa).
+        let stessa_chiave = |d: &DispositivoFinto| {
+            d.utente == self.username && d.chiave == chiave_di_firma && d.approvato
+        };
+        let gia_approvata = mondo.dispositivi.iter().any(stessa_chiave)
+            && !mondo
+                .dispositivi
+                .iter()
+                .any(|d| stessa_chiave(d) && d.revocato);
+        let provata = match (sfida, prova) {
+            (Some(sfida), Some(prova)) => prova_valida(chiave_di_firma, &sfida, prova),
+            _ => false,
+        };
         // Il primo dispositivo di una persona si approva da solo; ogni altro
         // aspetta. «Primo» una volta sola.
-        let da_solo = !mondo.ha_avuto_un_si.contains(&self.username);
+        let da_solo = !mondo.ha_avuto_un_si.contains(&self.username) || (gia_approvata && provata);
         let approvato = match mondo
             .dispositivi
             .iter_mut()
@@ -474,6 +566,8 @@ impl Istanza for VistaFinta {
                 d.approvato
             }
             None => {
+                mondo.seq += 1;
+                let creato_il = format!("2026-11-28T10:00:{:02}.000Z", mondo.seq % 60);
                 mondo.dispositivi.push(DispositivoFinto {
                     id: self.dispositivo.clone(),
                     utente: self.username.clone(),
@@ -481,6 +575,7 @@ impl Istanza for VistaFinta {
                     approvato: da_solo,
                     revocato: false,
                     pacchetti: Vec::new(),
+                    creato_il,
                 });
                 da_solo
             }
@@ -492,6 +587,54 @@ impl Istanza for VistaFinta {
             id: self.dispositivo.clone(),
             approvato,
         })
+    }
+
+    async fn dispositivi(&self) -> Esito<Vec<DispositivoInElenco>> {
+        use base64::Engine;
+        let mondo = self.mondo();
+        Ok(mondo
+            .dispositivi
+            .iter()
+            .filter(|d| d.utente == self.username)
+            .map(|d| DispositivoInElenco {
+                id: d.id.clone(),
+                sessione: d.id.clone(),
+                chiave_pubblica: base64::engine::general_purpose::STANDARD.encode(&d.chiave),
+                creato_il: d.creato_il.clone(),
+                approvato_il: d.approvato.then(|| d.creato_il.clone()),
+                revocato_il: d.revocato.then(|| "2026-11-28T11:00:00.000Z".to_string()),
+            })
+            .collect())
+    }
+
+    async fn sessioni(&self) -> Esito<Vec<SessioneAperta>> {
+        // Il no della Casa chiude anche la sessione: un revocato non c'è.
+        let mondo = self.mondo();
+        Ok(mondo
+            .dispositivi
+            .iter()
+            .filter(|d| d.utente == self.username && !d.revocato)
+            .map(|d| SessioneAperta {
+                id: d.id.clone(),
+                etichetta: format!("Telefono {}", d.id),
+                visto_il: "2026-11-28T10:30:00.000Z".into(),
+            })
+            .collect())
+    }
+
+    async fn approva_dispositivo(&self, id: &str) -> Esito<()> {
+        let mut mondo = self.mondo();
+        Self::approvato(&mondo, &self.dispositivo)?;
+        self.suo(&mut mondo, id)?.approvato = true;
+        mondo.ha_avuto_un_si.insert(self.username.clone());
+        Ok(())
+    }
+
+    async fn rifiuta_dispositivo(&self, id: &str) -> Esito<()> {
+        let mut mondo = self.mondo();
+        Self::approvato(&mondo, &self.dispositivo)?;
+        self.suo(&mut mondo, id)?.revocato = true;
+        Ok(())
     }
 
     async fn pubblica_pacchetti(&self, pacchetti: Vec<Vec<u8>>) -> Esito<()> {

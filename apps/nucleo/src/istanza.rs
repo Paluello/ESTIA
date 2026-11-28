@@ -96,6 +96,31 @@ pub struct BustaDaDepositare {
     pub destinatario: Option<String>,
 }
 
+/// Un dispositivo di chi chiede, come lo elenca `GET /api/v1/dispositivi`:
+/// **quelli in attesa compresi**, ed è da qui che una richiesta si vede.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DispositivoInElenco {
+    pub id: String,
+    /// La sessione a cui la chiave è legata.
+    pub sessione: String,
+    /// La chiave pubblica di firma, in base64 com'è nel registro: è da lei
+    /// che il client calcola il codice da confrontare.
+    pub chiave_pubblica: String,
+    pub creato_il: String,
+    /// `None` finché nessuno ha detto di sì (ADR 0040).
+    pub approvato_il: Option<String>,
+    pub revocato_il: Option<String>,
+}
+
+/// Una sessione aperta di chi chiede (`GET /api/v1/auth/sessions`): da qui
+/// il nome che il dispositivo si è dato entrando.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessioneAperta {
+    pub id: String,
+    pub etichetta: String,
+    pub visto_il: String,
+}
+
 /// Il punto da cui si rientra: per l'istanza un blob e un'epoch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PuntoDiRientro {
@@ -178,12 +203,34 @@ type Esito<T> = Result<T, ErroreNucleo>;
 pub trait Istanza: Send + Sync + 'static {
     fn chi_sono(&self) -> impl Future<Output = Esito<ChiSono>> + Send;
 
+    /// Una sfida per la prova di possesso della chiave
+    /// (`POST /api/v1/dispositivi/sfida`): vale per questa sessione, cinque
+    /// minuti, una volta.
+    fn sfida(&self) -> impl Future<Output = Esito<String>> + Send;
+
     /// Registra la chiave di firma di questo dispositivo per la sessione.
-    /// Ripetibile: la stessa chiave non perde il sì che ha.
+    /// Ripetibile: la stessa chiave non perde il sì che ha. `prova` è la
+    /// firma della sfida: con lei una chiave già approvata, che si ripresenta
+    /// da una sessione nuova, si fa riconoscere senza aspettare un altro sì.
     fn registra_chiave(
         &self,
         chiave_di_firma: &[u8],
+        prova: Option<&[u8]>,
     ) -> impl Future<Output = Esito<DispositivoRegistrato>> + Send;
+
+    /// I dispositivi di chi chiede, quelli in attesa e i revocati compresi.
+    fn dispositivi(&self) -> impl Future<Output = Esito<Vec<DispositivoInElenco>>> + Send;
+
+    /// Le sessioni aperte di chi chiede.
+    fn sessioni(&self) -> impl Future<Output = Esito<Vec<SessioneAperta>>> + Send;
+
+    /// Il sì a un dispositivo che aspetta: `POST …/:id/approva`. Lo può dire
+    /// soltanto un dispositivo già approvato.
+    fn approva_dispositivo(&self, id: &str) -> impl Future<Output = Esito<()>> + Send;
+
+    /// Il no, fino in fondo: `POST …/:id/rifiuta`. Il dispositivo perde la
+    /// chiave e la sessione, che aspettasse o no.
+    fn rifiuta_dispositivo(&self, id: &str) -> impl Future<Output = Esito<()>> + Send;
 
     /// Pubblica KeyPackage monouso per questo dispositivo.
     fn pubblica_pacchetti(&self, pacchetti: Vec<Vec<u8>>)
@@ -411,6 +458,43 @@ struct RegistratoJson {
 }
 
 #[derive(Deserialize)]
+struct SfidaJson {
+    sfida: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DispositivoJson {
+    id: String,
+    session_id: String,
+    public_key: String,
+    created_at: String,
+    #[serde(default)]
+    revoked_at: Option<String>,
+    #[serde(default)]
+    approvato_il: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DispositiviJson {
+    dispositivi: Vec<DispositivoJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessioneJson {
+    id: String,
+    #[serde(default)]
+    device_label: String,
+    last_seen_at: String,
+}
+
+#[derive(Deserialize)]
+struct SessioniJson {
+    sessions: Vec<SessioneJson>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChiaveJson {
     public_key: String,
@@ -608,8 +692,22 @@ impl<F: Filo> Istanza for IstanzaSuCasa<F> {
         })
     }
 
-    async fn registra_chiave(&self, chiave_di_firma: &[u8]) -> Esito<DispositivoRegistrato> {
-        let corpo = json!({ "publicKey": b64(chiave_di_firma), "algorithm": ALGORITMO });
+    async fn sfida(&self) -> Esito<String> {
+        let risposta = self
+            .chiedi("POST", "/api/v1/dispositivi/sfida".into(), None)
+            .await?;
+        Ok(leggi::<SfidaJson>(&risposta)?.sfida)
+    }
+
+    async fn registra_chiave(
+        &self,
+        chiave_di_firma: &[u8],
+        prova: Option<&[u8]>,
+    ) -> Esito<DispositivoRegistrato> {
+        let mut corpo = json!({ "publicKey": b64(chiave_di_firma), "algorithm": ALGORITMO });
+        if let Some(prova) = prova {
+            corpo["prova"] = json!(b64(prova));
+        }
         let risposta = self
             .chiedi("POST", "/api/v1/dispositivi/chiave".into(), Some(corpo))
             .await?;
@@ -618,6 +716,51 @@ impl<F: Filo> Istanza for IstanzaSuCasa<F> {
             id: device.id,
             approvato: device.approvato_il.is_some(),
         })
+    }
+
+    async fn dispositivi(&self) -> Esito<Vec<DispositivoInElenco>> {
+        let risposta = self
+            .chiedi("GET", "/api/v1/dispositivi".into(), None)
+            .await?;
+        Ok(leggi::<DispositiviJson>(&risposta)?
+            .dispositivi
+            .into_iter()
+            .map(|d| DispositivoInElenco {
+                id: d.id,
+                sessione: d.session_id,
+                chiave_pubblica: d.public_key,
+                creato_il: d.created_at,
+                approvato_il: d.approvato_il,
+                revocato_il: d.revoked_at,
+            })
+            .collect())
+    }
+
+    async fn sessioni(&self) -> Esito<Vec<SessioneAperta>> {
+        let risposta = self
+            .chiedi("GET", "/api/v1/auth/sessions".into(), None)
+            .await?;
+        Ok(leggi::<SessioniJson>(&risposta)?
+            .sessions
+            .into_iter()
+            .map(|s| SessioneAperta {
+                id: s.id,
+                etichetta: s.device_label,
+                visto_il: s.last_seen_at,
+            })
+            .collect())
+    }
+
+    async fn approva_dispositivo(&self, id: &str) -> Esito<()> {
+        let percorso = format!("/api/v1/dispositivi/{}/approva", componente(id));
+        self.chiedi("POST", percorso, None).await?;
+        Ok(())
+    }
+
+    async fn rifiuta_dispositivo(&self, id: &str) -> Esito<()> {
+        let percorso = format!("/api/v1/dispositivi/{}/rifiuta", componente(id));
+        self.chiedi("POST", percorso, None).await?;
+        Ok(())
     }
 
     async fn pubblica_pacchetti(&self, pacchetti: Vec<Vec<u8>>) -> Esito<()> {
