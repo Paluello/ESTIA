@@ -28,6 +28,12 @@ import { Alert, Button, ListRow, TextField, type Tone } from "../../../ui/index.
  * Casa, e lo si adotta solo premendo. Lo stesso avviso del modulo sta sopra il
  * pulsante, perché adottare da qui è adottare come a mano.
  *
+ * **La porta aperta si offre solo quando serve** (§6, livello 2): se almeno
+ * una Casa collegata passa dal relay. Dice la porta da aprire quando
+ * `ESTIA_UDP_PORT` c'è, e come fissarla quando manca, e lo dice in rosso se
+ * la porta scelta è occupata, perché una porta aperta sul router che non porta
+ * più qui è un guasto che non si vede.
+ *
  * Senza relay adottati non cambia niente, e la scheda lo dice: è la Casa di
  * sempre, con i relay di n0.
  */
@@ -127,6 +133,25 @@ export function RelayComunita({ token }: { token: string }): React.ReactElement 
           )}
 
           {vista.ripiegoSuN0 && <Alert tone="error">{t("relay.ripiego_n0")}</Alert>}
+
+          {vista.attivi && vista.portaAperta.viaRelay && (
+            <section aria-labelledby="relay-porta">
+              <h3 className="gruppo" id="relay-porta">
+                {t("relay.porta.titolo")}
+              </h3>
+              <p className="muted">{t("relay.porta.testo")}</p>
+              {vista.portaAperta.porta === undefined ? (
+                <p>{t("relay.porta.configura")}</p>
+              ) : vista.portaAperta.inUso === false ? (
+                <Alert tone="error">
+                  {t("relay.porta.rifiutata", { porta: String(vista.portaAperta.porta) })}
+                </Alert>
+              ) : (
+                <p>{t("relay.porta.apri", { porta: String(vista.portaAperta.porta) })}</p>
+              )}
+              <p className="muted">{t("relay.porta.solo_udp")}</p>
+            </section>
+          )}
 
           {vista.relays.length === 0 ? (
             <p className="empty-inline">{t("relay.nessuno")}</p>

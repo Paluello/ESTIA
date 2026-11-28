@@ -35,6 +35,8 @@ export interface IrohModule {
       relayMode: (mode: unknown) => void;
       alpns: (alpns: number[][]) => void;
       secretKey: (bytes: number[]) => void;
+      /** `ip:porta`; senza, la porta la sceglie il sistema a ogni avvio. */
+      bindAddr?: (addr: string) => void;
       bind: () => Promise<IrohEndpoint>;
     };
   };
@@ -55,6 +57,7 @@ export interface IrohModule {
 export interface IrohEndpoint {
   id: () => { toString: () => string };
   addr: () => { relayUrl?: () => string | null };
+  boundSockets?: () => string[];
   insertRelay?: (config: { url: string }) => Promise<void>;
   removeRelay?: (url: string) => Promise<boolean>;
   acceptNext: () => Promise<IrohIncoming | null>;
@@ -127,13 +130,35 @@ export class InstanceEndpoint {
   /** La mappa che l'endpoint aperto ha davvero. */
   #currentRelays: string[] = [];
   readonly #onOpen: (() => void)[] = [];
+  /** La porta UDP fissa di `ESTIA_UDP_PORT`, se c'è (ADR 0045 §6). */
+  readonly #udpPort: number | undefined;
+  /** Perché la porta fissa non è stata presa all'ultima apertura, se non lo è stata. */
+  #udpPortRefused: string | undefined;
 
-  public constructor(secretKey: Uint8Array) {
+  public constructor(secretKey: Uint8Array, options: { udpPort?: number | undefined } = {}) {
     if (secretKey.length !== 32) {
       throw new Error("The network identity must be a 32-byte ed25519 secret key.");
     }
 
     this.#secretKey = Array.from(secretKey);
+    this.#udpPort = options.udpPort;
+  }
+
+  /**
+   * La porta UDP fissa e se l'endpoint aperto la sta usando.
+   *
+   * `rifiutata` dice perché no: una porta occupata non spegne la rete — la
+   * Casa si apre su una porta a caso e lo dice, perché chi ha aperto quella
+   * porta sul router deve sapere che adesso non porta da nessuna parte.
+   */
+  public get udpPort(): { porta: number; inUso: boolean; rifiutata?: string } | undefined {
+    if (this.#udpPort === undefined) return undefined;
+
+    return {
+      porta: this.#udpPort,
+      inUso: this.#endpoint !== undefined && this.#udpPortRefused === undefined,
+      ...(this.#udpPortRefused === undefined ? {} : { rifiutata: this.#udpPortRefused }),
+    };
   }
 
   /**
@@ -186,6 +211,15 @@ export class InstanceEndpoint {
     if (this.#iroh === undefined || this.#mode !== "internet") return undefined;
 
     return this.#iroh.RelayMode.defaultMode().relayMap().urls();
+  }
+
+  /** Gli indirizzi locali a cui il socket è legato, `[]` se non è aperto. */
+  public boundSockets(): string[] {
+    try {
+      return this.#endpoint?.boundSockets?.() ?? [];
+    } catch {
+      return [];
+    }
   }
 
   /** The relay this instance is reachable through right now, if any. */
@@ -244,7 +278,7 @@ export class InstanceEndpoint {
       return;
     }
 
-    try {
+    const bind = async (fixedPort: number | undefined): Promise<IrohEndpoint> => {
       const builder = module.Endpoint.builder();
 
       // `local` touches nothing outside this machine's network and publishes
@@ -272,7 +306,30 @@ export class InstanceEndpoint {
       // otherwise be free to put a generated key back.
       builder.secretKey(this.#secretKey);
 
-      const endpoint = await builder.bind();
+      // La porta fissa (ADR 0045 §6), dopo il preset che altrimenti la
+      // rimetterebbe a caso. Solo IPv4: è la porta che si apre sul router.
+      if (fixedPort !== undefined) {
+        if (builder.bindAddr === undefined) {
+          throw new Error("Questo binding non sa fissare la porta UDP.");
+        }
+        builder.bindAddr(`0.0.0.0:${fixedPort}`);
+      }
+
+      return builder.bind();
+    };
+
+    try {
+      this.#udpPortRefused = undefined;
+      let endpoint: IrohEndpoint;
+
+      try {
+        endpoint = await bind(this.#udpPort);
+      } catch (error) {
+        if (this.#udpPort === undefined) throw error;
+        // Occupata, o non permessa: la rete si apre lo stesso, su una porta a caso.
+        this.#udpPortRefused = error instanceof Error ? error.message : String(error);
+        endpoint = await bind(undefined);
+      }
 
       this.#iroh = module;
       this.#endpoint = endpoint;

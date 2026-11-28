@@ -19,6 +19,7 @@ const VUOTA: CommunityRelaysView = {
   relays: [],
   ripiegoSuN0: false,
   suggeriti: [],
+  portaAperta: { viaRelay: false },
 };
 
 beforeAll(() => {
@@ -104,5 +105,28 @@ describe("RelayComunita", () => {
       gestore: "Luca",
       url: "https://relay.circolo.example/",
     });
+  });
+
+  it("offre la porta aperta solo se una Casa passa dal relay, e dice quale porta", async () => {
+    vi.spyOn(api, "communityRelays").mockResolvedValue(VUOTA);
+    render(<RelayComunita token="t" />);
+    expect(await screen.findByText(/Nessun relay adottato/)).toBeTruthy();
+    expect(screen.queryByText("La porta aperta, se vuoi")).toBeNull();
+    cleanup();
+
+    vi.spyOn(api, "communityRelays").mockResolvedValue({
+      ...VUOTA,
+      portaAperta: { inUso: true, porta: 41641, viaRelay: true },
+    });
+    render(<RelayComunita token="t" />);
+    expect(await screen.findByText(/inoltra la porta UDP 41641/)).toBeTruthy();
+    cleanup();
+
+    vi.spyOn(api, "communityRelays").mockResolvedValue({
+      ...VUOTA,
+      portaAperta: { inUso: false, porta: 41641, rifiutata: "in uso", viaRelay: true },
+    });
+    render(<RelayComunita token="t" />);
+    expect(await screen.findByText(/La porta UDP 41641 è occupata/)).toBeTruthy();
   });
 });

@@ -214,18 +214,19 @@ Nessun segreto va passato dall'ambiente: l'istanza genera da sé la propria iden
 codice di configurazione. Il processo valida tutti i valori che usa all'avvio e termina con un
 errore esplicito se uno è invalido.
 
-| Variabile                  | Default     | Vincolo                                                       |
-| -------------------------- | ----------- | ------------------------------------------------------------- |
-| `ESTIA_HOST`               | `0.0.0.0`   | non vuota                                                     |
-| `ESTIA_PORT`               | `3000`      | intero tra 1 e 65535                                          |
-| `ESTIA_LOG_LEVEL`          | `info`      | `fatal`, `error`, `warn`, `info`, `debug`, `trace` o `silent` |
-| `ESTIA_LINGUA`             | `en`        | `en` o `it`: la lingua della Casa, ognuno la cambia per sé    |
-| `ESTIA_DATA_DIR`           | `./.data`   | non vuota; contiene database, identità e media dell'istanza   |
-| `ESTIA_MEDIA_MAX_BYTES`    | `5242880`   | 5 MiB; dimensione massima di un'immagine caricata             |
-| `ESTIA_MEDIA_MAX_PIXELS`   | `12000000`  | 12 Mpixel; limite separato, contro le bombe di decompressione |
-| `ESTIA_MEDIA_QUOTA_BYTES`  | `268435456` | 256 MiB per membro, originali e miniature insieme             |
-| `ESTIA_AT_REST_ENCRYPTION` | vuota       | `passphrase`, `automatic` o `none`: cosa dichiari sul volume  |
-| `ESTIA_NETWORK_PROBE`      | `off`       | `local` o `internet`: accende la prova di rete di ADR 0018    |
+| Variabile                  | Default     | Vincolo                                                           |
+| -------------------------- | ----------- | ----------------------------------------------------------------- |
+| `ESTIA_HOST`               | `0.0.0.0`   | non vuota                                                         |
+| `ESTIA_PORT`               | `3000`      | intero tra 1 e 65535                                              |
+| `ESTIA_LOG_LEVEL`          | `info`      | `fatal`, `error`, `warn`, `info`, `debug`, `trace` o `silent`     |
+| `ESTIA_LINGUA`             | `en`        | `en` o `it`: la lingua della Casa, ognuno la cambia per sé        |
+| `ESTIA_DATA_DIR`           | `./.data`   | non vuota; contiene database, identità e media dell'istanza       |
+| `ESTIA_MEDIA_MAX_BYTES`    | `5242880`   | 5 MiB; dimensione massima di un'immagine caricata                 |
+| `ESTIA_MEDIA_MAX_PIXELS`   | `12000000`  | 12 Mpixel; limite separato, contro le bombe di decompressione     |
+| `ESTIA_MEDIA_QUOTA_BYTES`  | `268435456` | 256 MiB per membro, originali e miniature insieme                 |
+| `ESTIA_AT_REST_ENCRYPTION` | vuota       | `passphrase`, `automatic` o `none`: cosa dichiari sul volume      |
+| `ESTIA_NETWORK_PROBE`      | `off`       | `local` o `internet`: accende la prova di rete di ADR 0018        |
+| `ESTIA_UDP_PORT`           | vuota       | 1024-65535: porta UDP fissa, per aprirla nel router (ADR 0045 §6) |
 
 L'ultima merita una riga in più, perché è l'unica che cambia la postura di rete della macchina. Accesa, l'istanza diventa **raggiungibile per chiave pubblica** da un'altra istanza, e serve a misurare la prima verifica di [ADR 0018](docs/adr/0018-federazione-fra-istanze-estia.md) — se due case dietro due router si trovano davvero. Non trasporta contenuti: manda un numero casuale e si aspetta indietro lo stesso. `local` non usa infrastruttura di terzi e richiede due istanze sulla stessa rete; `internet` usa i server pubblici di iroh per farsi trovare, e l'istanza lo dichiara nel pannello. Spenta — cioè sempre, salvo richiesta esplicita — non apre niente. **Si accende anche dal pannello**, senza toccare file né riavviare; dove questa variabile è impostata, il pannello mostra il valore e rifiuta la modifica, perché il riavvio la annullerebbe (stessa regola dei backup, [ADR 0016](docs/adr/0016-backup-dal-pannello.md)).
 

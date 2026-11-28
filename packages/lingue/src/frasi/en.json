@@ -1362,5 +1362,11 @@
   "relay.suggeriti.titolo": "Suggested by connected Houses",
   "relay.suggerito": "{casa} uses this relay",
   "relay.suggerito.nota": "Run by {gestore}, according to {casa}. It is adopted only if you choose to: it never happens on its own.",
-  "relay.adotta_suggerito": "Adopt {gestore}'s relay"
+  "relay.adotta_suggerito": "Adopt {gestore}'s relay",
+  "relay.porta.titolo": "An open port, if you want one",
+  "relay.porta.testo": "Some connected Houses reach you only through a relay. It works, but it is slower. Two Houses talk directly as soon as one of them is reachable, and that can be you. It is optional.",
+  "relay.porta.apri": "In your router, forward UDP port {porta} to this machine. If ESTIA runs in Docker, publish that port too ({porta}:{porta}/udp).",
+  "relay.porta.solo_udp": "Open only this UDP port. The ESTIA page must never be opened to the Internet.",
+  "relay.porta.configura": "Opening a port needs a port that stays the same. Set ESTIA_UDP_PORT, for example to 41641, restart the House, then open that UDP port in your router.",
+  "relay.porta.rifiutata": "UDP port {porta} is in use, so the House is using a random one. If you opened it in your router, it leads nowhere now: free the port or choose another."
 }

@@ -515,7 +515,7 @@ export async function buildApp(
     options.createEndpoint?.({
       publicKey: deriveNetworkPublicId(identity),
       secretKey: networkSecretKey,
-    }) ?? new InstanceEndpoint(networkSecretKey);
+    }) ?? new InstanceEndpoint(networkSecretKey, { udpPort: config.udpPort });
   const networkProbe = new NetworkProbe(endpoint);
   const profileRepository = new SqliteProfileRepository(database);
   const clockOption =
@@ -630,6 +630,11 @@ export async function buildApp(
     settings: settingsRepository,
     target: endpoint,
     collegata: (publicKey) => remoteInstanceRepository.findByKey(publicKey)?.state === "collegata",
+    // Il livello 2 di §6 si offre solo se i collegamenti passano davvero dal relay.
+    viaRelay: () =>
+      remoteInstanceRepository
+        .list()
+        .some((remote) => remote.state === "collegata" && remote.lastReachedVia === "relay"),
     ...(options.now === undefined ? {} : { now: () => new Date(options.now?.() ?? Date.now()) }),
   });
   // Le Case collegate si dicono il relay che usano con il battito (§3).

@@ -220,6 +220,23 @@ export interface RelayMapTarget {
   setRelayMap(urls: readonly string[]): Promise<void>;
   /** Il relay attraverso cui la Casa si fa trovare adesso. */
   readonly homeRelay?: string | undefined;
+  /** La porta UDP fissa, se configurata (§6). */
+  readonly udpPort?: { porta: number; inUso: boolean; rifiutata?: string } | undefined;
+}
+
+/**
+ * La porta aperta di §6, livello 2: che cosa la scheda deve sapere per offrire
+ * la guida, e per non offrirla quando non serve.
+ */
+export interface OpenPortView {
+  /** Almeno una Casa collegata è stata raggiunta l'ultima volta via relay. */
+  viaRelay: boolean;
+  /** `ESTIA_UDP_PORT`, se c'è. */
+  porta?: number;
+  /** La porta fissa è quella su cui l'endpoint è legato adesso. */
+  inUso?: boolean;
+  /** Perché non lo è, se non lo è. */
+  rifiutata?: string;
 }
 
 export type RelayPing = (url: string, signal: AbortSignal) => Promise<boolean>;
@@ -258,6 +275,7 @@ export class RelayWatch {
   readonly #now: () => Date;
   readonly #timeoutMs: number;
   readonly #collegata: (publicKey: string) => boolean;
+  readonly #viaRelay: () => boolean;
   readonly #status = new Map<string, { risponde: boolean; controllatoIl: string }>();
   /** I suggerimenti delle Case collegate, per chiave pubblica di chi suggerisce. */
   readonly #suggeriti = new Map<string, RelaySuggestion>();
@@ -278,6 +296,8 @@ export class RelayWatch {
      * tolta smette di comparire subito, non al riavvio.
      */
     collegata?: (publicKey: string) => boolean;
+    /** Se qualche Casa collegata passa dal relay (§6, livello 2). */
+    viaRelay?: () => boolean;
   }) {
     this.#settings = options.settings;
     this.#target = options.target;
@@ -285,6 +305,7 @@ export class RelayWatch {
     this.#now = options.now ?? (() => new Date());
     this.#timeoutMs = options.timeoutMs ?? 10_000;
     this.#collegata = options.collegata ?? (() => true);
+    this.#viaRelay = options.viaRelay ?? (() => false);
   }
 
   public start(): void {
@@ -345,6 +366,7 @@ export class RelayWatch {
     attivi: boolean;
     relays: (AdoptedRelay & { risponde?: boolean; controllatoIl?: string })[];
     suggeriti: RelaySuggestion[];
+    portaAperta: OpenPortView;
     inUso?: string;
     ripiegoSuN0: boolean;
     massimo: number;
@@ -365,6 +387,10 @@ export class RelayWatch {
       attivi: n0 !== undefined,
       relays,
       suggeriti,
+      portaAperta: {
+        viaRelay: n0 !== undefined && this.#viaRelay(),
+        ...(this.#target.udpPort ?? {}),
+      },
       ...(inUso === undefined ? {} : { inUso }),
       ripiegoSuN0:
         n0 !== undefined &&

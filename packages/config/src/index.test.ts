@@ -111,3 +111,18 @@ describe("loadConfig", () => {
     }
   });
 });
+
+describe("ESTIA_UDP_PORT (ADR 0045 §6)", () => {
+  it("assente o vuota lascia la porta a caso", () => {
+    expect(loadConfig({}).udpPort).toBeUndefined();
+    expect(loadConfig({ ESTIA_UDP_PORT: " " }).udpPort).toBeUndefined();
+  });
+
+  it("fissa la porta, e rifiuta ciò che non è una porta da aprire", () => {
+    expect(loadConfig({ ESTIA_UDP_PORT: "41641" }).udpPort).toBe(41641);
+
+    for (const value of ["80", "70000", "porta", "4164.5"]) {
+      expect(() => loadConfig({ ESTIA_UDP_PORT: value }), value).toThrow(ConfigurationError);
+    }
+  });
+});

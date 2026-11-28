@@ -18,6 +18,15 @@ export interface AppConfig {
   atRestEncryption: "passphrase" | "automatic" | "none" | "unspecified";
   network: NetworkConfig;
   /**
+   * La porta UDP fissa dell'endpoint di rete ([ADR 0045] §6, livello 2).
+   *
+   * Assente, l'endpoint prende una porta a caso a ogni avvio, che va bene per
+   * il relay e per la mappatura automatica del router (livello 1). Chi vuole
+   * aprire a mano una porta sul router, perché le altre Case gli parlino in
+   * diretto, ha bisogno che sia sempre la stessa: la sceglie qui.
+   */
+  udpPort?: number;
+  /**
    * The language of the home (ADR 0046 §5): the pages before sign-in, and the
    * one a new member starts with. Each member can choose their own; this is
    * what someone who has not chosen reads. A code of the phrase table.
@@ -108,6 +117,7 @@ export interface ConfigEnvironment {
   ESTIA_BACKUP_KEEP?: string;
   ESTIA_AT_REST_ENCRYPTION?: string;
   ESTIA_NETWORK_PROBE?: string;
+  ESTIA_UDP_PORT?: string;
   ESTIA_ALLOW_EPHEMERAL_DATA?: string;
   ESTIA_GIT_SHA?: string;
   ESTIA_LINGUA?: string;
@@ -149,6 +159,23 @@ function parsePort(value: string | undefined): number {
 
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new ConfigurationError("ESTIA_PORT must be an integer between 1 and 65535.");
+  }
+
+  return port;
+}
+
+function parseUdpPort(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") {
+    return undefined;
+  }
+
+  const port = Number(value);
+
+  // Sotto la 1024 servono privilegi che il contenitore non ha, e non serve.
+  if (!Number.isInteger(port) || port < 1024 || port > 65_535) {
+    throw new ConfigurationError(
+      "ESTIA_UDP_PORT deve essere un intero fra 1024 e 65535, oppure vuota per una porta a caso.",
+    );
   }
 
   return port;
@@ -387,11 +414,16 @@ function parseGitSha(value: string | undefined): string | undefined {
   return sha;
 }
 
+function optionalUdpPort(udpPort: number | undefined): { udpPort?: number } {
+  return udpPort === undefined ? {} : { udpPort };
+}
+
 export function loadConfig(environment: ConfigEnvironment): AppConfig {
   return Object.freeze({
     allowEphemeralData: parseAllowEphemeralData(environment.ESTIA_ALLOW_EPHEMERAL_DATA),
     atRestEncryption: parseAtRest(environment.ESTIA_AT_REST_ENCRYPTION),
     network: Object.freeze(parseNetwork(environment.ESTIA_NETWORK_PROBE)),
+    ...optionalUdpPort(parseUdpPort(environment.ESTIA_UDP_PORT)),
     host: parseHost(environment.ESTIA_HOST),
     port: parsePort(environment.ESTIA_PORT),
     logLevel: parseLogLevel(environment.ESTIA_LOG_LEVEL),

@@ -3618,6 +3618,16 @@ export interface CommunityRelaysView {
    * adottato (ADR 0045 §3). Si adottano con un gesto, mai da soli.
    */
   suggeriti: CommunityRelaySuggestion[];
+  /**
+   * La porta aperta (ADR 0045 §6, livello 2). La guida per aprire una porta
+   * UDP si offre solo con `viaRelay`, e dice la porta se `ESTIA_UDP_PORT` c'è.
+   */
+  portaAperta: {
+    viaRelay: boolean;
+    porta?: number;
+    inUso?: boolean;
+    rifiutata?: string;
+  };
   /** Il relay attraverso cui la Casa si fa trovare adesso, se c'è. */
   inUso?: string;
   /** True quando nessun adottato risponde e la Casa sta usando n0. */
@@ -3641,7 +3651,7 @@ const communityRelaySchema = {
 export const communityRelaysViewSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["attivi", "relays", "suggeriti", "ripiegoSuN0", "massimo"],
+  required: ["attivi", "relays", "suggeriti", "portaAperta", "ripiegoSuN0", "massimo"],
   properties: {
     attivi: { type: "boolean" },
     relays: { type: "array", items: communityRelaySchema },
@@ -3656,6 +3666,17 @@ export const communityRelaysViewSchema = {
           gestore: { type: "string" },
           casa: { type: "string" },
         },
+      },
+    },
+    portaAperta: {
+      type: "object",
+      additionalProperties: false,
+      required: ["viaRelay"],
+      properties: {
+        viaRelay: { type: "boolean" },
+        porta: { type: "integer", minimum: 1, maximum: 65535 },
+        inUso: { type: "boolean" },
+        rifiutata: { type: "string" },
       },
     },
     inUso: { type: "string" },

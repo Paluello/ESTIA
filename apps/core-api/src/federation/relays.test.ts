@@ -272,3 +272,25 @@ describe("il relay suggerito da una Casa collegata (ADR 0045 §3)", () => {
     expect(relayWatch.view().suggeriti).toEqual([]);
   });
 });
+
+describe("la porta aperta nella vista (ADR 0045 §6)", () => {
+  it("si offre solo se una Casa collegata passa dal relay, con la porta fissa se c'è", () => {
+    const target = new FakeTarget();
+    let viaRelay = false;
+    const relayWatch = new RelayWatch({
+      settings: new MemorySettings(),
+      target,
+      viaRelay: () => viaRelay,
+    });
+
+    expect(relayWatch.view().portaAperta).toEqual({ viaRelay: false });
+    viaRelay = true;
+    expect(relayWatch.view().portaAperta).toEqual({ viaRelay: true });
+
+    Object.assign(target, { udpPort: { porta: 41641, inUso: true } });
+    expect(relayWatch.view().portaAperta).toEqual({ viaRelay: true, porta: 41641, inUso: true });
+
+    target.n0 = undefined;
+    expect(relayWatch.view().portaAperta.viaRelay).toBe(false);
+  });
+});

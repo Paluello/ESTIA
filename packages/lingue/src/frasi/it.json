@@ -1362,5 +1362,11 @@
   "relay.suggeriti.titolo": "Suggeriti dalle Case collegate",
   "relay.suggerito": "{casa} usa questo relay",
   "relay.suggerito.nota": "Gestito da {gestore}, secondo {casa}. Lo adotti solo se lo vuoi tu: non succede da solo.",
-  "relay.adotta_suggerito": "Adotta il relay di {gestore}"
+  "relay.adotta_suggerito": "Adotta il relay di {gestore}",
+  "relay.porta.titolo": "La porta aperta, se vuoi",
+  "relay.porta.testo": "Alcune Case collegate ti raggiungono solo attraverso un relay. Funziona, ma è più lento. Basta che una delle due Case sia raggiungibile perché parlino in diretto, e puoi esserlo tu: è facoltativo.",
+  "relay.porta.apri": "Nel router, inoltra la porta UDP {porta} verso questa macchina. Se ESTIA gira in Docker, pubblica anche quella porta ({porta}:{porta}/udp).",
+  "relay.porta.solo_udp": "Apri solo questa porta UDP. La pagina di ESTIA non va mai aperta verso Internet.",
+  "relay.porta.configura": "Per aprire una porta serve che sia sempre la stessa. Imposta ESTIA_UDP_PORT, per esempio a 41641, riavvia la Casa e poi apri quella porta UDP nel router.",
+  "relay.porta.rifiutata": "La porta UDP {porta} è occupata, quindi la Casa ne sta usando una a caso. Se l'hai aperta nel router, adesso non porta qui: libera la porta o scegline un'altra."
 }
