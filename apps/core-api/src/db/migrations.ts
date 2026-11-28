@@ -1096,4 +1096,23 @@ export const migrations: readonly Migration[] = [
       `ALTER TABLE conversazioni ADD COLUMN congelata_il TEXT`,
     ],
   },
+  {
+    version: 37,
+    name: "ingresso-con-invito",
+    statements: [
+      // Chi non è ancora membro chiede di entrare dall'app, con un invito, su
+      // `estia/ingresso/1` (docs/ACCESSO_DEL_DISPOSITIVO.md). La richiesta è
+      // quella di sempre, in `join_requests`; qui c'è soltanto **quale chiave**
+      // l'ha mandata, perché all'approvazione sia quella a entrare.
+      //
+      // Una chiave, una richiesta: una domanda nuova dalla stessa chiave
+      // sostituisce la riga.
+      `CREATE TABLE richieste_dispositivo (
+         request_id TEXT PRIMARY KEY NOT NULL REFERENCES join_requests (id) ON DELETE CASCADE,
+         chiave TEXT NOT NULL UNIQUE,
+         etichetta TEXT NOT NULL,
+         creato_il TEXT NOT NULL
+       ) STRICT`,
+    ],
+  },
 ];

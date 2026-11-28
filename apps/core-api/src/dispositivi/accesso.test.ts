@@ -8,6 +8,7 @@ import {
   codificaFrame,
   decodificaFrame,
   leggiQrDiIngresso,
+  leggiQrDiInvito,
   type EsitoDiIngresso,
   type IngressoEmessoView,
   type RispostaSuStream,
@@ -434,6 +435,124 @@ describe("l'accesso del Dispositivo (ADR 0044)", () => {
 
       expect(risposta.statusCode).toBe(409);
       expect(risposta.json()).toMatchObject({ code: "rete_spenta" });
+    }, "off");
+  });
+});
+
+describe("l'ingresso con invito, dall'app", () => {
+  async function invito(
+    app: FastifyInstance,
+  ): Promise<{ admin: string; codice: string; qr: string }> {
+    const admin = (
+      await app.identityService.login({ password: "password-valida-123", username: "admin" })
+    ).token;
+    const creato = await app.inject({
+      headers: bearer(admin),
+      method: "POST",
+      payload: { maxUses: 1 },
+      url: "/api/v1/admin/invites",
+    });
+    expect(creato.statusCode).toBe(201);
+    const { code, qr } = creato.json<{ code: string; qr?: string }>();
+    expect(qr).toBeDefined();
+
+    return { admin, codice: code, qr: qr! };
+  }
+
+  const domanda = (codice: string, username: string) => ({
+    etichetta: `Telefono di ${username}`,
+    invito: {
+      codice,
+      message: "sono del secondo piano",
+      password: `password-lunga-${username}`,
+      username,
+    },
+  });
+
+  it("la chiave che chiede è quella che entra, quando l'amministratore dice di sì", async () => {
+    await conLaCasa(async (rig) => {
+      const { admin, codice, qr } = await invito(rig.app);
+      const letto = leggiQrDiInvito(qr);
+      expect(letto?.codice).toBe(codice);
+      const ticket = letto?.ticket ?? "";
+
+      const telefono = await rig.dispositivo();
+      const esito = (await entra(telefono, ticket, domanda(codice, "carla"))) as unknown as {
+        esito: string;
+        richiestaId: string;
+      };
+      expect(esito.esito).toBe("richiesta");
+
+      // Finché nessuno decide, la chiave non apre niente.
+      const prima = await telefono.connect(ticket, ALPN_DISPOSITIVO);
+      await expect(chiedi(prima, "GET", "/api/v1/auth/me")).rejects.toBeDefined();
+
+      // Un invito che vale riceve la ragione del no, come via HTTP.
+      const altro = await rig.dispositivo();
+      expect(await entra(altro, ticket, domanda(codice, "carla"))).toEqual({
+        codice: "username_taken",
+        esito: "rifiutata",
+      });
+      // Uno inventato non riceve niente.
+      expect(await entra(altro, ticket, domanda("NON-ESISTE-1234", "dario"))).toBeUndefined();
+
+      const approvata = await rig.app.inject({
+        headers: bearer(admin),
+        method: "POST",
+        url: `/api/v1/admin/join-requests/${esito.richiestaId}/approve`,
+      });
+      expect(approvata.statusCode).toBe(200);
+
+      const dentro = await telefono.connect(ticket, ALPN_DISPOSITIVO);
+      const me = await chiedi(dentro, "GET", "/api/v1/auth/me");
+      expect(me.stato).toBe(200);
+      expect(me.json()).toMatchObject({ username: "carla" });
+
+      const sessioni = (await chiedi(dentro, "GET", "/api/v1/auth/sessions")).json() as {
+        sessions: { label?: string; chiaveDiRete?: string }[];
+      };
+      expect(sessioni.sessions).toHaveLength(1);
+      expect(sessioni.sessions[0]?.chiaveDiRete).toBeDefined();
+
+      // E la stessa persona entra anche con la password, come chiunque.
+      const login = await rig.app.identityService.login({
+        password: "password-lunga-carla",
+        username: "carla",
+      });
+      expect(login.token).toBeDefined();
+    });
+  });
+
+  it("una richiesta rifiutata non apre niente, e a rete spenta non c'è il QR", async () => {
+    await conLaCasa(async (rig) => {
+      const { admin, codice, qr } = await invito(rig.app);
+      const ticket = leggiQrDiInvito(qr)?.ticket ?? "";
+      const telefono = await rig.dispositivo();
+      const esito = (await entra(telefono, ticket, domanda(codice, "dario"))) as unknown as {
+        richiestaId: string;
+      };
+
+      await rig.app.inject({
+        headers: bearer(admin),
+        method: "POST",
+        url: `/api/v1/admin/join-requests/${esito.richiestaId}/reject`,
+      });
+
+      const connessione = await telefono.connect(ticket, ALPN_DISPOSITIVO);
+      await expect(chiedi(connessione, "GET", "/api/v1/auth/me")).rejects.toBeDefined();
+    });
+
+    await conLaCasa(async (rig) => {
+      const admin = (
+        await rig.app.identityService.login({ password: "password-valida-123", username: "admin" })
+      ).token;
+      const creato = await rig.app.inject({
+        headers: bearer(admin),
+        method: "POST",
+        payload: {},
+        url: "/api/v1/admin/invites",
+      });
+      expect(creato.json()).not.toHaveProperty("qr");
     }, "off");
   });
 });

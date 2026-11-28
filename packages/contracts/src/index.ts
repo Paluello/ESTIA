@@ -848,6 +848,12 @@ export interface CreateInviteResponse {
    * localhost porta comunque all'IP del NAS.
    */
   joinUrl: string;
+  /**
+   * Il testo del QR d'invito per l'app (`estia://invito?...`), con la chiave
+   * della Casa: c'è solo a rete accesa. Chi lo legge con l'app chiede di
+   * entrare via iroh, senza nessuna porta web.
+   */
+  qr?: string;
 }
 
 export const createInviteResponseSchema = {
@@ -858,6 +864,7 @@ export const createInviteResponseSchema = {
     code: { type: "string" },
     invite: inviteViewSchema,
     joinUrl: { type: "string", minLength: 1 },
+    qr: { type: "string", minLength: 1 },
   },
 } as const;
 
@@ -3514,6 +3521,47 @@ export interface DomandaDiIngresso {
   codice: string;
   /** Come il membro riconoscerà questo dispositivo nell'elenco, per esempio «iPhone di Anna». */
   etichetta: string;
+}
+
+/**
+ * La domanda di chi non è ancora membro e ha un invito: è la richiesta di
+ * `POST /api/v1/join/request`, mandata da una chiave nuova su `ALPN_INGRESSO`.
+ * Se l'amministratore approva, **quella chiave** è il primo dispositivo del
+ * nuovo account: l'app è dentro senza un secondo QR.
+ */
+export interface DomandaConInvito {
+  invito: {
+    codice: string;
+    username: string;
+    password: string;
+    displayName?: string;
+    message?: string;
+  };
+  etichetta: string;
+}
+
+/**
+ * La risposta a una domanda con invito. Un invito che non vale non riceve
+ * niente, come un codice d'ingresso sbagliato; uno che vale riceve la ragione
+ * del no, come dalla rotta HTTP (`username_taken`, `invite_requests_full`).
+ */
+export type EsitoDiRichiesta =
+  { esito: "richiesta"; richiestaId: string } | { esito: "rifiutata"; codice: string };
+
+/** Il contenuto del QR d'invito: come quello d'ingresso, con il codice dell'invito. */
+export type QrDiInvito = QrDiIngresso;
+
+export function formattaQrDiInvito(qr: QrDiInvito): string {
+  return formattaQrDiIngresso(qr).replace("estia://ingresso?", "estia://invito?");
+}
+
+/** `undefined` per tutto ciò che non è un QR d'invito di ESTIA. */
+export function leggiQrDiInvito(testo: string): QrDiInvito | undefined {
+  const prefisso = "estia://invito?";
+
+  return testo.startsWith(prefisso)
+    ? leggiQrDiIngresso(`estia://ingresso?${testo.slice(prefisso.length)}`)
+    : undefined;
 }
 
 /** La sola risposta che una domanda valida riceve. Una non valida non riceve niente. */

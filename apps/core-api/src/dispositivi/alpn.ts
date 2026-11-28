@@ -3,8 +3,11 @@ import {
   ALPN_INGRESSO,
   FRAME_MAX_CORPO_RICHIESTA,
   FRAME_MAX_INTESTAZIONE,
+  PASSWORD_MIN_LENGTH,
+  USERNAME_PATTERN,
   codificaFrame,
   decodificaFrame,
+  type DomandaConInvito,
   type RichiestaSuStream,
 } from "@estia/contracts";
 
@@ -89,6 +92,20 @@ export class ServizioIngresso implements AlpnService {
       const bytes = await entro(ATTESA_INGRESSO_MS, stream.recv.readToEnd(MAX_DOMANDA_INGRESSO));
       const domanda = JSON.parse(decoder.decode(Uint8Array.from(bytes))) as unknown;
 
+      // Chi non è ancora membro, con un invito: chiede, e se gli dicono di sì
+      // entra con questa chiave.
+      const conInvito = domandaConInvito(domanda);
+      if (conInvito !== undefined) {
+        const richiesta = await this.#accesso.richiedi(chiave, conInvito);
+        if (richiesta === undefined) {
+          chiudi(connection);
+          return;
+        }
+
+        await rispondi(stream, connection, richiesta);
+        return;
+      }
+
       if (
         typeof domanda !== "object" ||
         domanda === null ||
@@ -107,16 +124,72 @@ export class ServizioIngresso implements AlpnService {
         return;
       }
 
-      await stream.send.writeAll(Array.from(encoder.encode(JSON.stringify(esito))));
-      await stream.send.finish();
-      // Chi chiude è il dispositivo, quando ha letto: chiudere da qui adesso
-      // potrebbe portarsi via la risposta prima che arrivi. Se non lo fa, lo
-      // fa la Casa fra poco.
-      setTimeout(() => chiudi(connection), CHIUSURA_DOPO_ESITO_MS).unref();
+      await rispondi(stream, connection, esito);
     } catch {
       chiudi(connection);
     }
   }
+}
+
+async function rispondi(
+  stream: { send: { writeAll(dati: number[]): Promise<void>; finish(): Promise<void> } },
+  connection: IrohConnection,
+  esito: unknown,
+): Promise<void> {
+  await stream.send.writeAll(Array.from(encoder.encode(JSON.stringify(esito))));
+  await stream.send.finish();
+  // Chi chiude è il dispositivo, quando ha letto: chiudere da qui adesso
+  // potrebbe portarsi via la risposta prima che arrivi. Se non lo fa, lo fa la
+  // Casa fra poco.
+  setTimeout(() => chiudi(connection), CHIUSURA_DOPO_ESITO_MS).unref();
+}
+
+const testo = (valore: unknown, max: number): valore is string =>
+  typeof valore === "string" && valore.length <= max;
+const testoFacoltativo = (valore: unknown, max: number): boolean =>
+  valore === undefined || testo(valore, max);
+
+const NOME_VALIDO = new RegExp(USERNAME_PATTERN);
+
+/**
+ * La domanda con invito, se `domanda` lo è davvero, con le stesse regole dello
+ * schema di `POST /api/v1/join/request`: le rotte le controlla Fastify, questa
+ * strada no.
+ */
+function domandaConInvito(domanda: unknown): DomandaConInvito | undefined {
+  if (typeof domanda !== "object" || domanda === null) {
+    return undefined;
+  }
+
+  const { invito, etichetta } = domanda as { invito?: unknown; etichetta?: unknown };
+  if (typeof invito !== "object" || invito === null || !testo(etichetta, 200)) {
+    return undefined;
+  }
+
+  const campi = invito as Record<string, unknown>;
+  if (
+    !testo(campi.codice, 64) ||
+    campi.codice.length === 0 ||
+    !testo(campi.username, 32) ||
+    !NOME_VALIDO.test(campi.username) ||
+    !testo(campi.password, 200) ||
+    campi.password.length < PASSWORD_MIN_LENGTH ||
+    !testoFacoltativo(campi.displayName, 100) ||
+    !testoFacoltativo(campi.message, 500)
+  ) {
+    return undefined;
+  }
+
+  return {
+    etichetta,
+    invito: {
+      codice: campi.codice,
+      password: campi.password,
+      username: campi.username,
+      ...(campi.displayName === undefined ? {} : { displayName: campi.displayName as string }),
+      ...(campi.message === undefined ? {} : { message: campi.message as string }),
+    },
+  };
 }
 
 /** Ciò che serve delle rotte: `app.inject()` di Fastify. */

@@ -99,13 +99,24 @@ Entrare con tutti i dispositivi vale per chi entra da oggi. Per le conversazioni
 
 Un dispositivo che nel registro non c'è non tocca niente: non è lui a decidere. Il tempo di perdita dell'accesso alla cronologia dopo una revoca è quindi «fino a quando un altro dispositivo della persona apre quella conversazione»; la Casa smette comunque di consegnare al revocato da subito.
 
+## L'ingresso con invito
+
+Chi non è ancora membro, e non ha né un browser in casa né qualcuno dentro con il telefono in mano, entra con l'invito dell'amministratore. Lo ha deciso Mattia il 2026-11-28: **la chiave che chiede è quella che entra.**
+
+1. L'amministratore crea l'invito come sempre (`POST /api/v1/admin/invites`). A rete accesa la risposta porta anche `qr`: `estia://invito?casa=<chiave della Casa>&codice=<codice dell'invito>[&ticket=…]` (`formattaQrDiInvito`, `leggiQrDiInvito`).
+2. L'app si collega a quella chiave su `estia/ingresso/1` e manda `{"invito": {"codice", "username", "password", "displayName"?, "message"?}, "etichetta"}`: è la richiesta di `POST /api/v1/join/request`, con le stesse regole sui campi.
+3. Se l'invito vale, la Casa registra la richiesta come quella fatta dal browser, si ricorda **da quale chiave** è arrivata (tabella `richieste_dispositivo`, migrazione 37) e risponde `{"esito": "richiesta", "richiestaId"}`. Se l'invito vale ma la richiesta no, risponde `{"esito": "rifiutata", "codice": "username_taken"}` (o `invite_requests_full`), come la rotta HTTP. Se l'invito non vale, la connessione si chiude e basta.
+4. L'amministratore approva come sempre. **Nella stessa transazione** che crea l'account, quella chiave viene legata a una sessione nuova del nuovo membro: da quel momento l'app parla su `estia/dispositivo/1`. Prima, e dopo un rifiuto, la stessa chiave non apre niente.
+
+Un invito fa chiedere, non entrare: la decisione resta all'amministratore ([ADR 0003](adr/0003-primo-contatto-in-rete-locale.md), requisito 3). Ogni domanda valida costa un hash di password e le chiavi iroh non costano niente, quindi la Casa ne accetta al più venti ogni dieci minuti, da tutte le chiavi insieme. Una domanda nuova dalla stessa chiave sostituisce quella vecchia.
+
 ## Che cosa manca, detto per intero
 
 - **La rimozione subito, non alla lettura.** Oggi la foglia di un dispositivo revocato esce dalle conversazioni man mano che un altro dispositivo della persona le apre. Farlo per tutte al momento della revoca vuole una coda di lavoro sul client.
 - **Le app native** devono fare lo stesso allineamento delle foglie: la Casa è pronta.
-- **L'ingresso con un invito**, per chi non è ancora membro e non ha un browser in casa: oggi il QR lo emette solo chi è già dentro.
+- **Il QR d'invito nel pannello web.** `POST /api/v1/admin/invites` restituisce già `qr`, ma il pannello mostra ancora soltanto il link; e l'app deve saper leggere `estia://invito` e riprovare finché la richiesta non è decisa.
 - **Le prove sul campo**, nell'ordine di ADR 0044 e fatte dal proprietario: Milano–Campello su dati mobili, la misura dall'esterno che non c'è nessuna porta web, il tempo effettivo di perdita dell'accesso dopo una revoca.
-- **Un invito creato dall'app porta un indirizzo `localhost`.** Non dà accesso a niente, ma il link non serve: va deciso insieme all'ingresso con invito, perché fuori casa non c'è una porta web da aprire. `GET /api/v1/connection` invece dal 2026-11-28 risponde `dispositivo`.
+- **Un invito creato dall'app porta in `joinUrl` un indirizzo `localhost`.** Fuori casa non c'è una porta web da aprire, quindi da lì vale il `qr`. `GET /api/v1/connection` invece dal 2026-11-28 risponde `dispositivo`.
 - **Il corpo come `number[]`.** Il binding Node di iroh legge e scrive array di numeri: per un'immagine da qualche MiB è memoria sprecata, non un errore. Se pesa, si spezza il corpo in più scritture.
 
 ## Le prove

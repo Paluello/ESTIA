@@ -46,6 +46,7 @@ export class AdmissionService {
   private readonly identity: IdentityService;
   private readonly transaction: Transactor;
   private readonly now: () => Date;
+  #dopoApprovazione: ((requestId: string, userId: string) => void) | undefined;
 
   public constructor(options: AdmissionServiceOptions) {
     this.invites = options.invites;
@@ -83,6 +84,15 @@ export class AdmissionService {
     // joinUrl is attached in the route from the request Host: the service does
     // not know how the administrator reached the instance.
     return { code, invite: this.toInviteView(record) };
+  }
+
+  /**
+   * Che cosa fare, nella stessa transazione, quando una richiesta è approvata:
+   * legare all'account la chiave dell'app che l'aveva mandata
+   * (docs/ACCESSO_DEL_DISPOSITIVO.md, «L'ingresso con invito»).
+   */
+  public useDopoApprovazione(azione: (requestId: string, userId: string) => void): void {
+    this.#dopoApprovazione = azione;
   }
 
   public listInvites(): InviteView[] {
@@ -183,6 +193,7 @@ export class AdmissionService {
       });
 
       this.invites.consumeOne(invite.id);
+      this.#dopoApprovazione?.(request.id, user.id);
       this.recordAudit(actorId, "member_admitted", request.username);
 
       return { ...toRequestView(request), status: "approved" as const };

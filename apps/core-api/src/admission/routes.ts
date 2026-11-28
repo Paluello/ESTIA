@@ -1,4 +1,5 @@
 import {
+  formattaQrDiInvito,
   auditListSchema,
   createInviteRequestSchema,
   createInviteResponseSchema,
@@ -31,7 +32,12 @@ const idParamSchema = {
 
 export function registerAdmissionRoutes(
   app: FastifyInstance,
-  services: { admission: AdmissionService; identity: IdentityService },
+  services: {
+    admission: AdmissionService;
+    identity: IdentityService;
+    /** La chiave di rete della Casa adesso, e il ticket dove la scoperta non c'è. */
+    rete?: () => { chiave: string; ticket?: string } | undefined;
+  },
 ): void {
   // Admission is the administrator's job (PRODUCT_VISION §7). Moderators deal
   // with content, not with who gets in.
@@ -72,9 +78,22 @@ export function registerAdmissionRoutes(
       // The code is in the answer once, and only its hash is kept.
       const created = services.admission.createInvite(request.caller!.user.id, request.body);
 
+      // Il QR per l'app c'è solo a rete accesa: senza una chiave della Casa,
+      // l'app non avrebbe a chi bussare.
+      const casa = services.rete?.();
+
       return reply.status(201).send({
         ...created,
         joinUrl: joinUrlForInvite(request, created.code),
+        ...(casa === undefined
+          ? {}
+          : {
+              qr: formattaQrDiInvito({
+                casa: casa.chiave,
+                codice: created.code,
+                ...(casa.ticket === undefined ? {} : { ticket: casa.ticket }),
+              }),
+            }),
       });
     },
   );
