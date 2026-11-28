@@ -214,6 +214,7 @@
   "errori.invalid_image": "Questo file non è un'immagine leggibile.",
   "errori.invalid_instance_name": "Il nome dell'istanza non può essere vuoto.",
   "errori.invalid_invite": "Questo invito non è valido: potrebbe essere scaduto, già usato o ritirato.",
+  "errori.invite_requests_full": "Per questo invito ci sono già abbastanza richieste in attesa. Chiedi a chi te l'ha dato.",
   "errori.invalid_recovery_code": "Nome utente o codice di recupero non validi.",
   "errori.invalid_request": "Questa richiesta non è valida.",
   "errori.invalid_setup_token": "Questo codice non è valido. È quello stampato nella console dell'istanza, e cambia a ogni riavvio.",

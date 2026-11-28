@@ -214,6 +214,7 @@
   "errori.invalid_image": "This file is not a readable image.",
   "errori.invalid_instance_name": "The instance name cannot be empty.",
   "errori.invalid_invite": "This invite is not valid: it may have expired, been used already or been withdrawn.",
+  "errori.invite_requests_full": "This invite already has enough requests waiting. Ask the person who gave it to you.",
   "errori.invalid_recovery_code": "Username or recovery code is not valid.",
   "errori.invalid_request": "This request is not valid.",
   "errori.invalid_setup_token": "This code is not valid. It is the one printed in the instance console, and it changes at every restart.",
