@@ -19,6 +19,7 @@ import {
 } from "../../../ui/index.js";
 import { Sezione } from "../Sezione.js";
 
+import { RelayComunita } from "./RelayComunita.js";
 import { ASPETTO, GRUPPI, gruppoDi, principaliDi, secondarieDi, type Azione } from "./gruppi.js";
 import { etichettaDi, fraseDi, segnaleDi, type Segnale } from "./raggiungibilita.js";
 
@@ -642,6 +643,12 @@ export function EstiaNet(): React.ReactElement {
               })}
             </div>
           )}
+
+          {/*
+            I relay della comunità servono solo dove la Casa si fa trovare da
+            fuori: su «local» non si usano relay (ADR 0045 §2).
+          */}
+          {accesa && rete.mode === "internet" && <RelayComunita token={token} />}
 
           {/*
             In fondo, dove stanno le cose che si fanno una volta o mai: la prima
