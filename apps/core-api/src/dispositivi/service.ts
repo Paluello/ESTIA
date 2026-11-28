@@ -357,6 +357,22 @@ export class DispositiviService {
     return { deviceId: res.device.id, keyPackage: res.keyPackage.keyPackage };
   }
 
+  /**
+   * Un `KeyPackage` per ciascun dispositivo del membro: è ciò che serve per
+   * far entrare **la persona**, con tutte le sue foglie, e non soltanto il suo
+   * ultimo telefono ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+   */
+  claimKeyPackagesPerNome(username: string): KeyPackageMlsView[] {
+    const utente = this.users.findByUsername(username);
+    if (utente === undefined) {
+      return [];
+    }
+
+    return this.repo
+      .claimKeyPackagesForUser(utente.id, this.now(), ALGORITMO_MLS)
+      .map((res) => ({ deviceId: res.device.id, keyPackage: res.keyPackage.keyPackage }));
+  }
+
   saveBackup(userId: string, req: SaveKeyBackupRequest): KeyBackupView {
     const updatedAt = this.now();
     this.repo.saveKeyBackup({

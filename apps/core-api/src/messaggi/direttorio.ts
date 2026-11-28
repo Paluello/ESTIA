@@ -48,7 +48,13 @@ export function direttorioMessaggi(
     depositaHandshake: (record) => messaggi.depositaHandshakeRemoto(record),
     depositaStato: (conversazioneId, remoteKey, tipo, stato) =>
       messaggi.depositaStatoRemoto(conversazioneId, remoteKey, tipo, stato),
-    getKeyPackages(username) {
+    getKeyPackages(username, tutti) {
+      if (tutti === true) {
+        return dispositivi
+          .claimKeyPackagesPerNome(username)
+          .map((preso) => ({ blob: preso.keyPackage, id: preso.deviceId }));
+      }
+
       const preso = dispositivi.claimKeyPackagePerNome(username);
       return preso === null ? [] : [{ blob: preso.keyPackage, id: preso.deviceId }];
     },

@@ -441,16 +441,22 @@ export function Messaggi(): React.ReactElement {
     }
   }, [token]);
 
-  /** La chiave d'ingresso di una persona, chiesta alla sua casa. Monouso. */
-  const chiaveDi = useCallback(
+  /**
+   * Le chiavi d'ingresso di una persona, una per ciascun suo dispositivo,
+   * chieste alla sua casa. Monouso. Si entra con tutti: telefono e PC sono due
+   * foglie della stessa persona (ADR 0040).
+   */
+  const chiaviDi = useCallback(
     async (altro: AuthorView, casa: string) => {
-      const preso = await api.keyPackageMls(token, membroDi(altro, casa).casa, altro.username);
-      const keyPackage = leggiKeyPackage(base64InBytes(preso.keyPackage));
-      if (keyPackage === undefined) {
+      const presi = await api.keyPackagesMls(token, membroDi(altro, casa).casa, altro.username);
+      const keyPackages = presi.keyPackages
+        .map((preso) => leggiKeyPackage(base64InBytes(preso.keyPackage)))
+        .filter((kp): kp is NonNullable<typeof kp> => kp !== undefined);
+      if (keyPackages.length === 0) {
         throw new Error(t("messaggi.chiave_illeggibile", { nome: nomeDi(altro) }));
       }
 
-      return keyPackage;
+      return keyPackages;
     },
     [token],
   );
@@ -477,7 +483,9 @@ export function Messaggi(): React.ReactElement {
       let primaCausa: unknown;
       for (const altro of altri) {
         try {
-          invitati.push({ idDiChiEntra: altro.id, keyPackage: await chiaveDi(altro, casa) });
+          for (const keyPackage of await chiaviDi(altro, casa)) {
+            invitati.push({ idDiChiEntra: altro.id, keyPackage });
+          }
         } catch (causa) {
           primaCausa ??= causa;
         }
@@ -489,7 +497,7 @@ export function Messaggi(): React.ReactElement {
 
       return invitati;
     },
-    [chiaveDi, user.id],
+    [chiaviDi, user.id],
   );
 
   /**
@@ -881,10 +889,13 @@ export function Messaggi(): React.ReactElement {
     }
 
     const membro = membroDi(autore, ambiente.casa);
-    const keyPackage = await chiaveDi(autore, ambiente.casa);
-    sessioneRef.current = await faiEntrare(ambiente.ctx, sessione, { id: autore.id, membro }, [
-      keyPackage,
-    ]);
+    const keyPackages = await chiaviDi(autore, ambiente.casa);
+    sessioneRef.current = await faiEntrare(
+      ambiente.ctx,
+      sessione,
+      { id: autore.id, membro },
+      keyPackages,
+    );
     await racconta(ambiente, { chi: scriviIdentita(membro), tipo: "ingresso" });
   };
 

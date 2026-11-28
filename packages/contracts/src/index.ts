@@ -3130,6 +3130,21 @@ export const keyPackageMlsViewSchema = {
   properties: { deviceId: { type: "string" }, keyPackage: { type: "string" } },
 } as const;
 
+/**
+ * Un `KeyPackage` per ciascun dispositivo di un membro, per farlo entrare con
+ * tutte le sue foglie ([ADR 0040](../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+ */
+export interface KeyPackagesMlsView {
+  keyPackages: KeyPackageMlsView[];
+}
+
+export const keyPackagesMlsViewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["keyPackages"],
+  properties: { keyPackages: { type: "array", items: keyPackageMlsViewSchema } },
+} as const;
+
 export interface CreateConversazioneRequest {
   recipientUserId?: string;
   recipientUsername?: string;

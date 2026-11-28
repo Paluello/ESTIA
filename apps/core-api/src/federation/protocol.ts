@@ -235,6 +235,12 @@ export interface ChiaviRequest {
    * senza questo campo: resta perché chi lo manda non riceva un rifiuto.
    */
   algoritmo?: string;
+  /**
+   * `true`: un KeyPackage per **ciascun** dispositivo del destinatario, non uno
+   * solo ([ADR 0040](../../../../docs/adr/0040-un-membro-ha-piu-di-un-dispositivo.md)).
+   * Una casa che non lo conosce ne manda uno, ed è comunque una risposta giusta.
+   */
+  tutti?: boolean;
 }
 
 export interface ChiaviResponse {
@@ -1298,6 +1304,7 @@ function parseChiavi(
       nome,
       tipo: "chiavi",
       ...(algoritmo === undefined ? {} : { algoritmo }),
+      ...(value.tutti === true ? { tutti: true } : {}),
     },
   };
 }

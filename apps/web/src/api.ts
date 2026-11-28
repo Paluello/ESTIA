@@ -36,6 +36,7 @@ import type {
   CasaView,
   CronologiaPage,
   KeyPackageMlsView,
+  KeyPackagesMlsView,
   FederationView,
   FollowRequest,
   FollowsView,
@@ -722,6 +723,13 @@ export const api = {
     request(`/api/v1/mls/key-package/${encodeURIComponent(casa)}/${encodeURIComponent(username)}`, {
       token,
     }),
+
+  /** Un KeyPackage MLS per ciascun dispositivo di un membro, di qualunque casa: monouso. */
+  keyPackagesMls: (token: string, casa: string, username: string): Promise<KeyPackagesMlsView> =>
+    request(
+      `/api/v1/mls/key-packages/${encodeURIComponent(casa)}/${encodeURIComponent(username)}`,
+      { token },
+    ),
 
   getArchivio: (token: string, id: string, dopo?: string): Promise<ArchivioPage> => {
     const coda = dopo === undefined ? "" : `?dopo=${encodeURIComponent(dopo)}`;
