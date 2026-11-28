@@ -25,6 +25,9 @@ iroh = "=1.4.1"
 iroh-tickets = "=1.0.0"
 keyring-core = "=1.0.1"
 chacha20poly1305 = "0.10.1"
+# Il filo verso la Casa (iroh, estia/ingresso/1 ed estia/dispositivo/1) è
+# quello del nucleo delle app del telefono (ADR 0051): uno solo per tutte.
+estia-nucleo = { path = "../../nucleo" }
 
 # La cassaforte del sistema, una per piattaforma (ADR 0044 §2).
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
