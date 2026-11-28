@@ -14,7 +14,7 @@ Nella segnalazione aiuta molto avere: quale versione o commit, come riprodurre, 
 
 ## Che cosa aspettarti, detto con onestà
 
-Questo progetto ha **un solo manutentore**, è **pre-1.0** e **non ha ricevuto un audit di sicurezza indipendente**. Non prometto tempi di risposta che non posso garantire: prometto che leggo, che rispondo, e che se hai ragione lo dico e lo scrivo.
+Questo progetto ha **un solo manutentore**, è **pre-1.0** e **non ha ricevuto un audit di sicurezza indipendente**: è previsto dopo il lancio. Prima del lancio c'è stata una revisione interna, con i rilievi e le correzioni in [`docs/security/REVISIONE_INTERNA_2026-11.md`](docs/security/REVISIONE_INTERNA_2026-11.md). Non prometto tempi di risposta che non posso garantire: prometto che leggo, che rispondo, e che se hai ragione lo dico e lo scrivo.
 
 Sulla divulgazione: chiedo un tempo ragionevole per correggere prima che la cosa diventi pubblica, e mi impegno a darti credito nella correzione se lo desideri. Non ci sono premi in denaro.
 
@@ -41,7 +41,7 @@ Vale la pena essere precisi, perché questo progetto **dichiara per iscritto ci�
 - chi amministra il NAS vede tutto ciò che l'istanza conserva ([`PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) §6);
 - il feed locale è leggibile dal server che lo serve: è la bacheca di chi condivide l'istanza, non una chat privata;
 - i dati sul disco sono in chiaro se l'amministratore non ha cifrato il volume ([ADR 0007](docs/adr/0007-cifratura-a-riposo-e-furto-fisico.md)) — l'istanza lo rileva e lo dichiara;
-- i messaggi privati non esistono ancora, e non esisteranno finché non saranno end-to-end ([ADR 0006](docs/adr/0006-messaggi-privati-end-to-end-o-niente.md));
+- i messaggi privati sono cifrati end-to-end con MLS ([ADR 0006](docs/adr/0006-messaggi-privati-end-to-end-o-niente.md)): l'istanza non ne legge il contenuto, ma vede chi partecipa a una conversazione e quando arriva un messaggio;
 - l'istanza è raggiungibile in HTTP sulla rete locale: è il modello del primo contatto ([ADR 0003](docs/adr/0003-primo-contatto-in-rete-locale.md)).
 
 Se pensi che una di queste scelte sia sbagliata, è una discussione che voglio avere — ma è una issue, non una segnalazione riservata.
