@@ -397,7 +397,38 @@ export interface FederationServiceOptions {
    * casa muta non blocca niente non deve aspettare otto secondi per dirlo.
    */
   timeoutMs?: number;
+  /** I tetti di chi entra: iniettabili per le prove, mai da configurazione. */
+  inbound?: Partial<InboundLimits>;
 }
+
+/**
+ * Quanto può chiedere chi entra, prima ancora di sapere che cosa chiede
+ * (revisione interna, 2026-11-27: non c'era nessun tetto, ADR 0020 §2.2).
+ *
+ * Una connessione costa a chi la apre un handshake, e a noi memoria e una
+ * promessa in attesa per ogni stream. Senza tetti, chi apre stream e non li
+ * chiude mai tiene il NAS occupato quanto vuole.
+ */
+export interface InboundLimits {
+  /** Connessioni aperte insieme dalla stessa chiave. */
+  connectionsPerKey: number;
+  /** Connessioni aperte insieme in tutto, da chiavi che non sono collegate. */
+  connectionsFromStrangers: number;
+  /** Stream serviti insieme su una connessione: gli altri aspettano il loro turno. */
+  streamsPerConnection: number;
+  /** Il tempo per leggere una domanda. Le domande sono piccole: chi tace la perde. */
+  readTimeoutMs: number;
+}
+
+/** Una domanda che non è mai finita di arrivare. */
+const TACIUTA = Symbol("taciuta");
+
+const INBOUND_DEFAULTS: InboundLimits = {
+  connectionsFromStrangers: 256,
+  connectionsPerKey: 4,
+  readTimeoutMs: 15_000,
+  streamsPerConnection: 16,
+};
 
 /**
  * Che cosa e' successo chiedendo le chiavi a un'altra casa.
@@ -446,6 +477,9 @@ export class FederationService implements AlpnService {
 
   /** Open connections by remote key, so that blocking can close them at once. */
   readonly #open = new Map<string, Set<IrohConnection>>();
+  readonly #inbound: InboundLimits;
+  /** Connessioni aperte adesso da chiavi non collegate. */
+  #fromStrangers = 0;
 
   public constructor(options: FederationServiceOptions) {
     this.#remotes = options.remotes;
@@ -455,6 +489,7 @@ export class FederationService implements AlpnService {
     this.#maxPendingIncoming = options.maxPendingIncoming ?? MAX_PENDING_INCOMING;
     this.#now = options.now ?? (() => new Date());
     this.#timeoutDomanda = options.timeoutMs ?? TIMEOUT_DOMANDA_MS;
+    this.#inbound = { ...INBOUND_DEFAULTS, ...options.inbound };
     this.#profiles = options.profiles;
     this.#follows = options.follows;
     this.#boards = options.boards;
@@ -556,26 +591,71 @@ export class FederationService implements AlpnService {
       return;
     }
 
+    const straniera = this.#view(remoteKey) !== "collegata";
+
+    // Prima di leggere qualunque cosa: troppe connessioni dalla stessa chiave,
+    // o troppe da chi non è collegato, e quella nuova si chiude subito.
+    if (
+      (this.#open.get(remoteKey)?.size ?? 0) >= this.#inbound.connectionsPerKey ||
+      (straniera && this.#fromStrangers >= this.#inbound.connectionsFromStrangers)
+    ) {
+      connection.close(0n, []);
+      return;
+    }
+
     this.#track(remoteKey, connection);
+    if (straniera) {
+      this.#fromStrangers += 1;
+    }
+
+    let inVolo = 0;
+    let liberato: (() => void) | undefined;
 
     try {
       for (;;) {
+        // Al tetto si smette di accettare finché uno stream non finisce: il
+        // controllo di flusso di QUIC fa aspettare chi ne apre altri.
+        while (inVolo >= this.#inbound.streamsPerConnection) {
+          await new Promise<void>((resolve) => {
+            liberato = resolve;
+          });
+        }
+
         const stream = await connection.acceptBi();
 
         // Streams are cheap and independent (ADR 0021 §3): a slow request must
         // not hold up the next one on the same connection.
-        void this.#handle(remoteKey, stream);
+        inVolo += 1;
+        void this.#handle(remoteKey, stream, connection).finally(() => {
+          inVolo -= 1;
+          liberato?.();
+          liberato = undefined;
+        });
       }
     } catch {
       // The connection ended. That is how a connection is supposed to end.
     } finally {
       this.#untrack(remoteKey, connection);
+      if (straniera) {
+        this.#fromStrangers -= 1;
+      }
     }
   }
 
-  async #handle(remoteKey: string, stream: Parameters<typeof writeMessage>[0]): Promise<void> {
+  async #handle(
+    remoteKey: string,
+    stream: Parameters<typeof writeMessage>[0],
+    connection: IrohConnection,
+  ): Promise<void> {
     try {
       const response = await this.#respondTo(remoteKey, stream);
+
+      if (response === TACIUTA) {
+        // Ha aperto uno stream e non ha mai finito di scrivere: non è una
+        // rete lenta, è un posto tenuto occupato. Si chiude la connessione.
+        connection.close(0n, []);
+        return;
+      }
 
       await writeMessage(stream, response);
     } catch {
@@ -586,7 +666,7 @@ export class FederationService implements AlpnService {
   async #respondTo(
     remoteKey: string,
     stream: Parameters<typeof readMessage>[0],
-  ): Promise<ProtocolResponse> {
+  ): Promise<ProtocolResponse | typeof TACIUTA> {
     const view = this.#view(remoteKey);
 
     if (view === "bloccata") {
@@ -603,7 +683,18 @@ export class FederationService implements AlpnService {
     // Il tetto grande, perché il tipo si sa solo dopo aver letto e `handshake`
     // porta una busta: con quello di controllo un Welcome verrebbe troncato
     // prima di essere interpretato. Il limite di frequenza è già passato.
-    const message = await readMessage(stream, MAX_REQUEST_BYTES_CON_BUSTA);
+    let scaduta: ReturnType<typeof setTimeout> | undefined;
+    const message = await Promise.race([
+      readMessage(stream, MAX_REQUEST_BYTES_CON_BUSTA),
+      new Promise<typeof TACIUTA>((resolve) => {
+        scaduta = setTimeout(() => resolve(TACIUTA), this.#inbound.readTimeoutMs);
+      }),
+    ]).finally(() => clearTimeout(scaduta));
+
+    if (message === TACIUTA) {
+      return TACIUTA;
+    }
+
     const { request, error } = parseRequest(message);
 
     if (error !== undefined) {
