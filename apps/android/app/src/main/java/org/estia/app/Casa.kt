@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -20,6 +22,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.estia.nucleo.Collegamento
+import org.estia.nucleo.Sessioni
 
 @Serializable
 data class Utente(val id: String, val username: String, val displayName: String)
@@ -55,6 +58,11 @@ sealed interface Fase {
 class Casa(applicazione: Application) : AndroidViewModel(applicazione) {
     private val json = Json { ignoreUnknownKeys = true }
     private var collegamento: Collegamento? = null
+    private var cassaforte: Cassaforte? = null
+
+    /** Le conversazioni MLS, aperte la prima volta che servono. */
+    private var sessioni: Sessioni? = null
+    private val serraturaSessioni = Mutex()
 
     private val _fase = MutableStateFlow<Fase>(Fase.Avvio)
     val fase: StateFlow<Fase> = _fase.asStateFlow()
@@ -68,8 +76,9 @@ class Casa(applicazione: Application) : AndroidViewModel(applicazione) {
     init {
         viewModelScope.launch {
             try {
-                val cassaforte = withContext(Dispatchers.IO) { Cassaforte(getApplication()) }
-                val aperto = Collegamento.apri(cassaforte)
+                val aperta = withContext(Dispatchers.IO) { Cassaforte(getApplication()) }
+                cassaforte = aperta
+                val aperto = Collegamento.apri(aperta)
                 collegamento = aperto
                 if (aperto.casa() == null) {
                     _fase.value = Fase.Ingresso
@@ -94,6 +103,7 @@ class Casa(applicazione: Application) : AndroidViewModel(applicazione) {
     fun esci() {
         viewModelScope.launch {
             runCatching { collegamento?.dimenticaCasa() }
+            serraturaSessioni.withLock { sessioni = null }
             _utente.value = null
             _fase.value = Fase.Ingresso
         }
@@ -116,6 +126,18 @@ class Casa(applicazione: Application) : AndroidViewModel(applicazione) {
             throw ErroreCasa(stato, codice)
         }
         return json.decodeFromString(tipo, testo)
+    }
+
+    /**
+     * Prepara il dispositivo per le conversazioni (identità MLS, chiave di
+     * firma, KeyPackage) la prima volta, poi restituisce sempre le stesse.
+     */
+    suspend fun sessioniPronte(): Sessioni = serraturaSessioni.withLock {
+        sessioni ?: run {
+            val aperto = collegamento ?: throw ErroreCasa(null, null)
+            val deposito = cassaforte ?: throw ErroreCasa(null, null)
+            Sessioni.apri(aperto, deposito).also { sessioni = it }
+        }
     }
 
     private suspend fun aggiornaUtente() {

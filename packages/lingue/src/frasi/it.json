@@ -1362,5 +1362,10 @@
   "relay.suggeriti.titolo": "Suggeriti dalle Case collegate",
   "relay.suggerito": "{casa} usa questo relay",
   "relay.suggerito.nota": "Gestito da {gestore}, secondo {casa}. Lo adotti solo se lo vuoi tu: non succede da solo.",
-  "relay.adotta_suggerito": "Adotta il relay di {gestore}"
+  "relay.adotta_suggerito": "Adotta il relay di {gestore}",
+  "app_messaggi.nuova": "Nuova conversazione",
+  "app_messaggi.chi": "A chi vuoi scrivere?",
+  "app_messaggi.chi.aiuto": "Il suo nome utente. Se abita in un'altra Casa, scrivi nome@ seguito dalla chiave di quella Casa.",
+  "app_messaggi.comincia": "Comincia",
+  "app_messaggi.non_approvato": "Questo dispositivo non è ancora approvato per le tue chat. Approvalo da un dispositivo dove sei già dentro, poi torna qui."
 }

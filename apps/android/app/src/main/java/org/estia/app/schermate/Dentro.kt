@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -31,6 +33,7 @@ private data class Scheda(val frase: String, val piena: ImageVector, val vuota: 
 
 private val schede = listOf(
     Scheda("nav.home", Icons.Filled.Home, Icons.Outlined.Home),
+    Scheda("nav.messaggi", Icons.Filled.Email, Icons.Outlined.Email),
     Scheda("nav.profilo", Icons.Filled.AccountCircle, Icons.Outlined.AccountCircle),
 )
 
@@ -58,6 +61,7 @@ fun Dentro(casa: Casa) {
         val modificatore = Modifier.padding(margini).consumeWindowInsets(margini)
         when (scelta) {
             0 -> Bacheca(casa, modificatore)
+            1 -> Messaggi(casa, modificatore)
             else -> Profilo(casa, modificatore)
         }
     }
